@@ -76,6 +76,14 @@ mới phụ thuộc badge `ready`. Đóng app → kill sidecar.
 - **Footprint ML**: torch nặng GB, có native lib + tải weights runtime → khâu đóng gói khó nhất.
   Giảm rủi ro bằng cách giải quyết ở **Phase 0** trước mọi feature.
   _(v0.2.8: paddle đã bỏ khỏi bundle — chỉ đóng gói RapidViet = torch + onnxruntime + vietocr.)_
+  _(2026-09-16: **"tải weights runtime" đã xử lý xong.** `vietocr` 0.3.13 vốn GET hai YAML
+  từ vocr.vn mỗi lần dựng `Predictor` (không cache) rồi tải 151,8 MB `.pth` vào `%TEMP%` —
+  mà Windows dọn `%TEMP%` định kỳ; đo được **286 s** để sẵn sàng OCR trên máy đã từng chạy
+  OCR thành công. Nay model nằm trong `models/vietocr/`, `sidecar.spec` đóng gói vào app,
+  `src/ocr/engine.py::_vietocr_local_config` ưu tiên dùng nó, và `test_vietocr_offline.py`
+  chặn `socket.connect` để chứng minh không còn đường gọi mạng. Bundle sidecar đồng thời
+  giảm 1 155 → 931 MB nhờ dọn payload chết, nên tổng dung lượng gần như không đổi.
+  Chi tiết: `docs/RESEARCH-2026-09-15-deps-perf-audit.md`.)_
 
 ## 6. Khâu đóng gói — điểm rủi ro cao nhất
 

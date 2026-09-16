@@ -116,6 +116,37 @@ latin dict thiếu chữ; engine đúng dấu thực sự là VietOCR.)
 env `OCR_ENGINE=rapidviet`. Việc còn lại (tuỳ chọn): bỏ paddlepaddle khỏi bundle (det đã
 chuyển onnx) để giảm installer — giữ torch (VietOCR cần).
 
+## 3e. ✅ ĐO LẠI TRÊN SCAN THẬT (2026-09-16): bỏ nốt phần recognition của RapidOCR
+
+§3d đặt RapidViet làm mặc định nhưng vẫn gọi **toàn bộ** pipeline RapidOCR (det + cls +
+rec) rồi **vứt chữ đi**, dựa vào một comment nói det-only "over-segments lines into
+words". Đo trên **78 trang hợp đồng A4 scan thật** ở 200 dpi (đúng mặc định của
+`/searchable`), chứ không phải trang 8 dòng của §3d:
+
+| | FULL (det+cls+rec) | DET-only |
+|---|---:|---:|
+| Detect, trung bình / trang | 4,17 s | **1,38 s** |
+| Tổng box, 78 trang | 3 685 | 3 699 |
+| Trang **mất** box | — | **0 / 78** |
+
+Comment kia **không tái hiện một lần nào**. Và 14 box thêm không phải rác hết: trên trang
+xác nhận/ký (trang 72), pipeline cũ trả về **khối chữ ký RỖNG** — dòng nằm giữa
+`Signature/ Chữ ký:` và `Date/ Ngày:`, tức `THS. Đoàn Văn Động`, bị vứt. (Tên người ký
+có đánh máy chỗ khác trên trang và vẫn đọc được ở cả hai chế độ; thứ mất là **dòng ký**.)
+Lý do: tắt `rec` cũng là tắt bộ lọc `text_score = 0.5`, mà điểm đó do **recogniser PP-OCR
+Latin** chấm — đúng cái thành phần §3c đã chứng minh là không đọc nổi dấu tiếng Việt. Bộ
+lọc ấy không hỏi "đây có phải chữ không", nó hỏi "recogniser tiếng Anh có đọc nổi không".
+
+**Số cần nhớ, thay cho bảng ~3,5–4 s ở §3d** (trang scan thật dày chữ, không phải trang
+8 dòng): detect **1,38 s** phẳng; VietOCR **5–26 s** tuỳ số dòng (~0,3 s/dòng, 24–124
+dòng mỗi trang). Tức **VietOCR là 81 % công việc**. Tiết kiệm end-to-end của đổi này là
+**12,4 %**, và **chỗ duy nhất còn đáng tối ưu trong OCR là xuất VietOCR sang ONNX** —
+không phải detection.
+
+`OCR_RAPID_DET_ONLY=0` trả lại hành vi cũ. Chi tiết + cách tái lập:
+`docs/RESEARCH-2026-09-15-deps-perf-audit.md` §13; hợp đồng được gác bởi
+`test_ocr_det_only.py`.
+
 ## 3c. ⚠️ ĐÍNH CHÍNH (v0.2.6): RapidOCR đọc SAI dấu tiếng Việt
 
 Test trên **scan thật** (Giấy đề nghị thanh toán) phát hiện RapidOCR `LangRec.EN`

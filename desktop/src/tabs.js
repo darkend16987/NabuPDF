@@ -210,6 +210,13 @@ let _focused = null; // most-recently-focused TabbedWindow
 // Only classifyPageDrop uses it — the tab strips it does not affect.
 let _focusTick = 0;
 
+// SPELLCHECK. Every WebContentsView below passes `spellcheck: false`. Electron's
+// default is TRUE, and an enabled spellchecker fetches its Hunspell dictionary from
+// a Google CDN on first use — an outbound request this app has no business making
+// (DESIGN D2: local-first, contracts are sensitive). It buys nothing here either:
+// the renderer has no <textarea> and no [contenteditable], every <input> already
+// carries spellcheck="false", and no Vietnamese dictionary ships with Chromium, so
+// the checker would only underline correct Vietnamese as wrong.
 class TabbedWindow {
   // `bounds` (optional) places the window explicitly — used when a torn-out tab
   // should land where the user dropped it instead of at the default position.
@@ -253,6 +260,7 @@ class TabbedWindow {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        spellcheck: false, // see SPELLCHECK note above createTabbedWindow
       },
     });
     this.base.contentView.addChildView(this.strip);
@@ -347,6 +355,7 @@ class TabbedWindow {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        spellcheck: false, // see SPELLCHECK note above createTabbedWindow
       },
     });
     deps.hardenNav(view.webContents);
@@ -577,6 +586,7 @@ class TabbedWindow {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        spellcheck: false, // see SPELLCHECK note above createTabbedWindow
       },
     });
     const wc = view.webContents;

@@ -3,21 +3,43 @@
 from __future__ import annotations
 
 import logging
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# IMPORTANT (Windows): torch must load its native DLLs *before* paddle. If paddle
-# is imported first it shadows torch's MKL/OpenMP dependencies and torch then
-# fails with `OSError: [WinError 127] ... shm.dll`. Importing torch at module load
-# guarantees the correct order for every entry point, since paddle is only
-# imported lazily inside PaddleOCREngine further down.
-try:
-    import torch  # noqa: F401
-except ImportError:
-    pass
+# NOTE — torch is NOT imported here, on purpose. See `_preload_torch_for_paddle()`
+# below for the Windows DLL-ordering rule it used to enforce, and why the rule is
+# now enforced where it actually applies instead.
+
+
+def _preload_torch_for_paddle() -> None:
+    """Load torch's native DLLs BEFORE paddle's. Call right before importing paddle.
+
+    IMPORTANT (Windows): if paddle is imported first it shadows torch's MKL/OpenMP
+    dependencies and torch then fails with `OSError: [WinError 127] ... shm.dll`.
+
+    This used to be a module-level `import torch`, which guaranteed the order for
+    every entry point — but also made EVERY importer of this module pay for torch.
+    api.py imports it at module load, so the sidecar spent ~1.1 s (warm) / ~8 s
+    (cold) loading torch on every launch, and the out-of-process compress worker
+    (`sidecar.py --compress-worker`, which re-imports api) paid it again on every
+    large compress, even though neither touches OCR.
+
+    Calling it here instead is also STRICTER than the old placement: the module-level
+    import only ordered things for a process that imported this module before paddle.
+    HybridOCREngine.recognize() loads paddle (detector) before vietocr pulls torch in
+    (recognizer) — so with torch imported lazily by vietocr and nothing else, the
+    order would be wrong. This call fixes that too.
+
+    Silent on ImportError: torch is optional for the paddle-only path.
+    """
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        pass
 
 
 class BaseOCREngine(ABC):
@@ -43,6 +65,91 @@ class BaseOCREngine(ABC):
         raise NotImplementedError("This engine does not support positional OCR")
 
 
+def _vietocr_bundle_dirs() -> list[Path]:
+    """Places a bundled `models/vietocr/` may live, most specific first.
+
+    Mirrors what `src/pdf/fonts.py::_vietnamese_font` does for DejaVuSans.ttf, and for
+    the same reason: in a frozen app `sys._MEIPASS` (the onedir `_internal` folder) is
+    where PyInstaller puts collected data, while a dev checkout has it at the repo root.
+    """
+    import sys as _sys
+
+    roots: list[Path] = []
+    mei = getattr(_sys, "_MEIPASS", None)
+    if mei:
+        roots.append(Path(mei))
+    roots.append(Path(_sys.executable).resolve().parent)   # frozen: next to sidecar.exe
+    roots.append(Path(__file__).resolve().parents[2])      # dev: repo root
+    return [r / "models" / "vietocr" for r in roots]
+
+
+def _vietocr_local_config(model_name: str):
+    """Build VietOCR's config from the BUNDLED YAMLs + weights, or return None.
+
+    WHY THIS EXISTS. `Cfg.load_config_from_name()` is not a local call: vietocr 0.3.13
+    GETs two YAMLs from https://vocr.vn on EVERY Predictor construction and caches
+    nothing, and `Predictor.__init__` then downloads the 151.8 MB `vgg_transformer.pth`
+    into `tempfile.gettempdir()`. That made OCR depend on one Vietnamese host being up
+    even for a machine that had already used it, and %TEMP% is swept by Windows Storage
+    Sense — measured 286 s to become ready on a machine that HAD run OCR before.
+    Contradicts DESIGN.md D2 (local-first) and the offline promise in
+    HUONG-DAN-SU-DUNG.md §3.
+
+    Returning a config with a local `weights` path is what removes the network from the
+    picture entirely: `vietocr.tool.utils.download_weights` returns the string unchanged
+    when it does not start with "http", so no code path is left that can call out.
+
+    The base + model merge replicates `Cfg.load_config_from_name` exactly (that function
+    merges base.yml UNDER the model yaml; `Cfg.load_config_from_file` does NOT read
+    base.yml at all, which is why it cannot be used here). The yaml FILENAME comes from
+    vietocr's own `url_config` table rather than a second copy of it here, so a model
+    name we don't ship simply finds no file and falls back.
+
+    Returns a `Cfg`, or None when nothing usable is bundled.
+    """
+    try:
+        import yaml
+        from vietocr.tool.config import Cfg, url_config
+    except Exception as e:  # vietocr not installed, or its layout changed
+        logger.debug("VietOCR local config unavailable: %s", e)
+        return None
+
+    yml_name = url_config.get(model_name)
+    if not yml_name:
+        return None
+
+    for d in _vietocr_bundle_dirs():
+        base_yml, model_yml = d / "base.yml", d / yml_name
+        if not (base_yml.is_file() and model_yml.is_file()):
+            continue
+        try:
+            cfg = yaml.safe_load(base_yml.read_text(encoding="utf-8")) or {}
+            cfg.update(yaml.safe_load(model_yml.read_text(encoding="utf-8")) or {})
+        except Exception as e:
+            logger.warning("VietOCR config at %s is unreadable (%s) — falling back", d, e)
+            continue
+
+        weights = str(cfg.get("weights", ""))
+        if weights.startswith("http"):
+            local = d / weights.rsplit("/", 1)[-1]
+            if local.is_file():
+                cfg["weights"] = str(local)
+                logger.info("VietOCR: bundled config + weights (%s) — fully offline", d)
+            else:
+                # Config is local but the .pth is not. Still better than the old path
+                # (vocr.vn is no longer needed for the YAMLs), and Predictor will
+                # download the weights exactly as before. Say so loudly: a packaged
+                # build reaching this line means the build host skipped the fetch.
+                logger.warning(
+                    "VietOCR: bundled config found but %s is missing — weights will be "
+                    "DOWNLOADED (~152 MB). Run: python tools/fetch_vietocr_model.py",
+                    local.name,
+                )
+        return Cfg(cfg)
+
+    return None
+
+
 class VietOCREngine(BaseOCREngine):
     """Vietnamese OCR using VietOCR (Transformer-based, optimized for Vietnamese).
 
@@ -59,8 +166,19 @@ class VietOCREngine(BaseOCREngine):
         if self._predictor is None:
             logger.info("Loading VietOCR model: %s", self.model_name)
             from vietocr.tool.predictor import Predictor
-            from vietocr.tool.config import Cfg
-            config = Cfg.load_config_from_name(self.model_name)
+            config = _vietocr_local_config(self.model_name)
+            if config is None:
+                # No bundled model on this machine (plain dev checkout). Old behaviour:
+                # two YAML GETs to vocr.vn, then a 151.8 MB weights download into %TEMP%.
+                from vietocr.tool.config import Cfg
+                logger.warning(
+                    "VietOCR: no bundled model — fetching config + weights from vocr.vn "
+                    "(needs internet, ~152 MB once). Run: python tools/fetch_vietocr_model.py"
+                )
+                config = Cfg.load_config_from_name(self.model_name)
+            # Keep OFF. `cnn.pretrained: True` in the yaml makes torchvision download
+            # ImageNet vgg19_bn weights from download.pytorch.org — a second, larger
+            # network fetch that the fine-tuned .pth overwrites anyway.
             config["cnn"]["pretrained"] = False
             config["device"] = "cpu"
             try:
@@ -110,6 +228,9 @@ class PaddleOCREngine(BaseOCREngine):
     def ocr(self):
         if self._ocr is None:
             logger.info("Loading PaddleOCR lang=%s det=%s rec=%s", self.lang, self.det_model, self.rec_model or "default")
+            # MUST stay immediately above the paddle import — see the function's
+            # docstring for the WinError 127 it prevents.
+            _preload_torch_for_paddle()
             from paddleocr import PaddleOCR
             # PaddleOCR 3.x API: `use_angle_cls`/`show_log` removed. Disable the
             # doc-orientation, unwarping and textline-orientation sub-pipelines we
@@ -294,7 +415,12 @@ class RapidOCREngine(BaseOCREngine):
     def recognize(self, image: Image.Image) -> str:
         """Recognize text; returns lines joined in detection (reading) order."""
         import numpy as np
-        res = self.engine(np.array(image))
+        # All three named explicitly, and they are the config defaults, so this
+        # changes nothing — except that it can no longer be changed FOR us.
+        # rapidocr's update_params() writes these onto the instance and they stick,
+        # so a det-only caller sharing a RapidOCR object would otherwise leave this
+        # method silently returning no text at all. See RapidVietHybridOCREngine.
+        res = self.engine(np.array(image), use_det=True, use_cls=True, use_rec=True)
         if res is None or res.txts is None:
             return ""
         return "\n".join(res.txts)
@@ -306,7 +432,8 @@ class RapidOCREngine(BaseOCREngine):
         reduce each to an axis-aligned bbox for the invisible PDF text layer.
         """
         import numpy as np
-        res = self.engine(np.array(image))
+        # Same reason as recognize(): pin the mode, don't inherit it.
+        res = self.engine(np.array(image), use_det=True, use_cls=True, use_rec=True)
         if res is None or res.txts is None or res.boxes is None:
             return []
         out: list[tuple[str, list[float]]] = []
@@ -320,11 +447,23 @@ class RapidOCREngine(BaseOCREngine):
 class RapidVietHybridOCREngine(BaseOCREngine):
     """Detection via RapidOCR (ONNX) + recognition via VietOCR.
 
-    The fast + accurate combination: RapidOCR's ONNX detector finds text lines in
-    ~1s (no paddlepaddle, no mkldnn crash), and VietOCR — the only local engine
-    with a true Vietnamese recognizer — reads them with correct stacked diacritics
-    (ộ/ử/ấ/ề/ị). VietOCR runs the crops as a batch, so a typical page is ~3-4s warm
-    on CPU. This is the default engine and keeps paddlepaddle out of the hot path.
+    The fast + accurate combination: RapidOCR's ONNX detector finds text lines (no
+    paddlepaddle, no mkldnn crash), and VietOCR — the only local engine with a true
+    Vietnamese recognizer — reads them with correct stacked diacritics (ộ/ử/ấ/ề/ị).
+    This is the default engine and keeps paddlepaddle out of the hot path.
+
+    WHAT IT ACTUALLY COSTS, measured warm on 78 real 200-dpi A4 scanned contract
+    pages (2026-09-16), so nobody plans against a number from a toy page:
+
+        detect (this class, det-only)   1.38 s/page, flat — it barely varies
+        recognise (VietOCR)             5-26 s/page, ~0.3 s per detected line
+
+    i.e. **VietOCR is 80-95 % of the job** and it scales with how many lines are on
+    the page (24-124 boxes across this corpus, ~47 typical). Detection is noise by
+    comparison. Anyone optimising this pipeline should go straight at the recogniser
+    — realistically exporting VietOCR to ONNX — and not at detection, which is
+    already as cheap as it can usefully get. See `_detect_boxes` for what was
+    already taken out of it and docs/RESEARCH-2026-09-15-deps-perf-audit.md §13.
 
     (The plain HybridOCREngine uses PaddleOCR for detection, which loads slower and
     drags paddlepaddle into the pipeline; this class supersedes it as the default.)
@@ -335,14 +474,52 @@ class RapidVietHybridOCREngine(BaseOCREngine):
         self._recognizer = VietOCREngine(model_name=vietocr_model)
 
     def _detect_boxes(self, image: Image.Image) -> list:
-        """Run RapidOCR detection; return quad boxes (Nx4x2) in reading order.
+        """Run RapidOCR DETECTION ONLY; return quad boxes (Nx4x2) in reading order.
 
-        We run the full RapidOCR pipeline and keep only the boxes — its detector
-        returns clean line-level quads. (Detection-only mode over-segments lines
-        into words, which hurts VietOCR's per-line recognition.)
+        This used to run the whole RapidOCR pipeline (det + cls + rec) and throw the
+        recognised text away, because an old comment claimed detection-only mode
+        "over-segments lines into words, which hurts VietOCR's per-line recognition."
+
+        MEASURED ON A REAL 78-PAGE SCANNED CONTRACT (2026-09-16), and it does not:
+        det-only produced the identical box set on 70 of 78 pages, **never lost a
+        single box on any page**, and cut the detect stage from 4.17 s to 1.38 s per
+        page — -67 % of detection, which is **-12.4 % end-to-end** once VietOCR's
+        share is counted honestly (see the class docstring: VietOCR is ~81 % of the
+        work). On the 8 pages that differed it returned 14 boxes MORE, not fewer.
+
+        Those 14 extra boxes are the real trade, so state it exactly. Turning rec
+        off also turns off the two filters rapidocr applies in `build_final_output`:
+        it drops boxes whose text came back empty, then drops boxes scoring under
+        `text_score` (0.5). Both scores come from the **PP-OCR Latin recogniser** —
+        the very component this class exists to avoid, because it cannot read
+        Vietnamese diacritics. So that filter was never judging "is this text", it
+        was judging "can an English recogniser read this".
+
+        On page 72 of that corpus — the acknowledgement/signature page — what it threw
+        away was the line sitting between `Signature/ Chữ ký:` and `Date/ Ngày:`, i.e.
+        **the signature line itself**: `THS. Đoàn Văn Động`. (The name is typed
+        elsewhere on that page and survived; it is the signature block that came back
+        empty.) The other 13 extra boxes were sub-character fragments off the two round
+        stamps.
+
+        Trading 13 stray glyphs per 78 pages for the signature line and a third of the
+        detect time is the right way round. cls goes off with it: it only rotates
+        the crops fed to rec, and we re-crop from the original PIL image ourselves,
+        so it has never been able to affect this function's output.
+
+        OCR_RAPID_DET_ONLY=0 restores the old full-pipeline behaviour byte for byte.
         """
         import numpy as np
-        res = self._detector.engine(np.array(image))
+        # Passed per call, all three explicitly, on purpose: rapidocr's
+        # update_params() SETS THESE ON THE INSTANCE and they stick for every later
+        # call. Naming all three each time means this engine's mode can never be
+        # left behind by some other caller's flags.
+        det_only = os.getenv("OCR_RAPID_DET_ONLY", "1") != "0"
+        res = self._detector.engine(
+            np.array(image), use_det=True, use_cls=not det_only, use_rec=not det_only
+        )
+        # NB: det-only returns TextDetOutput, full returns RapidOCROutput. Both
+        # carry `.boxes`, which is all this function reads.
         if res is None or res.boxes is None:
             return []
         boxes = [np.asarray(b, dtype=float) for b in res.boxes]

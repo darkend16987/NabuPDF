@@ -2112,6 +2112,76 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   **âm thầm** ngừng chạy cho một kind vốn vẫn chạy (thu nhầm).
 - Lưới: `npm run test:clip` §1 — `SHARE_EXTRA` được so khớp **đúng bằng** `{check, cross}`.
 
+### BI-83 · Electron 44 xoá `clipboard.writeImage`/`readImage` — hai nhánh dưới đây **đều là mã sống**
+- `desktop/src/main.js`: handler `clipboard:write-image` / `clipboard:read-image`.
+- **Luật:** rẽ nhánh bằng `typeof clipboard.writeImage === "function"`, tức theo **cái runtime
+  thật sự có**, không theo số phiên bản và không theo `process.versions.electron`. Chỉ được xoá
+  nhánh cũ khi sàn tối thiểu đã là Electron ≥ 44 ở **mọi** nơi build.
+- **`nativeImage.createFromBuffer(...).isEmpty()` phải đứng TRƯỚC cả hai nhánh.** Nhánh 44 chỉ
+  gọi `clipboard.write()` và `await` nó — API mới **resolve kể cả khi không ghi được gì**, nên
+  nếu bỏ chốt giải mã thì payload hỏng sẽ trả `{ok:true}` mà clipboard vẫn trống.
+- **Vỡ khi:** "Sao chép ảnh"/"Dán ảnh vào trang" im lặng không làm gì (nhánh sai được chọn), hoặc
+  `{ok:true}` dối trá.
+- ⚠️ **Không kiểm được bằng máy ở đây:** shell của phiên phát triển không có quyền window station
+  tương tác (`clip.exe` → "Access is denied"), nên vòng ghi–đọc clipboard **không pass trên bất kỳ
+  Electron nào. Phải test tay.** Xem `docs/RESEARCH-2026-09-15-deps-perf-audit.md` §14.8.
+
+### BI-84 · `PrinterInfo.isDefault` không còn do Electron cấp — main phải tự đắp lại
+- `desktop/src/main.js`: `osDefaultPrinterName()` + handler `print:printers`.
+  `desktop/renderer/app.js`: `populatePrinters()` đọc `p.isDefault`.
+- **Luật:** hợp đồng với renderer là `p.isDefault`, **giữ nguyên**. Nếu runtime đã điền cờ
+  (Electron ≤ 43) thì **không được đụng vào danh sách**; chỉ khi không có cờ nào mới đọc
+  `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows` value `Device` và gắn cờ.
+- **Vì sao không phải chuyện thẩm mỹ:** mất cờ thì combo box rơi vào **máy in đầu danh sách**,
+  không lỗi, không cảnh báo — mà máy mặc định trên máy đo là **driver A3** (xem
+  `nabu-print-sheet-fit`), tức là in ra **sai khổ giấy**.
+- **Vỡ khi:** không máy in nào được chọn sẵn, hoặc **nhiều hơn một** máy in bị gắn `isDefault`.
+- Lưới: probe CDP gọi thật `window.desktop.getPrinters()` và đòi **đúng 1** cờ (§14.5).
+
+### BI-85 · Từ Electron 43, thiếu `defaultPath` nghĩa là **Downloads**, không phải "thư mục lần trước"
+- `desktop/src/main.js`: `openDefault()` / `saveDefault()` / `rememberDir()`.
+  `desktop/src/prefs.js`: `DIR_KEYS` · `getLastDir` · `setLastDir`.
+- **Luật:** mọi `showOpenDialog`/`showSaveDialog` phải **vừa** truyền `defaultPath` từ ngăn của nó
+  **vừa** ghi lại thư mục người dùng chọn. Bỏ sót một nửa là hộp thoại quên, đúng bằng hành vi mà
+  bản vá này sinh ra để chặn.
+- **Bốn ngăn riêng, không dùng chung một biến:** `open-pdf` / `save-pdf` / `open-files` /
+  `save-file`. Gộp lại là lưu một file xlsx sẽ đổi luôn nơi "Mở PDF" bắt đầu lần sau.
+- **Giá trị này đi thẳng vào một hộp thoại native**, nên `setLastDir` chỉ nhận đường dẫn **tuyệt
+  đối** và **bucket có trong `DIR_KEYS`**; `prefs.json` là file người dùng sửa tay được.
+- **`write()` không được ghi `lastDirs` khi rỗng** — `test:tabs` chốt hình dạng file đúng bằng
+  `{v:1, openIn:"window"}`, và người chưa mở hộp thoại nào thì file của họ phải không đổi một byte.
+- Lưới: `npm run test:tabs` — 17 assertion cho `lastDirs` (lọc, ngăn riêng, còn sau restart, rác
+  trên đĩa bị bỏ).
+
+### BI-86 · Hash CSP của script chống nháy theme — gắn với TỪNG BYTE, và hỏng trong im lặng
+- `desktop/src/main.js`: directive `script-src` trong chuỗi `csp`.
+  `desktop/renderer/index.html:7` và `desktop/renderer/view.html:8`: thẻ `<script>` inline.
+- **Bối cảnh:** CSP của app đã chặn đúng đoạn script này **suốt cả Electron 33 lẫn 44** ⇒
+  theme chỉ áp muộn từ `app.js` ⇒ nền tối **nháy trắng mỗi lần mở tab/cửa sổ**. Dấu vết
+  duy nhất nằm trong log runtime, không có lỗi nào nổi lên UI.
+- **Luật 1 — hash viết THẲNG vào chuỗi CSP**, không giấu sau hằng số có tên. Lưới gác đọc
+  `main.js` như **văn bản**; một lớp gián tiếp làm nó xanh mà không chứng minh gì (đã xảy
+  ra ở lần thử đầu, và lưới bắt được).
+- **Luật 2 — hai script theme phải TRÙNG TỪNG BYTE.** Hôm nay chúng giống hệt nhau, nên
+  **một** hash phủ cả hai. Sửa một file mà quên file kia = file kia bị chặn lại lặng lẽ.
+- **Luật 3 — `error.html` / `loading.html` KHÔNG được cấp hash.** `grep` cả repo không có
+  chỗ nào nạp chúng. Cấp quyền chạy cho script của trang chết là mở bề mặt chính sách để
+  đổi lấy số không. Nếu có ngày nối chúng vào app thì phải cấp hash cùng lúc.
+- **Luật 4 — hash làm script CHẠY ĐƯỢC; VỊ TRÍ mới là thứ chống nháy.** Thẻ phải nằm
+  trong `<head>`, **trước** `<link rel=stylesheet>` đầu tiên, và **không** `async`/`defer`.
+  Dời xuống hay thêm `defer` là nháy trắng quay lại **trong khi CSP vẫn xanh và log vẫn
+  sạch** — không có tín hiệu nào khác ngoài lưới này.
+- **Vỡ khi:** người nền tối thấy chớp trắng mỗi lần mở tab (không ai báo lỗi, vì không có lỗi).
+- **Cách đo lại, đừng đo sai:** chạy app **không cổng debug** với
+  `--enable-logging=file --log-file=<path>` rồi đếm `"Content Security Policy"` trong log.
+  ⚠️ **KHÔNG** thử bằng `eval()` qua DevTools `Runtime.evaluate` — nó **được miễn trừ CSP
+  của trang** nên luôn báo "allowed"; đó là một dương tính giả đã tốn hẳn một vòng truy lỗi.
+  Muốn thử trong trang thì **chèn một `<script>` inline vào DOM**.
+  ⚠️ `--user-data-dir` là bắt buộc (xem BI-85 / SETUP.md §2).
+- Lưới: `npm run test:tabs` — tự tính lại hash từ HTML rồi đối chiếu `script-src`, cộng 4
+  assertion vị trí thẻ. Đã kiểm bằng đột biến: bỏ hash / đổi một dấu cách / thêm `defer` /
+  dời xuống dưới CSS đều làm lưới đỏ.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |

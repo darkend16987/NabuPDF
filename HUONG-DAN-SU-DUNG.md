@@ -73,15 +73,18 @@ Chỉ cần **một file duy nhất**:
    có thể hiện "Windows protected your PC". Bấm **More info → Run anyway** (Thêm thông tin → Vẫn chạy).
    Đây là cảnh báo bình thường cho phần mềm tự đóng gói, không phải virus.
 
-2. **Engine OCR khởi động chậm lần đầu** — góc phải app có badge **"OCR: …"**. App PDF dùng được
-   **ngay lập tức**, nhưng engine OCR (chạy ngầm) cần ~10–40 giây để tải xong. Khi badge chuyển
-   **"OCR: sẵn sàng"** thì các nút Searchable / Bóc tách mới bật.
+2. **Engine OCR khởi động ngầm** — góc phải app có badge **"OCR: …"**. App PDF dùng được
+   **ngay lập tức**; engine chạy ngầm và thường sẵn sàng trong khoảng **1–2 giây**. Khi badge
+   chuyển **"OCR: sẵn sàng"** thì các nút Searchable / Bóc tách mới bật.
 
-3. **Lần OCR đầu tiên cần Internet** — model nhận dạng chữ (PaddleOCR + VietOCR) **không** nằm trong
-   file `.exe`; lần đầu dùng OCR/Searchable/Bóc tách trên một máy mới, chúng tự tải về (~vài trăm MB)
-   và lưu vào cache của máy đó. **Các lần sau chạy offline bình thường.**
-   → Mẹo: nếu máy đích không có mạng, hãy mở app + chạy thử OCR 1 lần ở nơi **có mạng** trước, để nó
-   tải model; sau đó mang sang chỗ không mạng vẫn dùng được.
+3. **OCR chạy offline hoàn toàn — không cần Internet** *(từ bản này trở đi)*
+   Model nhận dạng chữ tiếng Việt đã **nằm sẵn trong bộ cài**. Cắm máy không mạng, cài xong là
+   OCR / Searchable dùng được ngay từ lần đầu.
+   > Trước đây model được **tải về lúc dùng lần đầu** (~152 MB từ một máy chủ ngoài) và cất vào thư
+   > mục tạm của Windows — mà Windows dọn thư mục đó định kỳ, nên có máy phải tải lại. Đo thực tế:
+   > **286 giây** chỉ để sẵn sàng OCR trang đầu, trên máy đã từng dùng OCR thành công. Nay không còn.
+
+   Chỉ **Bóc tách hợp đồng bằng AI** là vẫn cần mạng, vì nó gọi Gemini (mục 6).
 
 ---
 
@@ -94,10 +97,10 @@ Chỉ cần **một file duy nhất**:
 | **Sửa chữ gốc** · **Nén PDF** | ❌ Không | Offline (dùng thư viện PDF gói sẵn). |
 | **Ẩn trang bằng mật khẩu** (mục 5) | ❌ Không | Offline hoàn toàn, **không cần cả engine OCR**: mã hoá chạy ngay trong app. Mật khẩu không rời máy bạn và không được lưu ở đâu cả. |
 | **Ký số** bằng USB token (mục 5.1) | ⚠️ Chỉ TSA | Bản thân việc ký chạy offline (token + kho chứng thư Windows). Chỉ **dấu thời gian (TSA)** cần mạng — để trống ô đó thì ký offline hoàn toàn. |
-| **So sánh** 2 PDF · **So sánh & Chồng lớp bản vẽ** (CAD/Revit) | ⚠️ Cần engine | Cần engine bật (badge OCR). Bản vẽ chạy offline; PDF scan cần tải model OCR như mục 3.3. |
+| **So sánh** 2 PDF · **So sánh & Chồng lớp bản vẽ** (CAD/Revit) | ❌ Không | Cần engine bật (badge OCR), nhưng engine chạy offline — model đã nằm trong bộ cài (mục 3.3). |
 | **Chuyển đổi**: Khoá file (đặt mật khẩu) · Xuất ảnh trong PDF · Trang PDF → ảnh · Ảnh → PDF | ❌ Không | Offline (thư viện PDF gói sẵn). Gom trong nút **Chuyển đổi** trên thanh công cụ + menu "Chuyển đổi". |
-| **Searchable** (PDF tìm-kiếm-được) | ⚠️ Lần đầu | Cần engine OCR; lần đầu/máy mới tải model (mục 3.3). |
-| **Bóc tách** hợp đồng (OCR + AI) | ✅ Có | Cần model OCR **và** key AI (mục 6). |
+| **Searchable** (PDF tìm-kiếm-được) | ❌ Không | Cần engine OCR, nhưng chạy offline — model đã nằm trong bộ cài (mục 3.3). |
+| **Bóc tách** hợp đồng (OCR + AI) | ✅ Có | Phần OCR chạy offline; phần **AI** gọi Gemini nên cần mạng + key AI (mục 6). |
 
 > 💡 **Mẹo kéo–thả ở cột trang (thumbnail):**
 > - **Sắp xếp trang:** kéo một trang thả lên trang khác để đổi vị trí.
@@ -412,12 +415,12 @@ Nhập key **ngay trong app**, không cần đụng tới file hay biến môi t
 
 | Hiện tượng | Cách xử lý |
 |-----------|-----------|
-| Badge kẹt ở "OCR: …" mãi không sẵn sàng | Lần đầu đang tải model (cần mạng) — chờ; hoặc máy đang tải xong. Nếu sau vài phút vẫn lỗi → kiểm tra mạng. |
-| "OCR: lỗi" | Thường do lần đầu không có mạng để tải model, hoặc thiếu RAM. Nối mạng rồi mở lại app. |
+| Badge kẹt ở "OCR: …" mãi không sẵn sàng | Bình thường chỉ 1–2 giây. Kẹt lâu → máy thiếu RAM, hoặc phần mềm diệt virus đang quét engine lần đầu. Thử ⚙ → Khởi động lại engine. |
+| "OCR: lỗi" | Thường do thiếu RAM, hoặc engine bị diệt virus chặn. Đóng bớt ứng dụng rồi mở lại app. Không liên quan đến mạng — OCR chạy offline. |
 | SmartScreen chặn | More info → Run anyway (mục 3.1). |
 | Bóc tách báo thiếu key | Bấm ⚙ → dán API key → Lưu (mục 6). |
-| App mở chậm lần đầu | Bình thường — engine OCR tải ngầm ở lần dùng đầu. Lần sau nhanh hơn. |
-| Máy yếu, OCR chậm | Engine chạy trên CPU; PDF nhiều trang sẽ lâu. Các thao tác PDF thường (xem/ghép/sửa chữ) vẫn nhanh. |
+| App mở chậm lần đầu | Bình thường — Windows/diệt virus quét file lần đầu. Lần sau nhanh hơn. |
+| Máy yếu, OCR chậm | Engine chạy trên CPU. Đo trên một hợp đồng scan A4 thật: **khoảng 7–27 giây mỗi trang**, tuỳ trang có bao nhiêu dòng chữ — một bộ 78 trang mất cỡ **20–25 phút**. Đó là bình thường, không phải treo. Các thao tác PDF thường (xem/ghép/sửa chữ) vẫn nhanh và **dùng được song song** ở thẻ khác. |
 | Nén file lớn chạy lâu | Bình thường. Hộp thoại **Nén** hiện **ước tính thời gian** ngay khi mở — thời gian phụ thuộc **dung lượng file**, gần như không phụ thuộc số trang. Trong lúc nén **không dừng lại được**, nhưng **các thẻ khác vẫn dùng được bình thường**. |
 | Nén file rất lớn thì máy ì | Lúc nén, file được giữ đồng thời ở vài nơi nên cần khoảng **gấp 4 lần dung lượng file** bộ nhớ trống. Từ ~**300MB** app sẽ hỏi lại trước khi chạy. Nếu máy 8GB RAM: nên dừng ở khoảng 300–400MB. |
 

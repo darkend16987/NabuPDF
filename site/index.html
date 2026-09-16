@@ -168,53 +168,56 @@
       <div class="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-orange-50/60 p-7 shadow-card md:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Mới</span>
-          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.69</span> · 08/09/2026</span>
+          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.70</span> · 16/09/2026</span>
           <a href="/lich-su-phien-ban.html" class="ml-auto text-sm font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">Xem toàn bộ lịch sử →</a>
         </div>
 
-        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Xem hai tài liệu cạnh nhau, trong một cửa sổ</h2>
+        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">OCR thôi cần mạng — và thôi bỏ sót dòng chữ ký</h2>
 
         <div class="mt-6 grid gap-6 md:grid-cols-2">
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M12 3v18"/></svg>
-              Chia đôi màn hình <code class="rounded bg-white px-1.5 py-0.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-200">Ctrl + \</code>
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M8.5 16.4a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.2-2.7"/><path d="M19 12.9a10 10 0 0 0-2-1.5"/><path d="M2 8.8a15 15 0 0 1 4.2-2.6"/><path d="M22 8.8A15 15 0 0 0 10.7 5"/><path d="m2 2 20 20"/></svg>
+              Lần OCR đầu tiên không còn phải chờ tải
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Cửa sổ tách làm hai: bên trái là tài liệu bạn đang sửa, bên phải là một khung xem
-              <b>chỉ đọc</b>. Đọc bản vẽ cũ trong khi đánh dấu bản mới — hoặc mở <b>chính file đang sửa</b>
-              lần thứ hai để xem trang 40 trong lúc làm trang 5. Kéo rãnh giữa để đổi tỷ lệ; bố cục đó
-              được nhớ cho lần mở app sau.
+              Trước đây, lần đầu bạn bấm OCR trên một máy mới, app phải tải <b>151,8 MB</b> bộ nhận dạng
+              tiếng Việt từ một máy chủ bên ngoài. Đo thực tế: <b>286 giây</b> mới sẵn sàng đọc trang đầu —
+              và nếu máy chủ đó trục trặc thì OCR không chạy được, <b>kể cả khi bạn không cần mạng cho
+              việc gì khác</b>. Tệ hơn: bản tải về nằm ở thư mục tạm của Windows, nên Windows dọn dẹp là
+              lần sau tải lại từ đầu.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Khung bên phải cố ý <b>không sửa được</b> — nhờ vậy mở cùng một file hai lần là an toàn:
-              chỉ một khung ghi được, không có chuyện bản lưu này đè mất bản lưu kia. Bấm
-              <code class="rounded bg-white px-1 py-0.5 text-xs ring-1 ring-slate-200">Ctrl+S</code> ở khung
-              chính là khung xem tự nạp lại và <b>giữ nguyên trang bạn đang đọc</b>.
+              Nay bộ nhận dạng nằm sẵn <b>trong bộ cài</b>. Cắm máy không mạng, OCR vẫn chạy ngay từ lần
+              đầu. Đổi lại, <b>file cài nặng thêm khoảng 120 MB</b> — tải một lần, đổi lấy việc không bao
+              giờ phải chờ nữa.
             </p>
           </div>
 
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              Copy dấu ✓ / ✗ sang file PDF khác
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
+              Đọc nhanh hơn, và đọc được chỗ trước đây bị bỏ
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Đánh dấu tích một lần cho vừa ý — đúng cỡ, đúng màu — rồi
-              <code class="rounded bg-white px-1 py-0.5 text-xs ring-1 ring-slate-200">Ctrl+C</code> /
-              <code class="rounded bg-white px-1 py-0.5 text-xs ring-1 ring-slate-200">Ctrl+V</code> sang
-              trang khác, tab khác hoặc <b>file khác</b>, y như hộp văn bản. Tiện khi phải tick cùng một
-              ô trên hàng chục bộ hồ sơ.
+              Chúng tôi đem một bộ hợp đồng scan <b>78 trang</b> ra đo lại từ đầu. Khâu dò dòng chữ nhanh
+              hơn <b>ba lần</b>, và không trang nào bị sót dòng so với cách cũ.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Nhớ copy khi còn đang ở chế độ <b>Chú thích</b>, trước khi bấm <b>Xong</b>: bấm Xong là dấu
-              tích thành hình trên trang và không chọn lại được nữa.
+              Quan trọng hơn tốc độ: ở <b>trang ký</b>, cách cũ trả về <b>khối chữ ký trống</b>. Dòng tên
+              người ký nằm giữa “Chữ ký:” và “Ngày:” bị một bộ lọc bên trong loại bỏ — vì bộ lọc ấy chấm
+              điểm bằng một trình đọc chữ <b>không đọc được dấu tiếng Việt</b>. Nó không hỏi “đây có phải
+              chữ không”, nó hỏi “trình đọc tiếng Anh có đọc nổi không”. Nay dòng đó được đọc ra.
             </p>
           </div>
         </div>
 
         <p class="mt-6 text-sm text-ink-muted">
-          Cột trang giờ tự thu lại khi khung hẹp đi, nên khung chính không còn bị cột trang ăn mất chỗ.
+          Kèm theo, phần lớn là những thứ bạn chỉ thấy khi chúng biến mất: app <b>mở nhanh gấp đôi</b>,
+          nén file nhanh hơn <b>ba lần</b>; bản vẽ khổ lớn ở màn <b>So sánh</b> và <b>Chồng lớp</b> không
+          còn <b>trắng trang</b> khi phóng to, và cuộn một tài liệu dài không còn ngốn bộ nhớ; nền tối
+          thôi <b>nháy trắng</b> mỗi lần mở thẻ mới; hộp thoại Mở / Lưu <b>nhớ thư mục lần trước</b>. Nền
+          trình duyệt bên trong app cũng được nâng lên bản mới nhất — bản cũ đã hết được vá lỗi bảo mật.
           App tự cập nhật — thường bạn không cần tải lại bằng tay.
         </p>
       </div>

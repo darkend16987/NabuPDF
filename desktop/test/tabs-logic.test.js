@@ -546,6 +546,116 @@ fsx.writeFileSync(prefsFile, JSON.stringify({ v: 1, openIn: "elsewhere" }));
 Prefs.configure({ file: prefsFile });
 check("giá trị hỏng trên đĩa → bỏ qua", Prefs.getOpenIn(), "tab");
 
+// --- lastDirs: thư mục hộp thoại mở lần trước -------------------------------
+// Electron 43 bỏ việc để HĐH nhớ thư mục cuối (thiếu `defaultPath` = Downloads,
+// mọi lần). prefs.js nhớ hộ, nên giá trị này đi thẳng vào một hộp thoại native →
+// phải lọc y như openIn: chỉ nhận bucket hợp lệ và đường dẫn TUYỆT ĐỐI.
+fsx.writeFileSync(prefsFile, JSON.stringify({ v: 1, openIn: "tab" }));
+Prefs.configure({ file: prefsFile });
+check("chưa dùng hộp thoại nào → không nhớ gì", Prefs.getLastDir("open-pdf"), null);
+check("bucket lạ → null, không ném", Prefs.getLastDir("open-zip"), null);
+
+const absDir = process.platform === "win32" ? "D:\\HopDong\\2026" : "/srv/hopdong/2026";
+check("nhớ được thư mục tuyệt đối", Prefs.setLastDir("open-pdf", absDir), absDir);
+check("… và đọc lại đúng", Prefs.getLastDir("open-pdf"), absDir);
+check("… bucket khác vẫn trống (không dùng chung)", Prefs.getLastDir("save-pdf"), null);
+Prefs.configure({ file: prefsFile });
+check("… còn sau khi khởi động lại", Prefs.getLastDir("open-pdf"), absDir);
+
+check("đường dẫn TƯƠNG ĐỐI bị từ chối", Prefs.setLastDir("open-pdf", "..\\..\\Windows"), absDir);
+check("chuỗi rỗng bị từ chối", Prefs.setLastDir("open-pdf", ""), absDir);
+check("null bị từ chối", Prefs.setLastDir("open-pdf", null), absDir);
+check("object bị từ chối", Prefs.setLastDir("open-pdf", { dir: absDir }), absDir);
+check("bucket lạ không ghi được gì", Prefs.setLastDir("open-zip", absDir), null);
+check("… và không lọt vào file", JSON.parse(fsx.readFileSync(prefsFile, "utf8")).lastDirs["open-zip"], undefined);
+
+// Junk on disk must not reach a native dialog either.
+fsx.writeFileSync(
+  prefsFile,
+  JSON.stringify({ v: 1, openIn: "tab", lastDirs: { "open-pdf": "relative/path", "save-pdf": 42, "open-zip": absDir } })
+);
+Prefs.configure({ file: prefsFile });
+check("trên đĩa: tương đối → bỏ", Prefs.getLastDir("open-pdf"), null);
+check("trên đĩa: không phải chuỗi → bỏ", Prefs.getLastDir("save-pdf"), null);
+check("trên đĩa: bucket lạ → bỏ", Prefs.getLastDir("open-zip"), null);
+fsx.writeFileSync(prefsFile, JSON.stringify({ v: 1, openIn: "tab", lastDirs: "nope" }));
+Prefs.configure({ file: prefsFile });
+check("trên đĩa: lastDirs không phải object → không ném", Prefs.getLastDir("open-pdf"), null);
+
+// --- mọi hộp thoại PHẢI nối vào bộ nhớ thư mục ------------------------------
+// Assertion trên SOURCE, vì `dialog.showOpenDialog` đợi người dùng bấm nên không có
+// cách nào chạy nó bằng máy. Lỗ hổng mà nó gác là lỗ hổng duy nhất còn lại của BI-85:
+// thêm một hộp thoại thứ 7 và quên nối — hộp đó sẽ lặng lẽ mở ở Downloads mãi mãi,
+// đúng bằng hành vi mà bản vá này sinh ra để chặn. Không lỗi, không log.
+const mainSrc = fsx.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+for (const [kind, helper] of [["showOpenDialog", "openDefault("], ["showSaveDialog", "saveDefault("]]) {
+  const calls = [...mainSrc.matchAll(new RegExp("dialog\\." + kind + "\\(", "g"))];
+  check(`main.js: tìm thấy lời gọi ${kind}`, calls.length > 0, true);
+  let wired = 0;
+  let remembered = 0;
+  for (const m of calls) {
+    // Phạm vi tra: đủ dài để trùm hết object tuỳ chọn, và (cho rememberDir) phần
+    // xử lý kết quả ngay sau nó.
+    if (mainSrc.slice(m.index, m.index + 500).includes(helper)) wired++;
+    if (mainSrc.slice(m.index, m.index + 1200).includes("rememberDir(")) remembered++;
+  }
+  check(`… cả ${calls.length} lời gọi ${kind} đều truyền ${helper}`, wired, calls.length);
+  check(`… và cả ${calls.length} đều ghi lại thư mục đã chọn`, remembered, calls.length);
+}
+
+// --- CSP: mọi inline <script> của trang ĐANG DÙNG phải có hash trong chính sách ---
+//
+// Đây là lưới gác cho một lỗi đã xảy ra thật: CSP trong main.js chặn đúng đoạn script
+// đặt `data-theme` trước lần vẽ đầu ở index.html/view.html, nên nền tối nháy trắng mỗi
+// lần mở tab — suốt cả Electron 33 lẫn 44, và dấu vết duy nhất nằm trong log runtime.
+// Hash gắn với TỪNG BYTE của script, nên sửa một dấu cách là nó bị chặn lại mà không
+// có lỗi nào. Vì vậy test này **tự tính lại hash từ HTML** rồi đòi main.js có đúng nó —
+// không hard-code chuỗi hash ở hai nơi rồi hy vọng chúng trùng nhau.
+const crypto = require("crypto");
+const RENDERER_DIR = path.join(__dirname, "..", "renderer");
+
+// Các trang THỰC SỰ được nạp (tabs.js loadFile). error.html/loading.html không được
+// tham chiếu ở đâu trong repo — cố ý không cấp hash cho script của trang không chạy.
+const LIVE_PAGES = ["index.html", "view.html", "shell.html"];
+
+function inlineScriptHashes(file) {
+  const src = fsx.readFileSync(path.join(RENDERER_DIR, file), "utf8").replace(/\r\n?/g, "\n");
+  const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(src))) {
+    out.push("sha256-" + crypto.createHash("sha256").update(m[1], "utf8").digest("base64"));
+  }
+  return out;
+}
+
+const scriptSrc = (mainSrc.match(/script-src[^;]*/) || [""])[0];
+check("main.js: tìm thấy directive script-src", scriptSrc.length > 0, true);
+let totalInline = 0;
+for (const page of LIVE_PAGES) {
+  for (const h of inlineScriptHashes(page)) {
+    totalInline++;
+    check(`${page}: hash inline script có trong script-src`, scriptSrc.includes(h), true);
+  }
+}
+// Nếu con số này về 0 thì hai vòng lặp trên không kiểm gì cả mà vẫn xanh.
+check("có ít nhất một inline script được gác (lưới không rỗng)", totalInline > 0, true);
+
+// Hash chỉ làm script CHẠY ĐƯỢC. Thứ làm nó chống được nháy trắng là **vị trí**: thẻ
+// <script> phải đứng trước <link rel=stylesheet> và không có async/defer, để parser
+// dừng lại chạy nó khi trang chưa có nội dung nào để vẽ. Dời nó xuống dưới, hoặc thêm
+// `defer`, là nháy trắng quay lại y như cũ — CSP vẫn xanh, log vẫn sạch, không ai biết.
+for (const page of ["index.html", "view.html"]) {
+  const src = fsx.readFileSync(path.join(RENDERER_DIR, page), "utf8");
+  const themeTag = /<script(?![^>]*\bsrc=)([^>]*)>\s*try\s*\{\s*var t\s*=\s*localStorage/.exec(src);
+  check(`${page}: có script đặt theme trước khi vẽ`, !!themeTag, true);
+  if (!themeTag) continue;
+  check(`${page}: … không có async/defer (phải chặn parser)`, /async|defer/.test(themeTag[1]), false);
+  const firstCss = src.indexOf('<link rel="stylesheet"');
+  check(`${page}: … đứng TRƯỚC stylesheet đầu tiên`, themeTag.index < firstCss && firstCss > 0, true);
+  check(`${page}: … và nằm trong <head>`, themeTag.index < src.indexOf("</head>"), true);
+}
+
 try {
   fsx.rmSync(path.dirname(prefsFile), { recursive: true, force: true });
 } catch (_) {

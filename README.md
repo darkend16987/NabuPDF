@@ -158,9 +158,17 @@ Nabu-PDF/
 
 ### RapidViet (mặc định) ⭐
 - **Detection bằng RapidOCR (ONNX)** + **recognition bằng VietOCR** — nhanh *và* đúng dấu
-- Detector ONNX tìm dòng ~1s (không cần paddlepaddle, hết crash mkldnn); VietOCR là
-  engine cục bộ duy nhất đọc đúng dấu chồng tiếng Việt (ộ/ử/ấ/ề/ị), chạy crop theo batch
-- ~3-4s/trang (ấm) trên CPU; trả về toạ độ cho searchable PDF
+- Detector ONNX chạy **detection-only** (`use_cls=False, use_rec=False`), không cần
+  paddlepaddle, hết crash mkldnn; VietOCR là engine cục bộ duy nhất đọc đúng dấu chồng
+  tiếng Việt (ộ/ử/ấ/ề/ị), chạy crop theo batch
+- **Chạy offline hoàn toàn** từ v0.2.70: config + weights VietOCR nằm trong bộ cài
+  (`models/vietocr/`), không còn gọi `vocr.vn` lúc chạy. Dev lấy model bằng
+  `python tools/fetch_vietocr_model.py` (ghim SHA256); `npm run build:sidecar` tự gọi.
+- **Số đo thật** (78 trang A4 scan @ 200 dpi, CPU, ấm — không phải trang đồ chơi):
+  detect **1,38 s/trang** phẳng · VietOCR **5–26 s/trang** tuỳ số dòng (~0,3 s/dòng,
+  24–124 dòng/trang). Tức **VietOCR là ~81 % công việc** — muốn nhanh hơn nữa thì phải
+  export VietOCR sang ONNX, không phải tối ưu detection. Trả về toạ độ cho searchable PDF.
+- `OCR_RAPID_DET_ONLY=0` trả lại pipeline cũ (det+cls+rec) nếu cần đối chứng.
 
 > ⚠️ Recognizer PP-OCR đa ngữ/latin (RapidOCR EN/LATIN, PaddleOCR 3.x) **làm hỏng dấu
 > tiếng Việt** — dict của model **thiếu** ký tự dấu chồng (ạ/ấ/ộ/ợ/ử...). Vì vậy phần

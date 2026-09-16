@@ -131,5 +131,30 @@ ok(`cạnh lớn nhất trong lưới (${Math.round(worstSide)} px) <= 12000`, w
 ok("và vì thế cách vách 268 MP của Chromium rất xa", worstArea < 268);
 ok("và vách 16384 px của Skia rất xa", worstSide < 16384);
 
+// ---- 3. EVERY page rasteriser must go through the cap -----------------------
+//
+// This is the "dies by halves" failure raster-cap.js warns about in its own header —
+// and it had already happened. That header names two callers (app.js, view.js) while
+// compare.js, the view aimed at large-format CAD drawings and therefore the exact case
+// the cap exists for, sized its canvases straight from devicePixelRatio. An A0 sheet at
+// that view's 400% ceiling with dpr 2 asks for ~514 MP, i.e. it rendered BLANK with no
+// error anywhere.
+//
+// So this guard is structural, not arithmetic: any renderer that sizes an on-screen page
+// canvas from a pdf.js viewport has to go through the one definition. Grep-shaped on
+// purpose — a re-derived copy of the formula would not satisfy it.
+const fs = require("fs");
+const RENDERER = path.join(__dirname, "..", "renderer");
+// editor.js is deliberately NOT in this list: its rasterRedacted() burns pixels INTO the
+// saved PDF at a fixed RS = 2 (~144 dpi; an A0 page is then 32 MP, well clear of the
+// 268 MP cliff). Capping an OUTPUT raster would degrade the file the user keeps, not
+// just what is on screen.
+for (const file of ["app.js", "view.js", "compare.js"]) {
+  const src = fs.readFileSync(path.join(RENDERER, file), "utf8");
+  ok(`${file} rasterises through window.RasterCap`, src.includes("RasterCap.viewRasterDpr"));
+  const rawDpr = /canvas\.(width|height)\s*=\s*Math\.\w+\(\s*vp\.(width|height)\s*\*\s*dpr\s*\)/.test(src);
+  ok(`${file} does not size a page canvas straight from dpr`, !rawDpr);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

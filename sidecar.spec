@@ -42,7 +42,38 @@ HEAVY_PACKAGES = (
     "matplotlib",  # provides DejaVuSans.ttf for the Vietnamese text layer / text-edit
 )
 
-datas, binaries, hiddenimports = [], [], []
+# ---------------------------------------------------------------------------
+# The VietOCR model, shipped INSIDE the app (see tools/fetch_vietocr_model.py)
+# ---------------------------------------------------------------------------
+#
+# Without this, vietocr 0.3.13 fetches its model at RUNTIME: two YAML GETs to
+# vocr.vn on every Predictor construction (cached nowhere), then a 151.8 MB
+# vgg_transformer.pth download into tempfile.gettempdir() — %TEMP%, which Windows
+# Storage Sense sweeps. Measured 286 s to become ready on a machine that had already
+# run OCR successfully. src/ocr/engine.py::_vietocr_local_config looks for these files
+# under sys._MEIPASS first, so bundling them here is what makes OCR genuinely offline
+# (DESIGN.md D2) and kills the dependency on one Vietnamese host staying up.
+#
+# The .pth is NOT in git. A build host that skipped the fetch still produces a WORKING
+# app — engine.py falls back to the old download path — but it ships the very problem
+# this exists to fix, so say so loudly rather than failing the build silently.
+import os as _os
+
+# SPECPATH is injected by PyInstaller: the directory holding this spec (= repo root).
+_VIETOCR_DIR = _os.path.join(SPECPATH, "models", "vietocr")
+_VIETOCR_FILES = ("base.yml", "vgg-transformer.yml", "vgg_transformer.pth")
+
+vietocr_datas = []
+for _name in _VIETOCR_FILES:
+    _src = _os.path.join(_VIETOCR_DIR, _name)
+    if _os.path.isfile(_src):
+        vietocr_datas.append((_src, _os.path.join("models", "vietocr")))
+    else:
+        print(f"[sidecar.spec] *** MISSING {_src}")
+        print("[sidecar.spec] *** OCR will fall back to downloading from vocr.vn at first use.")
+        print("[sidecar.spec] *** Fix with:  python tools/fetch_vietocr_model.py")
+
+datas, binaries, hiddenimports = list(vietocr_datas), [], []
 for pkg in HEAVY_PACKAGES:
     try:
         d, b, h = collect_all(pkg)
@@ -107,12 +138,73 @@ a = Analysis(
     runtime_hooks=[],
     # Hard-exclude the paddle stack so a build host that still has it installed
     # doesn't drag ~400MB back in via some transitive collect. RapidViet is default.
+    #
+    # pyarrow + altair ride in behind streamlit (the Streamlit web UI in app.py, which
+    # the desktop sidecar never runs). pyarrow alone was 78 MB of the bundle. Verified
+    # safe by running the whole test suite and an OCR smoke with all three blocked at
+    # sys.meta_path: RapidViet still loaded and read the page identically.
+    #
+    # DO NOT add scikit-learn here, however tempting its 12.5 MB looks: albumentations
+    # imports it at MODULE LOAD, albumentations is a hard dependency of vietocr, and
+    # `from vietocr.tool.predictor import Predictor` therefore dies without it. The
+    # same meta_path probe proved this — with sklearn blocked the engine fell all the
+    # way through to the paddle branch. pandas is likewise left alone: it is only
+    # reachable through paddlex (already excluded), so it costs nothing to keep and
+    # removing it cannot be proven safe from here.
     excludes=[
         "streamlit", "tkinter", "matplotlib.tests", "PyQt5",
         "paddle", "paddleocr", "paddlex", "paddlepaddle",
+        "pyarrow", "altair",
     ],
     noarchive=False,
 )
+
+# ---------------------------------------------------------------------------
+# Drop build-time-only and unreachable payload that collect_all() sweeps in
+# ---------------------------------------------------------------------------
+#
+# collect_all() takes a package wholesale — which is what makes it safe, and also
+# what makes it fat. Three groups are dead weight in a RUNNING sidecar, measured on
+# the v0.2.69 build (dist/sidecar = 1155 MB):
+#
+#   torch/include/**      37.8 MB  C++ headers. Only torch.utils.cpp_extension reads
+#   torch/**/*.lib        45.7 MB  MSVC import libraries. Only a C++ linker reads
+#                                  these. Nothing here JIT-compiles a custom op
+#                                  (VietOCR is plain eager PyTorch, no torch.compile).
+#   opencv_videoio_ffmpeg*.dll  52.5 MB  Two copies, because three OpenCV wheels are
+#                                  installed over the same cv2/ directory. Loaded ONLY
+#                                  by VideoCapture/VideoWriter. Verified empirically:
+#                                  after running every cv2 call src/compare/drawing.py
+#                                  makes, `tasklist /m` showed no ffmpeg/videoio module
+#                                  in the process.
+#   cv2/data/haarcascade_*.xml   6 MB  Cascade classifier data; nothing calls
+#                                  cv2.CascadeClassifier.
+#
+# Filtering here (rather than not collecting) keeps collect_all's safety: if a future
+# dependency genuinely needs one of these, the fix is to narrow the predicate below,
+# in one obvious place, instead of unpicking a hook.
+def _is_dead_weight(dest: str) -> bool:
+    d = dest.replace("\\", "/")
+    low = d.lower()
+    if d.startswith("torch/include/"):
+        return True
+    if d.startswith("torch/") and low.endswith(".lib"):
+        return True
+    if "opencv_videoio_ffmpeg" in low and low.endswith(".dll"):
+        return True
+    if "cv2/data/haarcascade" in low:
+        return True
+    return False
+
+
+def _prune(toc, label):
+    kept = [e for e in toc if not _is_dead_weight(e[0])]
+    print(f"[sidecar.spec] pruned {len(toc) - len(kept)} entries from {label}")
+    return kept
+
+
+a.binaries = _prune(a.binaries, "binaries")
+a.datas = _prune(a.datas, "datas")
 
 pyz = PYZ(a.pure)
 

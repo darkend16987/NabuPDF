@@ -14,6 +14,17 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// Git pathspecs for everything the frozen sidecar is built FROM. Kept in one place
+// because both the "changed since the build" and the "uncommitted" query must ask
+// about the same set, and a mismatch between them is silent.
+//
+// models/vietocr/*.yml earns its place: sidecar.spec bundles those files into the app
+// and src/ocr/engine.py builds VietOCR's config from them, so editing `vocab` or
+// `image_max_width` there changes OCR OUTPUT while leaving every .py untouched. The
+// 151.8 MB .pth beside them is not in git (tools/fetch_vietocr_model.py pins its
+// SHA256 instead), so there is nothing to diff for it here.
+const SIDECAR_INPUTS = '"*.py" sidecar.spec "models/vietocr/*.yml"';
+
 if (process.env.SKIP_SIDECAR_CHECK === "1") {
   console.log("[sidecar-check] skipped (SKIP_SIDECAR_CHECK=1)");
   process.exit(0);
@@ -64,10 +75,10 @@ const builtCommit = marker.commit;
 let head, changed, dirty;
 try {
   head = execSync("git rev-parse HEAD", { cwd: root }).toString().trim();
-  changed = execSync(`git diff --name-only ${builtCommit} HEAD -- "*.py" sidecar.spec`, { cwd: root })
+  changed = execSync(`git diff --name-only ${builtCommit} HEAD -- ${SIDECAR_INPUTS}`, { cwd: root })
     .toString()
     .trim();
-  dirty = execSync('git status --porcelain -- "*.py" sidecar.spec', { cwd: root }).toString().trim();
+  dirty = execSync(`git status --porcelain -- ${SIDECAR_INPUTS}`, { cwd: root }).toString().trim();
 } catch (e) {
   fail("git check failed (" + e.message + "). Cannot verify sidecar freshness.");
 }
@@ -79,7 +90,10 @@ if (changed) {
   );
 }
 if (dirty) {
-  fail("Uncommitted changes to *.py / sidecar.spec — the built sidecar does not include them:\n" + dirty);
+  fail(
+    `Uncommitted changes to sidecar inputs (${SIDECAR_INPUTS}) — the built sidecar ` +
+      "does not include them:\n" + dirty
+  );
 }
 
 console.log(`[sidecar-check] OK — sidecar built from ${builtCommit.slice(0, 8)} matches current source.`);

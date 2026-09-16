@@ -4,7 +4,66 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-08 · v0.2.69 đã phát hành (dưới đây) · v0.2.68 là bản trước đó_
+_Cập nhật: 2026-09-16 · v0.2.70 đã phát hành (dưới đây) · v0.2.69 là bản trước đó_
+
+> **v0.2.70 — không còn cần mạng để OCR, và nền móng được thay gần hết.**
+>
+> Bản này gần như **không thêm tính năng nào**. Nó là một đợt kiểm toán nguồn ngoài + hiệu
+> năng, khởi đầu từ câu hỏi "có gì mới ngoài kia giúp app nhanh hơn không". Toàn bộ khảo
+> sát, số đo và những giả thuyết **bị chính phép đo bác bỏ** nằm ở
+> [docs/RESEARCH-2026-09-15-deps-perf-audit.md](docs/RESEARCH-2026-09-15-deps-perf-audit.md).
+>
+> **1. OCR chạy offline thật.** `vietocr` 0.3.13 GET hai file YAML từ `vocr.vn` **mỗi lần**
+> dựng `Predictor` (không cache), rồi tải 151,8 MB weights vào `%TEMP%` — nơi Windows dọn
+> định kỳ. Đo được **286 giây** để sẵn sàng OCR trang đầu, trên máy **đã từng** OCR thành
+> công. Nay model nằm trong bộ cài (`models/vietocr/`, `sidecar.spec` bundle vào
+> `_internal/`). Mạng biến mất **theo cấu trúc**: `download_weights()` trả thẳng chuỗi khi
+> nó không bắt đầu bằng `http`. Trái lại D2 bao lâu nay, nay hết.
+>
+> **2. Comment ba năm nay trong `_detect_boxes` là SAI.** Nó bảo det-only "over-segments
+> lines into words" nên pipeline vẫn chạy cả recognition của RapidOCR rồi **vứt chữ đi**.
+> Đo trên **78 trang hợp đồng scan thật** ở 200 dpi: det-only cho **đúng tập box** ở 70/78
+> trang, **không mất box nào trên trang nào**, detect 4,17 s → **1,38 s** (−67 %, −12,4 %
+> end-to-end). Và 14 box "thêm" không phải rác hết — trang ký trả về **khối chữ ký RỖNG** ở
+> bản cũ: dòng `THS. Đoàn Văn Động` nằm giữa "Chữ ký:" và "Ngày:" bị bộ lọc `text_score`
+> xoá, vì điểm đó do **recogniser PP-OCR Latin** chấm, đúng cái thành phần không đọc nổi
+> dấu tiếng Việt. `OCR_RAPID_DET_ONLY=0` trả lại hành vi cũ.
+>
+> **3. `import torch` ở mức module** khiến **mọi** lần khởi động sidecar **và mọi lần nén
+> file** phải nạp torch, kể cả khi không đụng OCR. Chuyển thành lazy: boot **2,10 s →
+> 1,03 s**, worker nén **2 225 ms → 710 ms**. Nhịp poll `/health` đổi sang hai pha (100 ms
+> trong 15 s đầu, rồi 600 ms) — đã kiểm là **không bao giờ chậm hơn** lưới cũ ở mọi điểm.
+>
+> **4. Electron 33.4.11 → 44.4.1** (Chromium 130 → **152**, Node 20 → 24.21). 33 đã hết
+> nhận vá bảo mật. Rà bằng cách quét **mọi** token `<module>.<method>(` trong `src/*.js`
+> đối chiếu `electron.d.ts` của bản 44 — ra đúng 3 API đã mất, **hai trong đó vỡ trong im
+> lặng**: `PrinterInfo.isDefault` (hộp thoại In rơi vào máy in đầu danh sách — mà mặc định
+> ở đây là **driver A3**) và hộp thoại file mặc định về Downloads (mất trí nhớ thư mục).
+> Cả ba được vá **khi vẫn còn ở Electron 33** để đối chứng với hành vi thật. Bằng chứng
+> không-regression là **A/B**: cùng probe CDP chạy trên app thật cho **18/18 ở cả 33 lẫn 44**.
+>
+> **5. Ba lỗi im lặng khác, bắt được trong lúc rà chứ không phải do ai báo:**
+> · màn **So sánh / Chồng lớp** vẫn còn lỗ BI-78 — bản vẽ A0 ở zoom cao ra **trắng** không
+> báo lỗi (`raster-cap.js` tự khai nó tách ra để không "chết theo từng nửa", rồi **đếm
+> thiếu** đúng nơi dành cho bản vẽ khổ lớn); nay mọi renderer sizing canvas trang đều phải
+> đi qua `RasterCap`, có lưới gác cấu trúc — **và chính lưới đó bắt được chỗ thứ hai tôi
+> đọc sót**.
+> · màn So sánh **không nhả bitmap**: cuộn hết một so sánh 300 trang giữ ~6 GB ở hai khung.
+> · **CSP đang chặn script chống nháy theme** ở `index.html`/`view.html` ⇒ nền tối nháy
+> trắng mỗi lần mở tab — suốt cả Electron 33 lẫn 44, dấu vết duy nhất nằm trong log runtime.
+>
+> **6. Bundle sidecar 1 155 MB → 1 092 MB** dù **thêm** 145 MB model: bỏ `torch/include`,
+> `.lib`, ffmpeg của OpenCV, haarcascades… Cách kiểm chứng exclude **không cần build 30
+> phút**: chặn import bằng `sys.meta_path` rồi chạy thật. Nhờ nó phát hiện **xoá `sklearn`
+> sẽ làm chết OCR** (albumentations import nó ở module load) — trước khi đụng vào spec.
+>
+> ⚠️ **Bộ cài to hơn ~120 MB** (477 → 596 MB) vì model OCR nay nằm sẵn trong đó. Đổi lại
+> lần OCR đầu tiên không còn phải tải gì.
+>
+> ⚠️ **Ba thứ máy không kiểm được, phải test tay:** copy/dán ảnh (shell phát triển không có
+> quyền window station — `clip.exe` trả "Access is denied"), **in** (số đo `nabu-print-sheet-fit`
+> lấy trên Chromium 130, nay là 152), và ký số / tự cập nhật / verb Explorer.
+
 
 > **v0.2.69 — chia đôi màn hình (khung xem chỉ đọc), và dấu ✓ / ✗ copy được sang file khác.**
 >

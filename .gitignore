@@ -28,9 +28,16 @@ results/*
 .DS_Store
 Thumbs.db
 
-# Model cache
+# Model cache. models/ stays ignored wholesale EXCEPT the two VietOCR config YAMLs:
+# they are ~2 KB of upstream config, they belong in review (a silent change to the
+# vocab string or image_max_width would change OCR output), and committing them is
+# what lets a fresh checkout build without reaching vocr.vn for them. The 151.8 MB
+# vgg_transformer.pth beside them stays out — `tools/fetch_vietocr_model.py` gets it.
 .cache/
-models/
+models/*
+!models/vietocr/
+models/vietocr/*
+!models/vietocr/*.yml
 
 # Per-user app settings (may contain API key)
 settings.json

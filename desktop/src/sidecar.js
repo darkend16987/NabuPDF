@@ -47,16 +47,39 @@ function sidecarCommand(port) {
   };
 }
 
-// Poll GET /health until the FastAPI app is up (models loaded) or we time out.
+// Poll /health this often for the first HEALTH_FAST_WINDOW_MS, then fall back to the
+// caller's `intervalMs`.
+//
+// WHY. A flat 600 ms was free while the sidecar took ~2.2 s to answer — the wait was
+// all boot. Since the OCR engine's torch import became lazy (src/ocr/engine.py) a warm
+// boot answers in ~1.13 s, so the poll GRANULARITY is now a large share of what the
+// user waits: the badge lights on a 600 ms grid, ~300 ms late on average, purely
+// because nobody asked sooner. At 100 ms that average drops to ~50 ms.
+//
+// DELIBERATELY NOT a multiplicative backoff. The obvious `wait *= 1.6` version was
+// tried and is WORSE here: its schedule (0, 60, 156, 310, 556, 950, 1550 ms) opens a
+// 600 ms hole straddling the ~1.13 s the sidecar actually needs, so it answers at
+// 1550 ms where the flat 600 ms grid answered at 1200 ms. A ramp is only a win when
+// the thing you wait for is much slower than the first step; this one is not.
+//
+// The extra polls cost nothing: before uvicorn listens they fail instantly with
+// ECONNREFUSED, and /health returns 200 the moment it is up (models load lazily, see
+// api.py lifespan), so exactly ONE request ever reaches the access log either way.
+const HEALTH_FAST_INTERVAL_MS = 100;
+const HEALTH_FAST_WINDOW_MS = 15000;
+
+// Poll GET /health until the FastAPI app is up or we time out.
 function waitForHealth(port, timeoutMs = 180000, intervalMs = 600) {
-  const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
   return new Promise((resolve, reject) => {
     const retry = () => {
       if (Date.now() > deadline) {
         reject(new Error("Sidecar không phản hồi /health trong thời gian chờ (model có thể chưa tải xong)."));
         return;
       }
-      setTimeout(tick, intervalMs);
+      const fast = Date.now() - started < HEALTH_FAST_WINDOW_MS;
+      setTimeout(tick, fast ? Math.min(HEALTH_FAST_INTERVAL_MS, intervalMs) : intervalMs);
     };
     const tick = () => {
       const req = http.get(

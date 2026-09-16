@@ -3,7 +3,11 @@
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen } = require("electron");
+const { execFile } = require("child_process");
+// ClipboardItem exists only from Electron 44 on; on 33 it destructures to
+// undefined, which is exactly right — the clipboard handlers below branch on
+// `typeof clipboard.writeImage` and never reach it. See "TWO CLIPBOARD APIs".
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen, ClipboardItem } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const Session = require("./session");
 const Prefs = require("./prefs");
@@ -654,9 +658,28 @@ if (!app.requestSingleInstanceLock()) {
     // styles are 'self'; inline styles are used heavily so style-src needs
     // 'unsafe-inline'. connect-src must allow the loopback sidecar; worker-src
     // covers the pdf.js worker.
+    //
+    // THE HASH IS LOAD-BEARING. index.html and view.html each open with one inline
+    // <script> that reads `nabu-theme` from localStorage and stamps `data-theme` on
+    // <html> BEFORE first paint. Without it that stamp only happens later, from
+    // app.js, so every tab and window a dark-theme user opens flashes white first.
+    // This policy was silently blocking it — measured on Electron 33 and 44 alike,
+    // one violation per launch, and the only trace was the runtime log.
+    //
+    // A hash is the right instrument here, not 'unsafe-inline': it permits that ONE
+    // exact script and nothing else. It is tied to the script's exact BYTES — the
+    // two files carry byte-identical copies today, which is why one entry covers
+    // both. Change so much as a space in either and it is refused again (i.e. back
+    // to today's behaviour, not worse); the browser prints the new hash in the
+    // violation message, and `npm run test:tabs` recomputes it from the HTML and
+    // fails rather than letting it go quiet.
+    //
+    // The hash is spelled out here rather than hidden behind a named constant on
+    // purpose: that guard reads this file as TEXT, so an indirection would make it
+    // pass while proving nothing. (It caught exactly that on the first attempt.)
     const csp =
       "default-src 'self'; " +
-      "script-src 'self' 'wasm-unsafe-eval'; " +
+      "script-src 'self' 'wasm-unsafe-eval' 'sha256-/lfpiGb2/kOvMLvYmAsulZFnrJQmWimud2dsZcQl0pM='; " +
       "style-src 'self' 'unsafe-inline'; " +
       "img-src 'self' data: blob:; " +
       "font-src 'self' data:; " +
@@ -785,6 +808,43 @@ ipcMain.handle("app:info", () => ({
 }));
 
 // ---- IPC: file dialogs ---------------------------------------------------
+//
+// WHERE A DIALOG OPENS. Electron 43 changed this underneath us: an omitted
+// `defaultPath` now means the user's Downloads folder, AND — the part that
+// actually hurts — the OS stops tracking the last directory between dialogs.
+// For an app whose PDFs live in per-project folders, that is every "Mở PDF"
+// starting in the wrong place, forever. Electron's own breaking-changes note
+// says to track the directory yourself; prefs.js does, so it also survives a
+// restart, which is what Windows used to do for us.
+//
+// One code path for every Electron, deliberately: this was written and tested
+// before the 33 → 44 bump landed, so the behaviour it restores could be verified
+// against the OS memory it replaces rather than against a guess.
+function openDefault(bucket) {
+  const dir = Prefs.getLastDir(bucket);
+  // A remembered folder can have been deleted or been on a USB stick. Hand a
+  // dead path to a native dialog and behaviour is platform-specific; just fall
+  // back to letting the OS decide.
+  return dir && fs.existsSync(dir) ? { defaultPath: dir } : {};
+}
+
+// Save dialogs already pass a file NAME; join it onto the remembered folder so
+// the name keeps working and only the starting directory is restored.
+function saveDefault(bucket, fileName) {
+  const name = fileName || "output.pdf";
+  // If the caller already decided WHERE (an absolute path, or any path with a
+  // directory part), that wins — joining it onto a remembered folder would build
+  // nonsense like "D:\Contracts\C:\foo\bar.pdf". Renderers pass a bare filename
+  // today; this keeps that from becoming a silent trap if one ever stops.
+  if (path.isAbsolute(name) || path.dirname(name) !== ".") return name;
+  const dir = Prefs.getLastDir(bucket);
+  return dir && fs.existsSync(dir) ? path.join(dir, name) : name;
+}
+
+function rememberDir(bucket, chosen) {
+  const p = Array.isArray(chosen) ? chosen[0] : chosen;
+  if (typeof p === "string" && p) Prefs.setLastDir(bucket, path.dirname(p));
+}
 
 ipcMain.handle("dialog:open-pdf", async (e, { multi = false } = {}) => {
   const props = ["openFile"];
@@ -793,8 +853,10 @@ ipcMain.handle("dialog:open-pdf", async (e, { multi = false } = {}) => {
     title: "Mở PDF",
     properties: props,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
+    ...openDefault("open-pdf"),
   });
   if (res.canceled) return [];
+  rememberDir("open-pdf", res.filePaths);
   return res.filePaths.map((fp) => ({
     path: fp,
     name: path.basename(fp),
@@ -811,8 +873,11 @@ ipcMain.handle("dialog:pick-pdfs", async (e) => {
     title: "Mở PDF",
     properties: ["openFile", "multiSelections"],
     filters: [{ name: "PDF", extensions: ["pdf"] }],
+    ...openDefault("open-pdf"),
   });
-  return res.canceled ? [] : res.filePaths;
+  if (res.canceled) return [];
+  rememberDir("open-pdf", res.filePaths);
+  return res.filePaths;
 });
 
 // Generic open for non-PDF inputs (images → PDF). `filters`/`multi` come from the
@@ -827,8 +892,10 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
       filters && filters.length
         ? filters
         : [{ name: "Ảnh", extensions: ["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "gif"] }],
+    ...openDefault("open-files"),
   });
   if (res.canceled) return [];
+  rememberDir("open-files", res.filePaths);
   return res.filePaths.map((fp) => ({
     path: fp,
     name: path.basename(fp),
@@ -839,10 +906,11 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
 ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
   const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu PDF",
-    defaultPath: defaultName || "output.pdf",
+    defaultPath: saveDefault("save-pdf", defaultName || "output.pdf"),
     filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
+  rememberDir("save-pdf", res.filePath);
   await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
@@ -870,10 +938,11 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
 ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => {
   const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu file",
-    defaultPath: defaultName || "export.txt",
+    defaultPath: saveDefault("save-file", defaultName || "export.txt"),
     filters: filters && filters.length ? filters : [{ name: "Tất cả", extensions: ["*"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
+  rememberDir("save-file", res.filePath);
   await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
@@ -928,18 +997,70 @@ ipcMain.handle("licenses:open", (_e, which) => {
 // Chromium's PDFium plugin frame, which the host print path couldn't capture →
 // blank sheets). Because we print real DOM, we can pass pageSize/duplex/copies.
 
+// --- default printer: recovering a flag Electron 44 took away ---------------
+//
+// Electron 44 removed `isDefault` (and `status`) from PrinterInfo, following an
+// upstream Chromium removal. app.js's printer dropdown preselects the system
+// default from exactly that flag, so on 44 the dropdown would silently land on
+// whichever printer the spooler happened to list first. That is NOT cosmetic
+// here: the default printer on this machine is an A3 driver (see the sheet-fit
+// note), so "first in the list" can mean a job on the wrong paper size.
+//
+// So: keep serving `isDefault` from main, and when the runtime stops providing
+// it, read the OS's own answer instead. HKCU\...\Windows\Device is where Windows
+// records the per-user default ("<printer>,<driver>,<port>") and is what
+// GetDefaultPrinter() reads. Costs one ~30 ms `reg` spawn, cached, and only on
+// an Electron that needs it — on 33 the lookup never runs at all.
+const DEFAULT_PRINTER_TTL_MS = 30000;
+let _defPrinter = { name: null, at: 0 };
+
+async function osDefaultPrinterName() {
+  if (process.platform !== "win32") return null;
+  const now = Date.now();
+  if (_defPrinter.name !== null && now - _defPrinter.at < DEFAULT_PRINTER_TTL_MS) {
+    return _defPrinter.name;
+  }
+  try {
+    const out = await new Promise((resolve, reject) => {
+      execFile(
+        "reg",
+        ["query", "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows", "/v", "Device"],
+        { windowsHide: true, timeout: 4000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout))
+      );
+    });
+    const m = /^\s*Device\s+REG_SZ\s+(.+)$/im.exec(out);
+    // "<printer>,<driver>,<port>" — the printer name itself may contain commas,
+    // the two trailing fields never do, so drop from the right.
+    const parts = m ? m[1].trim().split(",") : [];
+    const name = parts.length > 2 ? parts.slice(0, -2).join(",").trim() : "";
+    _defPrinter = { name: name || "", at: now };
+    return _defPrinter.name;
+  } catch (_) {
+    _defPrinter = { name: "", at: now }; // remember the failure too: don't respawn reg per call
+    return "";
+  }
+}
+
 ipcMain.handle("print:printers", async (e) => {
   try {
     // e.sender is the requesting document view's webContents (its #print-root
     // holds the rasterised pages we print).
     if (!e.sender || e.sender.isDestroyed()) return [];
-    return await e.sender.getPrintersAsync();
+    const list = await e.sender.getPrintersAsync();
+    // Electron ≤ 43 already fills this in; leave its answer strictly alone.
+    if (!list.length || list.some((p) => p.isDefault)) return list;
+    const def = await osDefaultPrinterName();
+    if (!def) return list;
+    return list.map((p) => (p.name === def ? { ...p, isDefault: true } : p));
   } catch (_) {
     return [];
   }
 });
 
-// Paper sizes valid for webContents.print() in Electron 33 (WebContentsPrintOptions).
+// Paper sizes valid for webContents.print() (WebContentsPrintOptions.pageSize).
+// Re-checked against Electron 44.4.1's own typings during the 33 → 44 upgrade: the
+// accepted list is unchanged, as are duplexMode / copies / pageRanges / deviceName.
 const PRINT_PAGE_SIZES = new Set([
   "A0", "A1", "A2", "A3", "A4", "A5", "A6", "Legal", "Letter", "Tabloid",
 ]);
@@ -980,13 +1101,34 @@ ipcMain.handle("print:page", (e, opts = {}) => {
 // (client-side, via pdf.js) and hands them here. We only ever WRITE an image to
 // the OS clipboard — no reading, no arbitrary data — so a compromised renderer
 // can't exfiltrate clipboard contents through this channel.
-ipcMain.handle("clipboard:write-image", (_e, bytes) => {
+//
+// TWO CLIPBOARD APIs, ON PURPOSE. Electron 44 rewrote `clipboard` to the W3C
+// shape: `writeImage`/`readImage` are GONE, and what is left (`read`/`write`)
+// is async and speaks ClipboardItem + Blob. Both branches below are live code —
+// the `typeof` test picks by what the running Electron actually has, not by a
+// version number, so this file is correct on 33 and on 44 without a flag day.
+// Delete the legacy branch only once the floor is Electron ≥44.
+//
+// Both handlers are async now. That costs the callers nothing: preload.js already
+// bridges them with ipcRenderer.invoke(), which was always a promise.
+ipcMain.handle("clipboard:write-image", async (_e, bytes) => {
   try {
     if (!bytes) return { ok: false, reason: "no-data" };
     const buf = Buffer.from(bytes);
     const img = nativeImage.createFromBuffer(buf);
     if (img.isEmpty()) return { ok: false, reason: "decode-failed" };
-    clipboard.writeImage(img);
+    if (typeof clipboard.writeImage === "function") {
+      clipboard.writeImage(img); // Electron ≤ 43
+    } else {
+      // Electron ≥ 44. Round-tripping through nativeImage rather than writing
+      // `buf` straight through is deliberate: it keeps the isEmpty() decode
+      // check above meaningful, so a corrupt payload still fails HERE with
+      // "decode-failed" instead of landing on the OS clipboard as junk bytes.
+      const png = img.toPNG();
+      await clipboard.write([
+        new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) }),
+      ]);
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: String((err && err.message) || err) };
@@ -996,11 +1138,24 @@ ipcMain.handle("clipboard:write-image", (_e, bytes) => {
 // Read an image OFF the OS clipboard as a PNG data URL (for "Dán ảnh vào trang"
 // in the page context menu). Returns null when the clipboard holds no image. We
 // only ever read image data here — never text — so this can't leak clipboard text.
-ipcMain.handle("clipboard:read-image", () => {
+ipcMain.handle("clipboard:read-image", async () => {
   try {
-    const img = clipboard.readImage();
-    if (!img || img.isEmpty()) return null;
-    return img.toDataURL(); // "data:image/png;base64,…"
+    if (typeof clipboard.readImage === "function") {
+      const img = clipboard.readImage(); // Electron ≤ 43
+      if (!img || img.isEmpty()) return null;
+      return img.toDataURL(); // "data:image/png;base64,…"
+    }
+    // Electron ≥ 44. Take the first image/* entry the platform offers and
+    // normalise it to PNG through nativeImage, so the renderer keeps receiving
+    // exactly the "data:image/png;base64,…" string it received before.
+    for (const item of (await clipboard.read()) || []) {
+      const type = (item.types || []).find((t) => t.startsWith("image/"));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const img = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
+      if (img && !img.isEmpty()) return img.toDataURL();
+    }
+    return null;
   } catch (_) {
     return null;
   }
@@ -1398,8 +1553,10 @@ ipcMain.on("view:pick-source", (e) => {
           title: "Chọn PDF cho khung xem",
           properties: ["openFile"],
           filters: [{ name: "PDF", extensions: ["pdf"] }],
+          ...openDefault("open-pdf"),
         });
         if (res.canceled || !res.filePaths.length) return;
+        rememberDir("open-pdf", res.filePaths);
         // The window may have been closed while the dialog was up.
         if (!Tabs.findViewPane(e.sender)) return;
         tw.setPaneSource(pane, res.filePaths[0]);

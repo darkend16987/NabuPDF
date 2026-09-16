@@ -35,8 +35,10 @@
     changeIdx: -1,
     wrapsA: [], // per-page slot elements
     wrapsB: [],
-    obsA: null,
+    obsA: null, // render band: paints a slot as it nears the pane
     obsB: null,
+    keepA: null, // keep band (wider): releases a slot's bitmap once it drifts past
+    keepB: null,
     // Drawing compare: which changes get a revision cloud on export. Holds
     // change indices; every cloudable change starts ticked.
     sel: null,
@@ -46,6 +48,10 @@
   function reset() {
     if (cmp.obsA) { try { cmp.obsA.disconnect(); } catch (_) {} cmp.obsA = null; }
     if (cmp.obsB) { try { cmp.obsB.disconnect(); } catch (_) {} cmp.obsB = null; }
+    // The keep-band observers must go too, or a stale one keeps firing freeCmpPage on
+    // the detached slots of the comparison we just closed.
+    if (cmp.keepA) { try { cmp.keepA.disconnect(); } catch (_) {} cmp.keepA = null; }
+    if (cmp.keepB) { try { cmp.keepB.disconnect(); } catch (_) {} cmp.keepB = null; }
     if (cmp.pdfA) { try { cmp.pdfA.destroy(); } catch (_) {} cmp.pdfA = null; }
     if (cmp.pdfB) { try { cmp.pdfB.destroy(); } catch (_) {} cmp.pdfB = null; }
     cmp.a = cmp.b = cmp.report = cmp.changes = cmp.aBoxes = cmp.bBoxes = null;
@@ -279,6 +285,13 @@
   const ZOOM_MIN = 0.2;
   const ZOOM_MAX = 4;
 
+  // Keep a page's bitmap only while it is within this many pixels of its pane; past it
+  // the pixels are released (see freeCmpPage) and repainted on return. Wider than the
+  // 400px render band on purpose — that gap is the hysteresis that stops a scroll back
+  // and forth across the edge from thrashing render↔free. Same shape as
+  // KEEP_MARGIN_PX in app.js, a notch smaller because this view shows two panes at once.
+  const CMP_KEEP_MARGIN_PX = 1200;
+
   // Scale that makes the widest first page fill the (narrower) pane's width.
   // Shared across both panes so A and B stay visually the same size.
   async function fitScale() {
@@ -420,19 +433,37 @@
     // detached slots we are about to replace.
     const prevObs = side === "a" ? cmp.obsA : cmp.obsB;
     if (prevObs) { try { prevObs.disconnect(); } catch (_) {} }
+    const prevKeep = side === "a" ? cmp.keepA : cmp.keepB;
+    if (prevKeep) { try { prevKeep.disconnect(); } catch (_) {} }
     host.innerHTML = "";
     const wraps = [];
+    // NOTE: no `obs.unobserve(w)` here any more. It used to mean "rendered once, never
+    // think about this page again", which is also what made every page ever scrolled
+    // past keep its bitmap for the rest of the session — in BOTH panes. Leaving the slot
+    // observed is what lets a freed page repaint when it comes back; renderPage is
+    // idempotent on data-rendered, so a page that is still painted costs one early exit.
     const obs = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
             const w = e.target;
-            obs.unobserve(w);
             renderPage(side, pdf, Number(w.dataset.p), w, boxesMap);
           }
         }
       },
       { root: host, rootMargin: "400px" }
+    );
+    // Second, wider band: past it a page gives its bitmap back. Same windowing as the
+    // main viewer (app.js freePageCanvas / KEEP_MARGIN_PX), and the gap above the 400px
+    // render band is hysteresis so a slow scroll across the edge cannot thrash
+    // render↔free. docs/PERF-MEMORY.md M4 listed this as the one place with no free at
+    // all; at this view's scale one A4 page is ~10 MB of bitmap, so walking a 300-page
+    // comparison to the end used to hold roughly 6 GB across the two panes.
+    const keepObs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) if (!e.isIntersecting) freeCmpPage(e.target);
+      },
+      { root: host, rootMargin: CMP_KEEP_MARGIN_PX + "px" }
     );
     for (let i = 0; i < pdf.numPages; i++) {
       const w = document.createElement("div");
@@ -442,26 +473,58 @@
       host.appendChild(w);
       wraps.push(w);
       obs.observe(w);
+      keepObs.observe(w);
     }
-    if (side === "a") { cmp.wrapsA = wraps; cmp.obsA = obs; }
-    else { cmp.wrapsB = wraps; cmp.obsB = obs; }
+    if (side === "a") { cmp.wrapsA = wraps; cmp.obsA = obs; cmp.keepA = keepObs; }
+    else { cmp.wrapsB = wraps; cmp.obsB = obs; cmp.keepB = keepObs; }
+  }
+
+  // Release a slot's bitmap when it drifts out of the keep band. Only the pixels go:
+  // the canvas element, its CSS size, the page label and every .cmp-box highlight stay
+  // exactly where they are, so scroll geometry and jumpToChange are untouched.
+  // renderPage repaints the slot when it scrolls back into the render band, rebuilding
+  // the boxes from cmp.sel — the same source they were drawn from the first time.
+  function freeCmpPage(slot) {
+    if (!slot || slot.dataset.rendered !== "1") return;
+    const c = slot.querySelector("canvas");
+    if (!c) return;
+    c.width = 0;
+    c.height = 0; // frees the backing store; canvas.style.* keeps the box sized
+    slot.dataset.rendered = "0";
   }
 
   async function renderPage(side, pdf, i, slot, boxesMap) {
-    if (slot.dataset.rendered === "1") return;
+    if (slot.dataset.rendered === "1" || slot.dataset.rendering === "1") return;
     slot.dataset.rendered = "1";
+    // Guards the fast-fling race: freeCmpPage can fire while we are still awaiting
+    // page.render, and at that moment the slot holds no canvas yet — so the free is a
+    // no-op, we then paint, and the page stays allocated OUTSIDE the keep band with no
+    // further intersection event coming to clean it up. The finally block below
+    // reclaims it. Same fix, same reason, as app.js renderPageCanvas's `m.rendering`.
+    slot.dataset.rendering = "1";
     let page;
     try {
       page = await pdf.getPage(i + 1);
     } catch (_) {
       slot.dataset.rendered = "0";
+      slot.dataset.rendering = "0";
       return;
     }
     const vp = page.getViewport({ scale: cmp.scale });
     const dpr = window.devicePixelRatio || 1;
+    // Same bitmap budget the main viewer and the split pane already use (BI-78).
+    // raster-cap.js says in its own header that a second copy of this arithmetic is how
+    // BI-78 "dies by halves" — and it was right, it just miscounted the callers: THIS is
+    // a third page rasteriser, and the one aimed squarely at large-format drawings
+    // ("So sánh & Chồng lớp bản vẽ (CAD/Revit)"). Uncapped, an A0 sheet at this view's
+    // 400% ceiling with dpr 2 asks for ~514 MP; past ~268 MP Chromium accepts the width,
+    // returns a 2d context, resolves page.render — and paints NOTHING, with no exception
+    // to catch. viewRasterDpr never upscales, so every ordinary page is bit-for-bit what
+    // it was before; only oversized sheets get a coarser bitmap inside the same CSS box.
+    const rd = window.RasterCap.viewRasterDpr(vp.width, vp.height, dpr);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(vp.width * dpr);
-    canvas.height = Math.floor(vp.height * dpr);
+    canvas.width = Math.floor(vp.width * rd);
+    canvas.height = Math.floor(vp.height * rd);
     canvas.style.width = vp.width + "px";
     canvas.style.height = vp.height + "px";
     const pageDiv = document.createElement("div");
@@ -480,13 +543,34 @@
       await page.render({
         canvasContext: canvas.getContext("2d"),
         viewport: vp,
-        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+        transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
       }).promise;
     } catch (_) {
+      slot.dataset.rendered = "0"; // let it retry on the next intersection
       return;
+    } finally {
+      slot.dataset.rendering = "0";
+      // If the slot drifted out of the keep band while we were painting, its free event
+      // already came and went (see the note where `rendering` is set). Reclaim it now —
+      // nothing else will, because IntersectionObserver only fires on CHANGES and this
+      // slot is already outside.
+      if (slot.dataset.rendered === "1" && slotFarFromPane(slot)) freeCmpPage(slot);
     }
     const boxes = boxesMap[String(i)];
     if (boxes) drawBoxes(pageDiv, boxes, side, i);
+  }
+
+  // True when `slot` sits more than CMP_KEEP_MARGIN_PX above or below its pane — the
+  // same question the keep-band observer answers, asked synchronously. Mirrors
+  // app.js pageFarFromViewport.
+  function slotFarFromPane(slot) {
+    const host = slot.parentElement;
+    if (!host) return false;
+    const hr = host.getBoundingClientRect();
+    const r = slot.getBoundingClientRect();
+    if (r.bottom < hr.top) return hr.top - r.bottom > CMP_KEEP_MARGIN_PX;
+    if (r.top > hr.bottom) return r.top - hr.bottom > CMP_KEEP_MARGIN_PX;
+    return false;
   }
 
   // Boxes are in scale-1 PDF-point space → on screen it's just bbox * scale.
@@ -720,8 +804,15 @@
     const page = await pdf.getPage(i + 1);
     const vp = page.getViewport({ scale: ov.scale });
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.floor(vp.width * dpr);
-    canvas.height = Math.floor(vp.height * dpr);
+    // Cap the bitmap (BI-78) — and this is the sharpest instance of it in the whole app:
+    // "Chồng lớp bản vẽ" exists FOR A0/A1 CAD sheets, and it stacks TWO of these canvases
+    // on top of each other. Uncapped at the 400% ceiling that is ~514 MP each, well past
+    // the ~268 MP point where Chromium silently paints nothing — the overlay would come
+    // up blank with no error, on exactly the documents the feature was built for.
+    // keyOutBackground below reads canvas.width/height, so it follows the capped size.
+    const rd = window.RasterCap.viewRasterDpr(vp.width, vp.height, dpr);
+    canvas.width = Math.floor(vp.width * rd);
+    canvas.height = Math.floor(vp.height * rd);
     canvas.style.width = vp.width + "px";
     canvas.style.height = vp.height + "px";
     const ctx = canvas.getContext("2d");
@@ -730,7 +821,7 @@
     await page.render({
       canvasContext: ctx,
       viewport: vp,
-      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
     }).promise;
     // pdf.js paints an OPAQUE (white / sheet) background, so a plain stack would
     // have the top layer completely cover the base — and a `source-in` fill on an
