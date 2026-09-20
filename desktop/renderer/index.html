@@ -54,8 +54,14 @@
         <symbol id="ic-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></symbol>
         <symbol id="ic-pointer" viewBox="0 0 24 24"><path d="M5 3l15 8.5-6.5 1.3L10 19z"/></symbol>
         <symbol id="ic-highlight" viewBox="0 0 24 24"><path d="M3 21h6"/><path d="M9 16l-2 4 6-1 8.5-8.5a2 2 0 0 0-3-3L9 16z"/></symbol>
+        <!-- Tô sáng theo chữ: lines of text with the middle one washed over. Deliberately
+             not another marker pen — it has to read as DIFFERENT from ic-highlight at 16px. -->
+        <symbol id="ic-texthl" viewBox="0 0 24 24"><path d="M4 6h16M4 18h9"/><rect x="3.5" y="10" width="14" height="4.5" rx="1"/><path d="M19.5 10.5l2.5 2.5-2.5 2.5"/></symbol>
         <symbol id="ic-square" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></symbol>
         <symbol id="ic-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+        <!-- Hình tự do: a polygon with its corner handles showing, which is exactly what
+             the tool puts on screen while you click it out. -->
+        <symbol id="ic-poly" viewBox="0 0 24 24"><path d="M12 4l8 5.5-3 9.5H7L4 9.5z"/><circle cx="12" cy="4" r="1.6"/><circle cx="20" cy="9.5" r="1.6"/><circle cx="4" cy="9.5" r="1.6"/><circle cx="17" cy="19" r="1.6"/><circle cx="7" cy="19" r="1.6"/></symbol>
         <!-- Hướng dẫn sử dụng (#btn-help). The dot is filled + stroke:none so it stays a
              dot at 16px instead of collapsing into the stroke of the question mark. -->
         <symbol id="ic-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.3-2.8 4"/><circle cx="12" cy="17.6" r="1" fill="currentColor" stroke="none"/></symbol>
@@ -269,11 +275,13 @@
         <button class="tool active" data-tool="select" title="Chọn / di chuyển / đổi kích thước (phím V)"><svg class="ic"><use href="#ic-pointer"/></svg></button>
         <button class="tool" data-tool="text" title="Hộp văn bản (phím T)"><svg class="ic"><use href="#ic-type"/></svg></button>
         <button class="tool" data-tool="highlight" title="Tô sáng (phím H)"><svg class="ic"><use href="#ic-highlight"/></svg></button>
+        <button class="tool" data-tool="texthl" title="Tô sáng theo đoạn chữ được chọn — bôi đen bằng chuột như trong Word (phím B). Chỉ dùng được trên trang có chữ thật."><svg class="ic"><use href="#ic-texthl"/></svg></button>
         <button class="tool" data-tool="draw" title="Vẽ tay (phím D)"><svg class="ic"><use href="#ic-edit"/></svg></button>
         <button class="tool" data-tool="box" title="Khoanh vùng — khung chữ nhật (phím R)"><svg class="ic"><use href="#ic-square"/></svg></button>
         <button class="tool" data-tool="ellipse" title="Khoanh vùng — elip / tròn (phím O)"><svg class="ic"><use href="#ic-circle"/></svg></button>
         <button class="tool" data-tool="cloud" title="Khoanh mây (revision cloud) — chuẩn kỹ thuật / xây dựng (phím C)"><svg class="ic"><use href="#ic-cloud"/></svg></button>
         <button class="tool" data-tool="cloudpen" title="Khoanh mây tự do — vẽ bút (giữ chuột kéo) hoặc bấm từng điểm (phím F)"><svg class="ic"><use href="#ic-cloud"/></svg><span class="tool-pen">✎</span></button>
+        <button class="tool" data-tool="poly" title="Hình tự do — bấm từng điểm để vẽ đa giác, hoặc giữ chuột kéo để vẽ tự do. Enter/bấm điểm đầu = đóng kín, Esc = để hở (phím P)"><svg class="ic"><use href="#ic-poly"/></svg></button>
         <button class="tool" data-tool="arrow" title="Mũi tên chỉ dẫn (phím A)"><svg class="ic"><use href="#ic-arrow"/></svg></button>
         <button class="tool" data-tool="check" title="Dấu tích ✓ — đúng / đã kiểm (phím K)"><svg class="ic"><use href="#ic-tick"/></svg></button>
         <button class="tool" data-tool="cross" title="Dấu chéo ✗ — sai / loại bỏ (phím J)"><svg class="ic"><use href="#ic-cross"/></svg></button>
@@ -1420,6 +1428,9 @@
     <!-- raster-cap.js: hạn mức bitmap trang (BI-78). Phải nạp TRƯỚC app.js —
          renderPageCanvas gọi window.RasterCap.viewRasterDpr trên mọi trang. -->
     <script src="raster-cap.js"></script>
+    <!-- thumb-queue.js: thứ tự vẽ thumbnail. Phải nạp TRƯỚC app.js — app.js gọi
+         window.ThumbQueue.createThumbQueue ngay lúc nạp, không phải lúc chạy. -->
+    <script src="thumb-queue.js"></script>
     <!-- wire.js must load BEFORE app.js / text-edit.js / compare.js / editor.js /
          sign.js: they call pdfJsonBody / b64ToU8 by bare name out of the shared
          script scope. -->

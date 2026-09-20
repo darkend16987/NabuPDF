@@ -566,9 +566,19 @@ chỉ tên hàm.
 - Trước v0.2.48 `zoomTo` gọi thẳng `renderViewer()`: **mỗi nấc lăn chuột** xoá sạch mọi
   `.page-wrap`, dựng lại canvas + hai IntersectionObserver rồi rasterise. Đó là nguyên nhân
   “zoom bị khựng/giật”. Cờ `zooming` còn **âm thầm bỏ** những nấc tới trong lúc nó chạy.
-- Luật: **nửa đồng bộ chỉ được đổi CSS box** (`canvas.style.*`, `--scale-factor` của
-  `.text-layer`, `transform` của `.note-layer`/`.search-layer`). Không `page.render`,
-  không tạo/xoá phần tử. Nét lại là việc của `commitScale` sau `SCALE_COMMIT_MS`.
+- Luật: **nửa đồng bộ chỉ được đổi CSS box** (`canvas.style.*` và `transform` của **cả
+  bốn** lớp phủ: `.text-layer` / `.note-layer` / `.search-layer` / `.fr-layer`). Không
+  `page.render`, không tạo/xoá phần tử. Nét lại là việc của `commitScale` sau
+  `SCALE_COMMIT_MS`.
+- **`.text-layer` KHÔNG còn được ghi `--scale-factor` giữa lúc zoom** (đổi 2026-09-20).
+  pdf.js 3.x viết vị trí span bằng `calc(var(--scale-factor) * Npx)`, nên ghi biến đó bắt
+  trình duyệt **dựng lại layout của mọi span**: đo một nấc lăn chuột — 6,4 ms trên trang
+  CAD (446 span), 96–134 ms trên trang nhiều chữ (~20 000 span), so với **0,1 ms** khi
+  dùng `transform`. Lớp chữ giờ mang `data-pscale` như ba lớp kia và được `applyScaleToDom`
+  scale theo `state.scale / pscale`; `addTextLayer` phải **gán `data-pscale`** — quên là
+  lớp chữ scale sai hệ số ngay nấc zoom đầu tiên. Đã kiểm trên app thật: vị trí một span
+  tính theo **tỷ lệ của khung trang** không đổi qua 100% → 150% (giữa cử chỉ) → 150% (sau
+  commit) → 50% → về 100%: `fx=0.64152, fy=0.49562` ở **cả sáu** mốc.
 - **Không được dựng lại `.page-wrap` khi zoom.** Overlay chú thích, ô nhập chữ đang mở,
   highlight Ctrl+F và cả hình học cuộn đều bám vào đúng phần tử đó — `renderViewer` phá
   hết (đó là lý do nó chỉ dùng cho **đổi tài liệu**, không dùng cho **đổi tỷ lệ**).
@@ -704,6 +714,11 @@ chỉ tên hàm.
 
   Nghĩa là **trước khi thêm gì cả**, laptop 1366px đã mất nút Xong ở 3 công cụ. Mỗi nút
   công cụ thêm vào tốn **+76px** trên **mọi** dòng của bảng.
+- **Đo lại 2026-09-20 sau khi thêm 2 nút (17 nút: + Tô sáng theo chữ, + Hình tự do).** Probe
+  `Emulation.setDeviceMetricsOverride` trên app thật, **17 công cụ × 4 bề rộng**: nút **Xong**
+  nằm trong khung nhìn **và bấm tích được** (`elementFromPoint` trả về chính nó) ở **tất cả
+  68 tổ hợp**. Thanh cao tối đa **127px ở 900/1024px**, **87px ở 1366/1920px** — đúng bằng
+  con số trước khi thêm. `flex-wrap` nuốt trọn +152px; đó là lý do nó còn ở đó.
 - Có `wrap` thì ở mọi width 900–1920px nút Xong luôn bấm được, thanh cao **46–127px**.
 - **Luật:** thêm nút vào `#ed-tools` (hay control vào palette) thì phải trả lời câu hỏi
   bề rộng, không chỉ nhìn cho vừa mắt trên màn hình của mình. Và **đừng gỡ `flex-wrap`**
@@ -2182,6 +2197,101 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   assertion vị trí thẻ. Đã kiểm bằng đột biến: bỏ hash / đổi một dấu cách / thêm `defer` /
   dời xuống dưới CSS đều làm lưới đỏ.
 
+### BI-87 · Thumbnail đắt NGANG cả trang — nên nó phải xếp hàng SAU trang đầu, và không được lấy từ bitmap trang
+- `renderer/thumb-queue.js` (thứ tự, thuần, có lưới) + `app.js`: `renderThumbs` (quan sát
+  viên chỉ **xếp hàng**), `renderViewer` (`thumbQueue.open()` sau 2 trang đầu),
+  `renderAll` `finally` (lưới an toàn: mở cổng kể cả khi nạp lỗi giữa chừng).
+- **Sự thật đo được (đừng tin trực giác):** giá của một lần `page.render` là **phát lại
+  operator list**, gần như không phụ thuộc số pixel. Trên trang A1 77 k lệnh: 0,04 MP mất
+  173 ms, 4 MP mất 155 ms, 36 MP mất 189 ms; thumbnail 75 px mất 168 ms, 600 px mất 161 ms.
+  ⇒ **một thumbnail 150 px tốn đúng bằng cả trang.**
+- **Vì sao phải có cổng:** `renderAll` chạy `renderThumbs` **trước** `renderViewer`, và
+  `IntersectionObserver` của dải thumbnail nổ ở mốc ~9 ms ⇒ 8 thumbnail (~1,2 s luồng
+  chính) chạy **trước** trang người dùng đang chờ. Đo trên ba bản vẽ thật, thời gian tới
+  **trang đầu có pixel**: 1 224 / 913 / 147 ms → **298 / 253 / 116 ms** sau khi đổi thứ tự.
+- **Luật 1 — quan sát viên KHÔNG được gọi thẳng `renderThumbCanvas`.** Nó gọi
+  `thumbQueue.queue(i)`. Ai đưa lại lời gọi trực tiếp vào là lấy lại nguyên cái chậm cũ,
+  **không có lỗi nào nổi lên**.
+- **Luật 2 — `reset()` phải chặn được pump đang bay.** Mở tài liệu mới trong lúc dải
+  thumbnail cũ đang rút hàng: vòng lặp đọc lại cờ cổng **mỗi lượt**, nếu không nó tiêu
+  luồng chính đúng lúc trang đầu của tài liệu mới cần.
+- **Luật 3 — ĐỪNG lấy thumbnail từ bitmap trang.** Đã dựng, đã đo, đã gỡ (2026-09-20):
+  bitmap trang A1 rộng gấp ~16 lần thumbnail, nên nét mảnh 1 px ở đó bị trung bình còn
+  ~1/16 mực. Cùng canvas 150×105 của trang 1 `NA2-CD-S-LK4A.pdf`: lấy từ bitmap →
+  **độ sáng trung bình 238,8 · 8,5% điểm tối** (bạc phếch); vẽ thẳng 150 px →
+  **176,2 · 37,1%** (đọc được). Và nó gần như **không** mua thêm tốc độ: 299 ms so với
+  314 ms tới trang đầu. Ghi chú ⛔ ngay trên `renderThumbCanvas` giữ lại kết luận này.
+- **Vỡ khi:** mở bộ bản vẽ CAD thấy trang đầu lâu như cũ · dải thumbnail trắng vĩnh viễn
+  (cổng không bao giờ mở) · thumbnail bản vẽ mờ nhạt không nhận ra trang.
+- **Cạm bẫy khi ĐO LẠI:** cửa sổ bị che thì Chromium ngừng `requestAnimationFrame`, mà
+  pdf.js chạy vòng vẽ canvas **từ rAF** ⇒ `page.render` **treo hẳn**, không phải chậm
+  (`document.hidden === true`). Mọi probe đo render phải chạy với
+  `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+  --disable-background-timer-throttling`, nếu không sẽ thu được những con số vô nghĩa kiểu
+  185 000 ms.
+- Lưới: `npm run test:thumbs` (7 nhóm, gồm cả ca “reset giữa lúc đang rút hàng”) + mở thật
+  một bộ bản vẽ nhiều trang. Số liệu: `docs/RESEARCH-2026-09-20b-cad-perf-real-files.md`.
+
+### BI-88 · Tô sáng theo chữ: hai ô chồng nhau là **đậm gấp đôi**, và bản bánh phải là **Multiply**
+- `annot-geom.js` `quadsFromRects()` + `TEXTHL_OPACITY` · `editor.js`
+  `captureTextHighlight()`, nhánh `texthl` của `renderAnnot` / `addManagedAnnot` /
+  `drawOneAnnot` · `app.css` `.an-texthl-q` + khối `body.editing.tool-texthl`.
+- **Luật 1 — các ô của một vệt tô KHÔNG được chồng nhau.** Vệt tô vẽ bằng
+  `mix-blend-mode: multiply`, nên hai ô chồng nhau **nhân hai lần** và dòng đó sẫm hơn hẳn
+  các dòng còn lại. Đo được trên `1.TCVN 3890 - 2023.pdf`: một đoạn chọn 14 dòng trả về
+  **154 hình chữ nhật, có cả bản sao y hệt nhau**; gom theo ô làm tròn `y` còn **18 ô cho 14
+  dòng** và vết đậm nhạt lỗ chỗ thấy rõ trong ảnh. Gom theo **độ chồng lấn theo chiều dọc**
+  (đối xứng hai chiều) cho **14 ô, 0 cặp chồng nhau, cao đều 12 pt**. Lỗi này **không lộ ra
+  trong số liệu** — phải vẽ pixel ra rồi nhìn (cùng bài học với BI-87 luật 3).
+- **Luật 2 — bản bánh vào file phải là `/BM /Multiply`, không phải `opacity` thường.**
+  Đây là **lỗi đã có từ trước** và được sửa cùng đợt này: `drawOneAnnot` từng ghi
+  `opacity: 0.35` chế độ Normal, tức **phủ màu lên trên chữ**. Dựng ba dòng chữ giống hệt
+  nhau rồi mở bằng chính app: dòng `opacity 0.35` có chữ **bạc đi thấy rõ**, hai dòng
+  `multiply` giữ chữ **đen nguyên**. Màn hình vốn đã là multiply, nên đây là BI-40 áp cho
+  **chế độ hòa trộn** thay vì cho hình học. Bẫy khi kiểm tay: `doc.save()` mặc định bật
+  object stream nên `grep /Multiply` trong file **không ra gì** — phải
+  `save({useObjectStreams:false})` mới đọc được bằng mắt.
+- **Luật 3 — công cụ này mượn chuột của lớp chữ, và phải trả lại.** `body.editing` tắt
+  `pointer-events` của `.text-layer` để các công cụ vẽ sở hữu chuột; `body.editing.tool-texthl`
+  bật lại **và tắt `.annot-layer`**. Dùng `pointer-events`, **không** `z-index` — xếp lại tầng
+  sẽ đưa lớp chữ lên trên các vệt đã vẽ. Hệ quả **là luật, không phải lỗi**: đang ở công
+  cụ này thì không chọn/kéo được vật thể — về **Chọn** (`V`). `setTool` là nơi **duy nhất**
+  bật/tắt class này.
+- **Luật 4 — một đoạn chọn vắt hai trang thành HAI vật thể.** Mỗi trang là một hệ toạ
+  độ riêng; `captureTextHighlight` cắt `Range` theo từng `.text-layer` rồi mới hỏi hình chữ
+  nhật. Cả cụm vẫn là **một** bước hoàn tác.
+- **Vỡ khi:** vệt tô có dòng đậm dòng nhạt · sau khi Áp dụng thì chữ dưới vệt **xám đi** ·
+  bật công cụ mà **không bôi đen được chữ** · tắt công cụ rồi mà vẫn không chọn được hình
+  vẽ (class còn sót).
+- Lưới: `npm run test:shape` (nhóm 2 pin đúng luật 1) + `npm run test:rotate` + lưới tay
+  ở §5. Số liệu và ảnh: `docs/RESEARCH-2026-09-20c-text-highlight-free-shape.md`.
+
+### BI-89 · Hình dạng-điểm đổi cỡ bằng `scalePts` từ **ảnh chụp trước khi kéo**, và nét **không** co theo
+- `annot-geom.js` `scalePts()` + `PTS_KINDS`/`isPtsKind` · `editor.js` nhánh `resize` của
+  `onDown`/`onMove`/`cancelDrag`, `addPtsGrips()` · `app.css` `.handle.h-vtx`.
+- `draw` / `cloudpen` / `poly` không có `x/y/w/h`, nên `RESIZABLE_KINDS` **không còn là câu
+  trả lời đầy đủ** cho "có kéo giãn được không": nửa hộp ở khối tay nắm chung cuối
+  `renderAnnot`, nửa hình-điểm ở `addPtsGrips` mà **từng nhánh tự gọi** — vì cả ba nhánh
+  đó `return el` sớm. **Đây chính là lỗi đã vấp:** `cloudpen` ban đầu không được gọi nên mây
+  tự do đóng kín **không có một tay nắm nào**, đọc mã không thấy, chỉ probe hỏi DOM mới ra.
+- **Luật 1 — mọi lần di chuyển chuột phải tính từ `drag.orig`, không từ điểm hiện tại.**
+  `drag.orig` giữ **cả hai**: danh sách điểm và hộp bao lúc bắt đầu kéo. Tính lại hộp bao
+  từng lượt là cộng dồn sai số làm tròn ⇒ hình **trôi dần** khỏi con trỏ (đúng luật
+  `resizeRect` đã theo từ đầu).
+- **Luật 2 — `width` và `bump` KHÔNG nhân theo tỷ lệ.** Chúng là thuộc tính của **nét**,
+  không phải của **hình**: thu một ghi chú nhỏ lại mà nét mảnh theo thì chú thích biến mất khi in.
+- **Luật 3 — `data-vtx` KHÁC `data-pt`.** `data-pt` đã có nghĩa "một ĐẦU của annot hai
+  điểm" (mũi tên / đoạn đo) và được một nhánh trong `onDown` đọc để ghi `a.x1/a.x2`. Chỉ
+  số đỉnh 1 hoặc 2 sẽ rơi thẳng vào nhánh đó và ghi đè trường mà hình không có.
+- **Luật 4 — `draw` có tay nắm góc nhưng KHÔNG có tay nắm đỉnh** (`VERTEX_KINDS`): điểm
+  của nét vẽ tay là vết chuột, lại bị **thưa hoá khi lưu** (BI-69), nên đỉnh vừa kéo có thể
+  không sống sót qua một vòng lưu. Quá `VERTEX_GRIP_MAX` điểm thì cũng thôi hiện — không ai
+  sửa được hình bị chôn dưới hàng trăm chấm.
+- **Vỡ khi:** kéo góc thì hình trôi đi thay vì giãn · thu nhỏ xong nét mảnh như sợi tóc ·
+  kéo một đỉnh làm mũi tên ở đâu đó nhảy chỗ · `Esc` giữa lúc kéo không trả về được hình cũ.
+- Lưới: `npm run test:shape` (nhóm 4, gồm cả ca nét **ngang tuyệt đối** — cao 0 thì không có
+  gì để nhân, phải **tịnh tiến**, không được ra NaN) + `npm run test:geom`.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2209,6 +2319,7 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | `pushUndo` / `snapshot` / history | Ctrl+Z–Ctrl+Y sau: xoay, xoá trang, ghép, chèn, bake chú thích, sửa nội dung · chấm ● xuất hiện · đóng file bẩn có hỏi |
 | `state.bytes` ở bất kỳ đâu | Lưu ra file mở lại được · in · undo · autosave (BI-3) |
 | Virtualization / `renderPageCanvas` / `freePageCanvas` | Cuộn nhanh lên-xuống PDF nhiều trang · in · so sánh · copy vùng ảnh (BI-4) · **`m.paintScale` còn được gán sau khi vẽ** (BI-36) |
+| Dải thumbnail (`renderThumbs` / `renderThumbCanvas` / `thumb-queue.js`) | `cd desktop ; npm run test:thumbs` · mở một bộ bản vẽ CAD nhiều trang → **trang đầu hiện TRƯỚC khi dải thumbnail vẽ xong**, rồi thumbnail lấp dần và **rõ nét** · mở tài liệu khác ngay giữa lúc dải đang lấp → không trang nào trắng vĩnh viễn · xoay/xoá/chèn trang → thumbnail đúng, không lệch chỉ số (BI-87, BI-5, BI-39) |
 | Zoom (`zoomTo`, `applyScaleToDom`, `commitScale`, `wheelZoomFactor`, `renderViewer`) | `cd desktop ; npm run test:geom` · Ctrl+lăn **nhanh liên tục** → trang bám tay, dừng lại ~0.2s là **nét**, không nấc nào bị bỏ · Ctrl+lăn trên A0 nhiều trang → không treo · zoom rồi bôi đen chữ → **vệt chọn đúng chỗ** · Ctrl+F có kết quả rồi zoom → highlight đúng chỗ · zoom **khi đang Chú thích** → hình vẽ/hộp chữ theo đúng tỷ lệ, ô nhập chữ đang mở **không mất** · zoom khi đang “Sửa chữ” → ô span đúng chỗ · Vừa bề ngang / Vừa cả trang / Ctrl+0 · F11 vào/ra · **dải mới 20–500% (v0.2.66):** gõ `500` rồi `20` vào ô zoom → nét, cuộn không đứng máy · gõ `5` / `0` / `999` / `abc` → kẹp về 20 / 20 / 500 / không đổi, **không NaN** · nút ±/Ctrl± bấm **vào rồi ra** cùng số lần → về **đúng** tỷ lệ ban đầu (bước nhân, xem BI-78) · **A0/A1 (bản vẽ CAD) ở 300 → 400 → 500%** → **không được có trang trắng**, và RAM renderer phải **thấp hơn** bản trước · ba nút “Vừa…” trên A0 vẫn xuống được **8%** (sàn 20% không được ăn `FIT_MIN_SCALE`) (BI-36, BI-78, BI-22) |
 | Cột trang theo trang đang đọc (`syncThumbFocus`, `nearestScrollDelta`, `.thumb.current`) | `npm run test:geom` · cuộn tài liệu → thumbnail sáng đúng trang & tự trượt vào khung nhìn · **tick chọn vài trang rồi cuộn đi đâu đó → Xoá trang vẫn xoá đúng các trang đã tick** (BI-39, BI-26) · đang kéo sắp xếp trang thì cột **không nhảy** (BI-33) · thu sidebar (F4) rồi cuộn → không lỗi console · F11 → dải trang vẫn sáng đúng trang |
 | Ảnh round-trip (`addManagedAnnot` nhánh image, `managedSrcBytes`, `collectManagedChain`, `freeManagedTrash`, `MANAGED_KINDS`) | `cd desktop ; npm run test:managed` · chèn 1 ảnh → Áp dụng → Lưu → **mở lại** → Chỉnh sửa → ảnh **kéo/đổi cỡ/xoá được**, “Áp nhiều trang” vẫn dùng được · lưu 3–4 lần liên tiếp → **cỡ file không phình** · áp 1 chữ ký cho 20 trang → file ~1 lần cỡ ảnh, không 20 · ảnh trên trang **đã xoay** → **cũng sửa lại được** kể từ v0.2.58, xem hàng dưới (BI-59) · xoá ảnh round-trip rồi **thêm ô redact trên chính trang đó** → Áp dụng: ảnh **không** quay lại thành pixel, và ảnh còn lại **không nhân đôi** (BI-37, BI-38) |
@@ -2216,7 +2327,9 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Nền hộp văn bản (`FILLABLE_KINDS`, `fillSlotFor`/`FILL_SLOTS`, `ed.textFill*`, khối `.an-text-bg` trong `renderAnnot`, `fillRect` trong `renderTextPng`, `.an-text { z-index: 0 }`) | `cd desktop ; npm run test:text ; npm run test:managed ; npm run test:defaults` · hộp chữ **nền vàng 100%** trên nền trắng → Áp dụng → Lưu → mở file bằng viewer khác: **mép nền trùng** đúng chỗ trên màn hình · nền **30%** → xuyên thấy nội dung trang, PDF **giống hệt** màn hình · nền + **Mờ chữ 50%** → cả chữ **và** nền cùng mờ ở cả hai nơi · nền + **xoay 45°** → nền quay theo, **không trôi** khỏi chữ · nền + `charScale 60%` → nền ôm đúng bề ngang · Áp dụng → Chỉnh sửa lại → sửa chữ → **nền còn** · Áp dụng → **Đánh số trang** (qua sidecar) → mở lại → nền còn · trang `/Rotate 90` → nền **không méo** · file **cũ** (trước v0.2.64) → hộp chữ vẫn trong suốt, **không tự mọc nền** · chọn hình chữ nhật rồi chọn hộp chữ → ô **Nền** hiện đúng giá trị **của từng loại** (slot riêng) · in (Ctrl+P) → nền in ra (BI-71) · **lượt đầu, đây là ca vỡ của v0.2.64 (BI-75)**: chọn công cụ Hộp văn bản → bấm lên trang → **gõ chữ trước** → rồi mới bỏ tick **Trong suốt** và kéo **Mờ nền** → khung gõ **đổi nền ngay trước mắt**, hộp **không** bị đóng, bấm ra ngoài thì hộp ra **đúng** màu và **đúng** % vừa kéo · đang gõ mà **đổi cỡ chữ / phông / B-I-U / canh lề** → khung gõ đổi theo, **chữ đang gõ còn nguyên** · gõ **giữa từ** rồi kéo Mờ nền → thả chuột là **con trỏ về đúng chỗ đang gõ**, không nhảy xuống cuối · đang gõ mà **đổi công cụ** hoặc bấm **Áp dụng** → hộp **được chốt** như cũ (không được im lặng mất chữ) · mở lại hộp cũ bằng công cụ Hộp văn bản (gõ sửa chữ) → kéo Mờ nền → **chính hộp đó** đổi nền, không phải hộp khác · chọn một hình chữ nhật, đổi sang công cụ Hộp văn bản, kéo Mờ nền → **hình chữ nhật không đổi gì** và **không sinh bước undo rỗng** · chọn hộp chữ **không có nền** → ô màu hiện đúng màu mà bỏ tick sẽ nhận (không phải màu của hình vừa chọn trước đó) · **ô xem trước** cạnh thanh Mờ nền: trắng 30% và trắng 100% **trông khác nhau rõ**, Không nền thì thấy ô caro |
 | Ba ô nền (`onFillColorInput`/`onFillNoneToggle`/`onFillOpacityInput`, `setFillOn`, `fillFromCtls`, `clampFillPct`, nhánh `FILLABLE_KINDS` của `syncControls`) | `cd desktop ; npm run test:defaults` · chọn 1 chữ nhật nền **vàng 40%** → tick **Không nền** → bỏ tick → phải ra **lại vàng 40%**, không phải trắng 100% · kéo **Mờ nền** về **0%** → ô **Không nền** phải **tự tick**, chip thành ô caro · bỏ tick khi slider ở 0% → slider nhảy lên **100%** và thấy nền · kéo về 0%, chọn vật thể khác đang 70%, tick rồi bỏ tick, rồi **vẽ hình mới** → hình mới phải **thấy được** · để 1 chữ nhật đang chọn rồi đổi sang công cụ **Hộp văn bản**, kéo Mờ nền → chữ nhật **không đổi** và **không** ăn bước hoàn tác (BI-75) · gõ chữ trong hộp mới, kéo Mờ nền → khung gõ đổi màu, **không mất chữ** · đổi tool Hộp văn bản ↔ Chữ nhật → ba ô hiện đúng bộ **của từng loại** · đổi VI↔EN → nhãn **Không nền** dịch đúng (BI-76) |
 | Trang ẩn có khoá (`renderer/page-vault.js`, `scanVaultPages`, `hidePagesWithPassword`, `unhidePagesWithPassword`, `exportWithoutHiddenPages`, `#vault-modal`) | `cd desktop ; npm run test:vault` · **ba ca không được phép đỏ**: ẩn → **kéo thả sắp xếp trang** → bỏ ẩn được (BI-72) · ẩn → **chú thích lên trang giữ chỗ → Áp dụng** → bỏ ẩn được (BI-72) · ẩn xong mở thư mục recovery trong `userData` → **không còn bản rõ** (BI-74) · ẩn → Lưu → đóng app → mở lại → bỏ ẩn được · ẩn → **Đánh số trang** → bỏ ẩn được (BI-73) · ẩn → **Nén file** → bỏ ẩn được · ẩn → khoá cả file bằng mật khẩu (`/encrypt`) → mở khoá → bỏ ẩn được · ẩn → **In** → in ra trang giữ chỗ, không phải nội dung gốc · mở file có trang ẩn bằng **Acrobat/Chrome** → thấy trang giữ chỗ, **không đọc được** nội dung, file không lỗi · tách/trích trang giữ chỗ ra file mới → bỏ ẩn được ở file mới · chuyển trang giữ chỗ **sang tab khác** → blob đi theo · sai mật khẩu → hỏi lại, **tài liệu không đổi** · badge 🔒 và dòng “N trang đang ẩn” đúng sau mỗi lần xoá/ghép/sắp xếp trang |
-| Tay nắm đổi cỡ (`resizeRect`, `RESIZABLE_KINDS`, `.handle.h-*`) | `npm run test:geom` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng |
+| Tay nắm đổi cỡ (`resizeRect`, `scalePts`, `RESIZABLE_KINDS`, `canResize`, `.handle.h-*`) | `npm run test:geom ; npm run test:shape` · kéo **cả 4 góc** của ảnh/tô sáng/redact/chữ nhật/elip → góc đối diện **đứng yên** · **giữ Shift** → không méo · Esc giữa lúc kéo → về đúng vị trí+cỡ cũ · Ctrl+Z sau khi đổi cỡ · bấm vào tay nắm rồi **không kéo** → không tạo bước undo rỗng · **từ v0.2.71 làm thêm cho hình dạng-điểm**: kéo 4 góc của **nét vẽ tay**, **mây tự do** và **hình tự do** → giãn đều, **độ dày nét không đổi**, `bump` của mây không đổi · kéo một nét **ngang tuyệt đối** → không biến mất, không NaN · kéo dài (rê qua lại nhiều lần rồi về chỗ cũ) → hình **về đúng cỡ cũ**, không trôi (BI-89) |
+| Tô sáng theo chữ (`quadsFromRects`, `captureTextHighlight`, nhánh `texthl`, `body.editing.tool-texthl`) | `cd desktop ; npm run test:shape ; npm run test:managed ; npm run test:rotate ; npm run test:defaults` · bôi đen **5 dòng tiếng Việt có dấu**, bắt đầu và kết thúc **giữa dòng** → vệt bám sát chữ, **sắc độ đều**, không dòng nào đậm gấp đôi (BI-88) · zoom 50% → 400% → vệt vẫn bám chữ · trên **trang scan** → không chọn được chữ, không tạo vật thể, không lỗi console · chọn **vắt qua 2 trang** → hai vệt, một Ctrl+Z gỡ cả hai · Đang ở công cụ này → **không** chọn được vật thể (đúng luật); về **Chọn** (`V`) → chọn/xoá được ngay · Áp dụng → Lưu → **mở lại** → vệt còn đó và **chọn/xoá được**, **chữ dưới vệt không bị bạc** · mở file đó bằng **Foxit/Acrobat** → hiện trong danh sách chú thích, kèm đoạn chữ · lặp trên trang **đã xoay 90/180/270** → đúng chỗ · tô sáng **hình chữ nhật** (`H`) cũ → cũng phải **hết bạc chữ** sau khi Áp dụng (cùng một nhánh) |
+| Hình tự do (`poly`) và bộ máy đa giác dùng chung (`PEN_TOOLS`, `canClosePts`, `closePoly`/`cancelPoly`, `polyPath`, nhánh `poly` của `shapeAppearance`) | `cd desktop ; npm run test:shape ; npm run test:cloud ; npm run test:managed ; npm run test:rotate` · **hồi quy trước**: **Khoanh mây tự do** (`F`) vẽ bằng **cả hai** cách (kéo / bấm từng điểm), đóng bằng điểm đầu / `Enter` / bấm đúp, `Esc` huỷ — **y như cũ** · rồi `poly`: bấm 5 điểm → `Enter` → **đóng kín**, tô **nền 60%** → nền đúng · bấm 3 điểm → `Esc` → **để hở**, chỉ có nét, **không** tự tô nền · đổi từ `poly` sang `cloudpen` **giữa lúc đang bấm điểm** → hình dở dang bị bỏ, không sót · kéo từng **chấm tròn** đổi hình; một `Ctrl+Z` trả lại · copy → dán sang **tab khác** → đúng màu/nền · Áp dụng → Lưu → mở lại → **sửa tiếp được**, zoom 400% vẫn **nét** (vector) · lặp trên trang **xoay 90/180/270** → không méo, không lệch `pad` (BI-64) |
 | `editor.js` bake | Chú thích → Xong → sửa lại được · số trang không đổi · comment panel còn đúng (BI-5) |
 | Cổng bake (`exit()`, `bakePending()`, `hasUnsaved`, `ed._importedManaged`) hay `openTextEditor` | `cd desktop ; npm run test:managed` · **đường xoá, làm trên tài liệu chỉ có ĐÚNG MỘT chú thích** (đó là ca vỡ): tạo hộp văn bản → Xong → Lưu → vào Chú thích → `Delete` → Xong → hộp **mất thật**, mở lại file vẫn mất · lặp lại nhưng thay `Delete` bằng **xoá trắng nội dung rồi bấm ra ngoài** → hộp mất, chữ cũ **không** hiện lại · lặp lại nhưng bấm **Ctrl+S** thay vì Xong → cũng mất · xoá hết rồi **đóng app** → **có** hỏi lưu · xoá 1 trong 2 hộp → hộp còn lại **nguyên vẹn**, không nhân đôi (BI-60) |
 | Đặt `/AP` trên trang xoay (`apMatrixFor`, `apRectFor`, `apRotatable`, `normAngle`, ba nhánh `/AP` của `addManagedAnnot`) | `cd desktop ; npm run test:rotate ; npm run test:managed` · `docs/SPEC-annot-rotated.md` §7 lưới tay: với **cả 4 góc** `/Rotate` × {hộp chữ, mũi tên, ảnh, ghi chú} → bake → **Xong** → mở lại Chú thích → **sửa/kéo/xoá được**, không méo, không lệch 90° · re-bake 3 lần → **không** thành hai con dấu, file không phình · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chỗ · và **hồi quy quan trọng nhất**: một tài liệu 0° bake rồi lưu phải ra **byte y hệt** bản trước (BI-59) |

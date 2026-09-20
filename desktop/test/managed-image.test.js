@@ -87,6 +87,10 @@ const {
 // `normTextStyle` is what serializeManaged's text branch normalises through; required
 // here too so the LIFTED addManagedAnnot resolves it the same way the browser does.
 const { normTextStyle } = require("../renderer/annot-text.js");
+// The LIFTED deserializeManaged branches on the shape families, and addManagedAnnot's
+// tô-sáng-theo-chữ branch reads the wash strength — both by bare name, so both have to
+// exist in this module's scope the way they do in the browser's shared script scope.
+const { isPtsKind, isQuadKind, TEXTHL_OPACITY, polyPath } = require("../renderer/annot-geom.js");
 
 // eslint-disable-next-line no-eval
 const lift = (name) => eval("(" + fnSource(name) + ")");
@@ -814,7 +818,7 @@ function readManaged(doc) {
   check("MANAGED_KINDS is the set that round-trips, and isManagedKind reads it",
     [[...MC.MANAGED_KINDS].sort(), MC.isManagedKind("image"), MC.isManagedKind("box"),
      MC.isManagedKind("ellipse"), MC.isManagedKind("cloud"), MC.isManagedKind("highlight")],
-    [["arrow", "box", "cloud", "cloudpen", "draw", "ellipse", "image", "note", "text"],
+    [["arrow", "box", "cloud", "cloudpen", "draw", "ellipse", "image", "note", "poly", "text", "texthl"],
      true, true, true, true, false]);
   // VECTOR_KINDS is the SUBSET whose /AP is a path instead of a PNG. It must stay a
   // strict subset: a kind outside MANAGED_KINDS would never reach shapeAppearance at all.
@@ -822,7 +826,7 @@ function readManaged(doc) {
     [[...MC.VECTOR_KINDS].sort(),
      [...MC.VECTOR_KINDS].every((k) => MC.MANAGED_KINDS.has(k)),
      MC.isVectorKind("cloudpen"), MC.isVectorKind("text"), MC.isVectorKind("image")],
-    [["box", "cloud", "cloudpen", "draw", "ellipse"], true, true, false, false]);
+    [["box", "cloud", "cloudpen", "draw", "ellipse", "poly"], true, true, false, false]);
   // Guard: the module resolves pdf-lib and wire.js/annot-text.js itself (window.PDFLib +
   // bare names in the browser, require() here). If either shim regressed, these two would
   // throw rather than return — and managedSrcDataUrl is the image round-trip's only

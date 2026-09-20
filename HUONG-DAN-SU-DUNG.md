@@ -267,6 +267,37 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > có thể vừa có đoạn thẳng vừa có đoạn nguệch ngoạc. Tiện để gạch chân một dòng hợp đồng hay kẻ một đường
 > dẫn thẳng mà không phải đổi công cụ.
 
+> **Tô sáng theo đoạn chữ được chọn (từ v0.2.71, phím `B`):** chọn công cụ **Tô sáng theo chữ** rồi
+> **bôi đen bằng chuột** đúng như trong Word. Thả ra là vệt vàng bám **sát từng dòng chữ**, kể cả khi
+> đoạn chọn bắt đầu và kết thúc giữa dòng — khác với **Tô sáng** (`H`) là kéo một ô chữ nhật áng chừng.
+> - Chỉ dùng được trên **trang có chữ thật** (PDF xuất từ Word/CAD, hoặc bản scan đã OCR). Trang ảnh
+>   thuần thì không có chữ để chọn — dùng **Tô sáng** (`H`) kéo theo vùng như cũ.
+> - Đoạn chọn vắt qua **hai trang** thành **hai vệt**, mỗi trang một; một `Ctrl+Z` gỡ cả hai.
+> - **Trong lúc dùng công cụ này không chọn/kéo được vật thể khác** — chuột đang thuộc về lớp chữ.
+>   Chuyển về **Chọn** (`V`) để sửa hay xoá vệt đã tô.
+> - Vệt tô **đi theo file**: Áp dụng → Lưu → mở lại vẫn chọn và xoá được, và Foxit/Acrobat liệt kê nó
+>   trong danh sách chú thích kèm đoạn chữ đã tô.
+> - **Sửa kèm ở bản này:** vệt tô sáng sau khi Áp dụng từng **làm chữ bên dưới bạc đi** trong file đã
+>   lưu (trên màn hình thì không) — nay hai nơi giống hệt nhau. Áp cho **cả hai** kiểu tô sáng.
+
+> **Hình tự do — đa giác nhiều cạnh (từ v0.2.71, phím `P`):** cho những thứ chữ nhật và elip không ôm
+> được — một khu đất, một mảng trần, một đoạn ống đi chéo.
+> - **Bấm từng điểm** để đặt đỉnh, hoặc **giữ chuột kéo** để vẽ tự do.
+> - **Đóng kín:** bấm vào **điểm đầu**, `Enter`, hoặc **bấm đúp**. **Chỉ hình đóng kín mới tô được nền.**
+> - **Để hở:** `Esc` — ra một đường gấp khúc nhiều đoạn, chỉ có nét.
+> - Màu, **Nét** (độ dày), **Nền / Không nền / Mờ nền**, copy–dán (kể cả sang tab hay file khác) dùng
+>   chung luật với khung chữ nhật. Lưu xong mở lại **sửa tiếp được**; nét lưu dạng vector nên phóng to
+>   hay in ra vẫn sắc.
+
+> **Kéo giãn và sửa đỉnh cho nét vẽ tay / mây tự do / hình tự do (từ v0.2.71):** chọn hình bằng công cụ
+> **Chọn** (`V`) → hiện **4 nút vuông ở góc**. Kéo một góc để phóng to / thu nhỏ **toàn bộ hình**, góc
+> đối diện **đứng yên**; giữ `Shift` để giữ tỷ lệ. Trước bản này ba loại đó vẽ xong là cố định cỡ.
+> - **Độ dày nét không mảnh đi theo** khi thu nhỏ — nét là thuộc tính của bút, không phải của hình, nên
+>   ghi chú thu nhỏ vẫn đủ đậm để nhìn và để in. Cỡ vỏ sò của mây cũng giữ nguyên.
+> - **Mây tự do và hình tự do** còn hiện **một chấm tròn ở mỗi đỉnh**: kéo chấm để nắn lại **đúng một góc**.
+>   **Nét vẽ tay không có** — điểm của nó là vết chuột chứ không phải góc ai đặt ra, và chúng được thưa
+>   hoá khi lưu nên đỉnh vừa kéo chưa chắc sống sót qua một vòng lưu.
+
 > **Màu mặc định của chú thích là ĐỎ (từ v0.2.60):** hộp văn bản, mũi tên, khoanh mây, chữ nhật, tròn,
 > vẽ tay, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới**. Đổi ở **Cài đặt → Màu chú thích mặc
 > định** — app nhớ lựa chọn cho các lần sau.

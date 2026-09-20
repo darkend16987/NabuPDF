@@ -186,6 +186,11 @@ const MUST_MENTION = [
   ["measure calibration", "hiệu chuẩn"],
   ["what stays editable", "dán chết"],
   ["text box Ctrl+Enter", "Ctrl+Enter"],
+  // v0.2.71 — the two gestures that exist nowhere else in the UI: selecting words to
+  // highlight them, and finishing a free shape OPEN with Esc.
+  ["highlight by text selection", "bôi đen bằng chuột"],
+  ["free shape finished open", "kết thúc để hở"],
+  ["pts shapes can be resized", "4 nút vuông ở góc"],
 ];
 for (const [label, needle] of MUST_MENTION) {
   check(`annotate guide covers: ${label}`, viText.includes(needle), `missing "${needle}"`);
@@ -197,7 +202,7 @@ for (const [label, needle] of MUST_MENTION) {
 // can discover, which is the exact gap this whole change was meant to close.
 
 group("tool shortcut table");
-const TOOL_KEYS = ["V", "T", "H", "D", "R", "O", "C", "F", "A", "K", "J", "N", "I", "X", "M"];
+const TOOL_KEYS = ["V", "T", "H", "B", "D", "R", "O", "C", "F", "P", "A", "K", "J", "N", "I", "X", "M"];
 const keyBlock = (annotate.blocks || []).find((b) => b.keys);
 check("annotate has a shortcut table", !!keyBlock);
 const listed = new Set((keyBlock ? keyBlock.keys : []).map(([k]) => (typeof k === "string" ? k : k.vi)));

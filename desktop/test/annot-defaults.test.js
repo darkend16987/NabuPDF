@@ -769,8 +769,10 @@ group("the background controls' labels are translatable");
 
 // ---- 5. the round-trip import fallbacks were NOT retargeted --------------
 //
-// deserializeManaged() falls back to "#ffd54a" for an arrow/note whose /NabuData carries
-// no colour. That is a property of the FILE FORMAT as shipped, not a user preference:
+// deserializeManaged() falls back to "#ffd54a" for an arrow / note / tô sáng theo chữ
+// whose /NabuData carries no colour. (The text highlighter joined at v0.2.71; yellow is
+// the right literal for it twice over — it is the highlighter colour AND the historical
+// fallback — but it must stay a LITERAL, never ed.highlightColor.) That is a property of the FILE FORMAT as shipped, not a user preference:
 // point it at the new default and every such annotation in an already-saved file changes
 // colour when reopened. Asserted so a later "tidy up the yellow" sweep cannot do it.
 
@@ -778,8 +780,8 @@ group("legacy import fallbacks stay yellow");
 const deserialize = cutFunction(EDITOR_SRC, "deserializeManaged");
 const fallbacks = (deserialize.match(/data\.color \|\| "#ffd54a"/g) || []).length;
 check(
-  "deserializeManaged still falls back to #ffd54a in 2 places (arrow + note)",
-  fallbacks === 2,
+  "deserializeManaged still falls back to #ffd54a in 3 places (arrow + note + texthl)",
+  fallbacks === 3,
   `found ${fallbacks}`
 );
 check(

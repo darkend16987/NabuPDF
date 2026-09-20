@@ -1,6 +1,6 @@
 {
   "name": "nabu-pdf-desktop",
-  "version": "0.2.70",
+  "version": "0.2.71",
   "private": true,
   "description": "Nabu PDF — desktop PDF suite (Electron + Python sidecar)",
   "author": "darkend16987 <hoangnam.mng@gmail.com>",
@@ -17,6 +17,7 @@
     "build": "electron-builder --config electron-builder.yml",
     "test:tabs": "node test/tabs-logic.test.js",
     "test:pages": "node test/page-range.test.js",
+    "test:thumbs": "node test/thumb-queue.test.js",
     "test:raster": "node test/raster-cap.test.js",
     "test:split": "node test/split-layout.test.js",
     "test:pagedrop": "node test/page-drop.test.js",
@@ -29,6 +30,7 @@
     "test:text": "node test/annot-text.test.js",
     "test:clip": "node test/annot-clip.test.js",
     "test:cloud": "node test/annot-geom.test.js",
+    "test:shape": "node test/annot-shape.test.js",
     "test:rotate": "node test/annot-rotate.test.js",
     "test:defaults": "node test/annot-defaults.test.js",
     "test:combine": "node test/shell-combine.test.js",

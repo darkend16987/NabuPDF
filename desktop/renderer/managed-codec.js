@@ -110,6 +110,10 @@
     if (typeof simplifyStroke === "function") return simplifyStroke(pts);
     return require("./annot-geom.js").simplifyStroke(pts);
   }
+  function _polyPath(pts, closed) {
+    if (typeof polyPath === "function") return polyPath(pts, closed);
+    return require("./annot-geom.js").polyPath(pts, closed);
+  }
 
   // ---- the private keys ----------------------------------------------------
 
@@ -118,14 +122,20 @@
   // `box` / `ellipse` / `cloud` / `cloudpen` joined at v0.2.61 and `draw` at v0.2.63;
   // they are the members whose appearance is VECTOR rather than a rasterised PNG — see
   // shapeAppearance() below for why that is the cheap option here and not for text/arrow.
-  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw"]);
+  // `poly` (hình tự do) and `texthl` (tô sáng theo chữ) joined at v0.2.71. `poly` is an
+  // ordinary member of the vector half below. `texthl` is NOT: it is the first managed
+  // kind whose annotation is not a /Stamp — it is written as a real /Highlight with
+  // /QuadPoints, so Acrobat and Foxit list it in their comment panes as the highlight it
+  // is. Its /AP is still ours (see addManagedAnnot), because a viewer that synthesises
+  // one from QuadPoints is allowed to pick its own blend and we would rather it did not.
+  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw", "poly", "texthl"]);
   // The vector half of the family, as one name: five kinds that share ONE branch in
   // addManagedAnnot and ONE branch in deserializeManaged (shapeAppearance splits them
   // three ways internally — box/ellipse, cloud/cloudpen, draw — but no caller cares
   // which, and that is the point of having the predicate).
   // Named because "is this kind vector?" is asked in three files, and an inline `||`
   // chain in each is how those three drift apart (same argument as RESIZABLE_KINDS).
-  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "draw"]);
+  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "draw", "poly"]);
   function isVectorKind(k) { return VECTOR_KINDS.has(k); }
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
@@ -327,6 +337,31 @@
       return out(ops, wPt, hPt, g.minX - lw, g.minY - lw);
     }
 
+    // -- hình tự do: the freehand branch, plus a fill when the shape is closed ------
+    //
+    // Same primitive and the same two settings as `draw` (round caps, round joins) for
+    // the same reason — the flattened writer draws this shape as independent segments on
+    // a non-90° rotated page, and only round ends make the two paint the same ink.
+    //
+    // The FILL is the one thing that differs, and it is why `closed` has to come from
+    // polyPath rather than from `a.closed`: pdf-lib emits `B` (fill+stroke) the moment a
+    // colour is passed, and filling an unclosed path makes the renderer invent the
+    // closing edge. polyPath refuses to close a 2-point shape, so asking it is what keeps
+    // the /AP and the <svg> agreeing about whether there is an interior at all.
+    if (a.kind === "poly") {
+      const g = _polyPath(a.pts, a.closed);
+      if (!g) return null; // fewer than two distinct points — caller flattens (= nothing)
+      const wPt = g.W + 2 * lw;
+      const hPt = g.H + 2 * lw;
+      const opts = Object.assign({}, common, {
+        x: lw, y: hPt - lw, borderLineCap: LineCapStyle.Round,
+      });
+      if (!g.closed) opts.color = undefined; // an open path is never filled
+      const ops = drawSvgPath(g.d, opts);
+      ops.splice(1, 0, setLineJoin(LineJoinStyle.Round));
+      return out(ops, wPt, hPt, g.minX - lw, g.minY - lw);
+    }
+
     // -- revision clouds: ONE SVG path, y-DOWN, local 0-origin -----------------
     // annot-geom already shifts the path by its own `pad` so the scallops stay ≥ 0 —
     // the same string the overlay <svg> uses. All this adds is room for the STROKE,
@@ -414,11 +449,24 @@
         o.pts = _simplifyStroke(a.pts).map((p) => ({
           x: +p.x.toFixed(2), y: +p.y.toFixed(2),
         }));
-      } else if (a.kind === "cloudpen") {
+      } else if (a.kind === "cloudpen" || a.kind === "poly") {
         // The polygon's own vertices, at full precision. They are the ONLY record of the
         // shape (the scallops are re-derived from them), and a cloudpen is a handful of
         // clicked corners — not a freehand scribble — so there is nothing to thin out.
-        o.pts = (a.pts || []).map((p) => ({ x: p.x, y: p.y }));
+        //
+        // A `poly` DRAGGED freehand is the exception inside the exception: it collects a
+        // point per mousemove like `draw` does. It is thinned on that path only, so a
+        // clicked polygon still round-trips corner for corner — moving a vertex must put
+        // it back exactly where the user left it, and RDP would nudge a shallow corner.
+        const pts = (a.pts || []).map((p) => ({ x: p.x, y: p.y }));
+        o.pts = a.kind === "poly" && pts.length > 64
+          ? _simplifyStroke(pts).map((p) => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2) }))
+          : pts;
+        // Only a `poly` records it. A cloudpen in a file is ALWAYS closed (see
+        // deserializeManaged), so writing the key for it would change nothing except the
+        // bytes of every existing payload — and "unchanged input must produce unchanged
+        // bytes" is a rule this codebase keeps deliberately (BI-59).
+        if (a.kind === "poly") o.closed = !!a.closed;
       } else {
         o.x = a.x; o.y = a.y; o.w = a.w; o.h = a.h;
       }
@@ -431,6 +479,21 @@
         o.fillOpacity = a.fillOpacity != null ? a.fillOpacity : 1;
       }
       return o;
+    }
+    // Tô sáng theo chữ: the line quads ARE the shape, and the marked words travel with
+    // them so a re-opened file (and Acrobat's comment list, via /Contents) can say what
+    // was highlighted. No pen width, no fill — a highlight has neither.
+    if (a.kind === "texthl") {
+      return {
+        k: "texthl",
+        quads: (a.quads || []).map((q) => ({
+          x: +(+q.x).toFixed(2), y: +(+q.y).toFixed(2),
+          w: +(+q.w).toFixed(2), h: +(+q.h).toFixed(2),
+        })),
+        color: a.color,
+        opacity: a.opacity != null ? a.opacity : 0.4,
+        text: a.text || "",
+      };
     }
     // Geometry only — the pixels travel in the /NabuSrc stream, not in here.
     if (a.kind === "image") {

@@ -659,14 +659,47 @@ async function renderAll() {
     throw err;
   } finally {
     hideOverlay();
+    // Safety net: if renderViewer never got to open it (load failed part-way), a
+    // permanently shut gate would leave the page list blank for good.
+    thumbQueue.open();
   }
 }
 
 let thumbObserver = null;
 
+// ---- thumbnail scheduling (docs/RESEARCH-2026-09-20b-cad-perf-real-files.md §3.3)
+//
+// A thumbnail is NOT cheap. Measured on an A1 CAD sheet: rasterising it at 150 px
+// costs 162 ms, at 600 px 161 ms, at 36 MP 189 ms — because the cost is replaying
+// the page's ~77 000 drawing operators, not filling pixels. So a 150 px thumbnail
+// costs about the same as the whole page.
+//
+// renderAll runs renderThumbs BEFORE renderViewer, and the sidebar's observer fired
+// at the 9 ms mark, so eight of those (~1.2 s of main thread) ran BEFORE the page
+// the user is actually waiting for. Measured on two real drawings: first page
+// visible at 1241 ms / 1238 ms.
+//
+// Now the observer only ENQUEUES. The queue stays shut until renderViewer has the
+// first pages on screen, then drains one thumbnail per idle slice. Same work, same
+// end state, different order: first page visible at 299 ms / 254 ms.
+//
+// The ordering itself lives in renderer/thumb-queue.js (pure, with a grid) — the
+// bug it guards against is silent. Here we only supply "what a thumbnail is" and
+// "what an idle slice is".
+const thumbQueue = window.ThumbQueue.createThumbQueue({
+  render: (i) => renderThumbCanvas(i),
+  idle: () =>
+    new Promise((r) =>
+      window.requestIdleCallback
+        ? window.requestIdleCallback(() => r(), { timeout: 200 })
+        : setTimeout(r, 0)
+    ),
+});
+
 async function renderThumbs() {
   const wrap = $("thumbs");
   wrap.innerHTML = "";
+  thumbQueue.reset(); // reopened by renderViewer once the first pages are up
   if (thumbObserver) {
     thumbObserver.disconnect();
     thumbObserver = null;
@@ -717,7 +750,7 @@ async function renderThumbs() {
     (entries) => {
       for (const e of entries) {
         if (!e.isIntersecting) continue;
-        renderThumbCanvas(+e.target.dataset.index);
+        thumbQueue.queue(+e.target.dataset.index); // drained after the viewer's first pages
         thumbObserver.unobserve(e.target);
       }
     },
@@ -732,6 +765,21 @@ async function renderThumbs() {
   // answer for those. renderViewer marks it once its own pages are in place.
   thumbFocusIdx = -1;
 }
+
+// ⛔ DO NOT "optimise" a thumbnail by shrinking the page bitmap renderPageCanvas
+// just produced. It is tempting — 0.7 ms instead of 150–175 ms, and BI-4 is not even
+// in the way if you read the OFFSCREEN canvas rather than the viewer one. It was
+// built, measured and then removed on 2026-09-20, because on a dense line drawing it
+// is a visible DOWNGRADE: an A1 page bitmap is ~16x the thumbnail's width, so a
+// hairline covering one pixel there averages to ~1/16 ink here. Measured on page 1 of
+// NA2-CD-S-LK4A.pdf, same 150x105 canvas:
+//     from the page bitmap : mean luminance 238.8, 8.5 % dark pixels  (washed out)
+//     rasterised at 150 px : mean luminance 176.2, 37.1 % dark pixels (legible)
+// pdf.js draws each stroke at a minimum of one pixel; a downscale cannot. The
+// information is gone, so no resampling setting brings it back.
+// It also buys almost nothing: the open-time win comes from the ORDER (see the note
+// above renderThumbs), not from where the pixels come from — 299 ms vs 314 ms to the
+// first page with and without it. docs/RESEARCH-2026-09-20b-cad-perf-real-files.md.
 
 // Rasterise one thumbnail into its (already-sized) canvas. Idempotent via the
 // data-rendered guard so the observer + refreshThumb don't double-draw.
@@ -842,6 +890,11 @@ async function renderViewer() {
 
   // Draw the first page(s) immediately so the viewer is never blank on open.
   for (let i = 0; i < Math.min(2, metas.length); i++) await renderPageCanvas(i);
+
+  // The pages the user was waiting for are on screen — the sidebar may have the
+  // main thread now. Until this call the thumbnail queue only collected indices
+  // (see the note above renderThumbs).
+  thumbQueue.open();
 
   // Pages are in place now, so "which page am I on" finally has a real answer —
   // mark it in the page list (see the note in renderThumbs about the ordering).
@@ -965,6 +1018,10 @@ async function addTextLayer(i, m) {
   layer.style.width = (parseFloat(canvas.style.width) || cw) + "px";
   layer.style.height = (parseFloat(canvas.style.height) || ch) + "px";
   layer.style.setProperty("--scale-factor", String(state.scale));
+  // The scale THIS layer was built at. During a zoom gesture applyScaleToDom scales
+  // it by `state.scale / pscale` instead of rewriting `--scale-factor`, exactly like
+  // the note / search / find layers — see the measurement note there.
+  layer.dataset.pscale = String(state.scale);
   try {
     await pdfjsLib.renderTextLayer({
       textContentSource: tc,
@@ -2812,21 +2869,19 @@ function applyScaleToDom() {
     m.ch = Math.floor(m.vp.height);
     m.canvas.style.width = m.cw + "px";
     m.canvas.style.height = m.ch + "px"; // stretches the existing bitmap; commitScale repaints it
-    // pdf.js 3.x writes span positions as `calc(var(--scale-factor) * Npx)`, so the
-    // whole text layer re-lays itself out from this one variable — selection and
-    // Ctrl+F highlighting stay aligned mid-gesture with no re-render.
-    const tl = m.wrap.querySelector(".text-layer");
-    if (tl) {
-      tl.style.width = m.cw + "px";
-      tl.style.height = m.ch + "px";
-      tl.style.setProperty("--scale-factor", String(s));
-    }
-    // Note markers and find highlights are positioned in absolute px derived from
-    // the viewport they were painted with, so they cannot follow a CSS variable.
-    // Scale them from that paint scale instead — deliberately WITHOUT touching
+    // Every overlay layer — text, note markers, find highlights — is positioned in
+    // absolute px derived from the viewport it was painted with, so during the
+    // gesture we only SCALE it from that paint scale. Deliberately WITHOUT touching
     // width/height, because the transform already resizes the box. commitScale
     // rebuilds them exactly and the transform dies with the replaced element.
-    for (const sel of [".note-layer", ".search-layer", ".fr-layer"]) {
+    //
+    // `.text-layer` used to be the exception: it got a fresh `--scale-factor`, and
+    // pdf.js 3.x writes span positions as `calc(var(--scale-factor) * Npx)`, so that
+    // one line made the browser re-lay-out EVERY span. Measured per wheel notch on a
+    // real page: 6.4 ms for a CAD sheet (446 spans), 96–134 ms for a text-heavy page
+    // (~20 000 spans) — against 0.1 ms for the transform. See
+    // docs/RESEARCH-2026-09-20b-cad-perf-real-files.md §4/P2.
+    for (const sel of [".text-layer", ".note-layer", ".search-layer", ".fr-layer"]) {
       const l = m.wrap.querySelector(sel);
       if (!l) continue;
       // Each layer carries the scale IT was built at — not the page's, because

@@ -102,6 +102,10 @@ function fnSource(name) {
 // load-time TypeError rather than a silently skipped case.
 const {
   cloudPath, cloudPathPoly, bumpOf, symbolStrokes, arrowLabelPos,
+  // v0.2.71: the lifted drawOneAnnot reads these by bare name too — TEXTHL_OPACITY for
+  // the highlight branch (which now bakes with /BM /Multiply) and isPtsKind/polyPath for
+  // hình tự do's flatten fallback on a non-quarter-turn page.
+  TEXTHL_OPACITY, isPtsKind, isQuadKind, polyPath, quadsFromRects, scalePts,
 } = require("../renderer/annot-geom.js");
 const {
   makeMap, pageRotate, sniffImage, strToBytes, serializeManaged, pushPageAnnot,
@@ -295,6 +299,19 @@ const bbox = (pts) =>
 // PDF points, top-left origin, y DOWN (the overlay's own space).
 const KINDS = [
   { name: "highlight", a: { kind: "highlight", x: 40, y: 60, w: 120, h: 30, color: "#ffd54a" } },
+  // Tô sáng theo chữ (v0.2.71). Normally it goes in as a real /Highlight annotation, so
+  // this exercises the FLATTENING fallback — which has to land in the same place, or the
+  // two writers would draw different marks on an exotic page rotation. Three quads,
+  // because "one box per line" is the whole shape of this kind.
+  { name: "texthl", a: { kind: "texthl", color: "#ffd54a", opacity: 0.4,
+      quads: [{ x: 40, y: 60, w: 120, h: 12 }, { x: 40, y: 76, w: 100, h: 12 },
+              { x: 40, y: 92, w: 60, h: 12 }] } },
+  // Hình tự do (v0.2.71), both shapes: the flatten fallback strokes it segment by
+  // segment, so the closed one must emit the closing edge too.
+  { name: "poly closed", a: { kind: "poly", color: "#7b1fa2", width: 2, closed: true,
+      pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] } },
+  { name: "poly open", a: { kind: "poly", color: "#7b1fa2", width: 2, closed: false,
+      pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }] } },
   { name: "box", a: { kind: "box", x: 40, y: 60, w: 120, h: 30, color: "#ff0000", width: 2 } },
   { name: "box+fill", a: { kind: "box", x: 40, y: 60, w: 120, h: 30, color: "#ff0000", width: 2, fill: "#00ff00", fillOpacity: 0.5 } },
   { name: "ellipse", a: { kind: "ellipse", x: 40, y: 60, w: 120, h: 30, color: "#ff0000", width: 2 } },
@@ -344,6 +361,17 @@ const VECTOR_SHAPES = [
   // what saves it, so this case is the one that fails if that padding is ever removed.
   { name: "draw flat", a: { id: 16, kind: "draw", color: "#0000ff", width: 4,
       pts: [{ x: 40, y: 100 }, { x: 200, y: 100 }] } },
+  // Hình tự do (v0.2.71) — the vector /AP path. The closed one is the only member whose
+  // path both CLOSES and FILLS, which is what makes `B` vs `S` visible here; the open one
+  // must stay stroke-only even with a fill colour attached, because filling an unclosed
+  // path lets the renderer invent the closing edge.
+  { name: "poly closed", a: { id: 17, kind: "poly", color: "#7b1fa2", width: 2, closed: true,
+      pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] } },
+  { name: "poly closed+fill", a: { id: 18, kind: "poly", color: "#7b1fa2", width: 3, closed: true,
+      fill: "#ffeb3b", fillOpacity: 0.4,
+      pts: [{ x: 50, y: 50 }, { x: 160, y: 70 }, { x: 140, y: 170 }, { x: 45, y: 140 }] } },
+  { name: "poly open", a: { id: 19, kind: "poly", color: "#7b1fa2", width: 2, closed: false,
+      pts: [{ x: 30, y: 40 }, { x: 90, y: 120 }, { x: 150, y: 70 }] } },
 ];
 
 (async () => {

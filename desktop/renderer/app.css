@@ -706,6 +706,16 @@ body.editing .annot-layer .an { cursor: move; }
    `pointer-events: none` so the wash never steals a click from the box itself. */
 .an-text-bg { position: absolute; z-index: -1; pointer-events: none; }
 .an-highlight { mix-blend-mode: multiply; opacity: 0.4; }
+/* Tô sáng theo đoạn chữ — the wrapper is the union box (it takes the click and the
+   drag); each child is one LINE of the selection and carries the wash.
+   `mix-blend-mode` is on the CHILD, not the wrapper: blending the wrapper composites its
+   own transparent background against the page as one layer, and the quads stop
+   multiplying against the glyphs. The children must never overlap either — two
+   multiplies stack into a visibly darker band, which is what quadsFromRects prevents.
+   The opacity is written per-element by renderAnnot (TEXTHL_OPACITY), not here, so the
+   overlay, the bake and the round-trip /AP can be held to ONE number. */
+.an-texthl { background: none; }
+.an-texthl-q { position: absolute; mix-blend-mode: multiply; pointer-events: none; }
 .an-redact { background: #000; }
 .an-image img { width: 100%; height: 100%; display: block; }
 .an-draw svg { display: block; overflow: visible; }
@@ -737,6 +747,16 @@ body.editing .annot-layer .an { cursor: move; }
   width: 11px; height: 11px;
   background: var(--accent); border: 1px solid var(--accent-fg);
   border-radius: 2px; pointer-events: auto;
+}
+/* Vertex grip of a polygon (data-vtx). Round, and a different colour from the four
+   corner grips, because they sit on the same shape at the same time and do different
+   things: a corner stretches everything, a vertex moves one point. `translate(-50%,-50%)`
+   — its left/top are written as the POINT, not as the top-left of an 11px box. */
+.annot-layer .handle.h-vtx {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--accent);
+  transform: translate(-50%, -50%);
+  cursor: crosshair;
 }
 .annot-layer .handle.h-nw { left: -5px; top: -5px; cursor: nwse-resize; }
 .annot-layer .handle.h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
@@ -983,6 +1003,18 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
 body.editing .text-layer, body.text-editing .text-layer {
   pointer-events: none; user-select: none;
 }
+/* …EXCEPT under the Tô sáng theo chữ tool, whose whole gesture IS selecting text. The
+   annotation layer has to stand down for the same moment, or it eats the drag before the
+   text layer ever sees it (it sits above in tree order and `pointer-events: auto` under
+   body.editing). pointer-events and not z-index deliberately: restacking would put the
+   text layer over the marks already drawn, and a `none` layer is transparent to hit
+   testing without moving anything.
+   Consequence, and it is the documented rule of the tool: while this tool is active you
+   cannot select or drag an existing annotation — press V (Chọn) for that. */
+body.editing.tool-texthl .text-layer {
+  pointer-events: auto; user-select: text; cursor: text;
+}
+body.editing.tool-texthl .annot-layer { pointer-events: none; }
 
 /* ---- P6 native text editing (span boxes over the real text) ---- */
 .tedit-layer {

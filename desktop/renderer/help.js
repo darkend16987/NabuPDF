@@ -406,8 +406,16 @@
             ),
             T("**Tô sáng** (`H`) — kéo để tô sáng một vùng.", "**Highlight** (`H`) — drag across an area."),
             T(
+              "**Tô sáng theo chữ** (`B`) — **bôi đen bằng chuột** đúng như trong Word, thả ra là vệt vàng bám **sát từng dòng chữ**, kể cả khi đoạn chọn bắt đầu và kết thúc giữa dòng. Chỉ dùng được trên **trang có chữ thật** (PDF xuất từ Word/CAD hoặc bản scan đã OCR) — trang ảnh thuần thì không chọn được chữ, hãy dùng **Tô sáng** (`H`) kéo theo vùng. Đoạn chọn vắt qua **hai trang** thành **hai vệt**, mỗi trang một. Trong lúc dùng công cụ này **không chọn/kéo được vật thể khác** — chuyển về **Chọn** (`V`) để sửa hay xoá vệt đã tô. Vệt tô **đi theo file**: lưu xong mở lại vẫn chọn và xoá được, và Foxit/Acrobat liệt kê nó trong danh sách chú thích kèm đoạn chữ đã tô.",
+              "**Highlight text** (`B`) — **select with the mouse** exactly as in Word; on release a yellow wash hugs **each line of text**, including a selection that starts and ends mid-line. It needs a page with **real text** (a PDF exported from Word/CAD, or a scan that has been OCR'd) — on a pure image page there is no text to select, so use **Highlight** (`H`) and drag over the area instead. A selection that crosses **two pages** becomes **two marks**, one per page. While this tool is active you **cannot select or drag other objects** — switch to **Select** (`V`) to edit or delete a mark. Highlights **travel with the file**: save, reopen, and they are still selectable and deletable, and Foxit/Acrobat list them in the comment pane together with the highlighted words."
+            ),
+            T(
               "**Vẽ tay** (`D`) — giữ chuột và kéo. **Giữ thêm `Shift`** thì đoạn đang vẽ duỗi **thẳng** từ chỗ bạn nhấn Shift tới con trỏ; **thả `Shift` ra là vẽ tay tiếp** từ đúng đầu mút đó. Một nét có thể vừa thẳng vừa nguệch ngoạc, không phải đổi công cụ.",
               "**Freehand** (`D`) — hold and drag. **Also holding `Shift`** straightens the current stretch from where you pressed Shift to the pointer; **release `Shift` and freehand carries on** from that same end point. One stroke can be part straight, part scribble, with no tool change."
+            ),
+            T(
+              "**Từ v0.2.71: nét vẽ tay, mây tự do và hình tự do đều kéo giãn được.** Chọn một trong ba bằng công cụ **Chọn** (`V`) thì hiện **4 nút vuông ở góc**: kéo một góc để phóng to / thu nhỏ toàn bộ, góc đối diện **đứng yên**, giữ `Shift` để giữ tỷ lệ. **Độ dày nét không đổi theo** — thu một ghi chú nhỏ lại thì nét vẫn đủ đậm để nhìn. Mây tự do và hình tự do còn hiện **chấm tròn ở từng đỉnh** để sửa riêng một góc; nét vẽ tay thì không, vì điểm của nó là vết chuột chứ không phải góc ai đặt ra.",
+              "**From v0.2.71: freehand strokes, freehand clouds and free shapes can all be resized.** Select any of the three with the **Select** tool (`V`) and **four corner grips** appear: drag one to scale the whole thing, the opposite corner **stays pinned**, hold `Shift` to keep its proportions. The **line width does not scale** — shrink a small note and the stroke stays thick enough to read. Freehand clouds and free shapes also show a **round dot at every corner** for moving a single one; a freehand stroke does not, because its points are mouse samples rather than corners anybody placed."
             ),
             T("**Khoanh vùng chữ nhật** (`R`) và **elip / tròn** (`O`) — kéo để khoanh. Đổi **Nền** và **Mờ nền** nếu muốn tô màu bên trong; bỏ tick **Không nền** để bật nền. Ba control này chạy đúng luật như nền hộp văn bản ở trên — tick **Không nền** là tắt tạm, bỏ tick là màu và độ mờ cũ trở lại y nguyên.", "**Rectangle** (`R`) and **ellipse / circle** (`O`) — drag to draw. Use **Nền** and **Mờ nền** to fill it; untick **Không nền** to enable the fill. The three controls follow exactly the same rules as the text-box background above — ticking **Không nền** mutes the fill, un-ticking brings the same colour and opacity straight back."),
             T(
@@ -417,6 +425,10 @@
             T(
               "**Khoanh mây tự do** (`F`) — hai cách dùng: **giữ chuột kéo** để vẽ tự do, hoặc **bấm từng điểm** rồi đóng mây bằng cách bấm vào **điểm đầu**, nhấn `Enter`, hoặc **bấm đúp**. `Esc` để huỷ. Trong lúc bấm từng điểm, thanh công cụ hiện dòng nhắc cách đóng.",
               "**Freehand cloud** (`F`) — two ways: **hold and drag** to draw freely, or **click point by point** and close it by clicking the **first point**, pressing `Enter`, or **double-clicking**. `Esc` cancels. While you are clicking points, the bar shows a reminder of how to close it."
+            ),
+            T(
+              "**Hình tự do** (`P`) — hình nhiều cạnh vẽ bằng các **đoạn thẳng**, giống công cụ polygon bên Photoshop. **Bấm từng điểm** để đặt đỉnh, hoặc **giữ chuột kéo** để vẽ tự do. **Đóng kín** bằng cách bấm vào **điểm đầu**, nhấn `Enter` hoặc **bấm đúp** — hình đóng kín mới **tô nền** được. Nhấn `Esc` để **kết thúc để hở** (đường gấp khúc, chỉ có nét). Chọn hình rồi thì **kéo 4 góc** để phóng to thu nhỏ cả hình (giữ `Shift` để giữ tỷ lệ), hoặc **kéo từng chấm tròn** để sửa riêng một đỉnh. Màu, độ dày nét, nền / không nền / mờ nền, copy–dán (kể cả sang tab hay file khác) dùng chung luật với khung chữ nhật. Hình **đi theo file** — mở lại vẫn sửa tiếp được.",
+              "**Free shape** (`P`) — a many-sided shape drawn from **straight segments**, like Photoshop's polygon tool. **Click point by point** to place corners, or **hold and drag** to draw freely. **Close** it by clicking the **first point**, pressing `Enter` or **double-clicking** — only a closed shape can carry a **fill**. Press `Esc` to **finish it open** (a polyline, outline only). With the shape selected, **drag the 4 corner grips** to scale the whole thing (hold `Shift` to keep its proportions), or **drag a round dot** to move a single corner. Colour, line width, fill / no fill / fill opacity and copy–paste (including to another tab or file) work exactly as they do for a rectangle. The shape **travels with the file** — reopen it and it is still editable."
             ),
             T(
               "**Mũi tên** (`A`) — kéo từ gốc tới đích. Thả ra là hiện ô nhập **nhãn** ngay ở đầu mũi tên (gõ rồi `Enter`, bỏ trống hoặc `Esc` nếu không cần). Chọn một mũi tên thì hiện **2 nút tròn** ở hai đầu: kéo một đầu thì đầu kia **đứng yên**, nên mũi tên xoay quanh nó; **giữ `Shift`** để khoá góc theo bước **15°** mà **không** đổi độ dài. Nút **Đảo chiều** lật mũi nhọn sang đầu kia — **nhãn đi theo mũi nhọn**. Ô **Nhãn** chọn đặt chữ ở đầu hay ở cuối. **Bấm đúp** để sửa nhãn.",
@@ -485,11 +497,13 @@
             ["V", T("Chọn / di chuyển", "Select / move")],
             ["T", T("Hộp văn bản", "Text box")],
             ["H", T("Tô sáng", "Highlight")],
+            ["B", T("Tô sáng theo chữ được chọn", "Highlight selected text")],
             ["D", T("Vẽ tay", "Freehand")],
             ["R", T("Khoanh vùng chữ nhật", "Rectangle")],
             ["O", T("Khoanh vùng elip / tròn", "Ellipse / circle")],
             ["C", T("Khoanh mây", "Revision cloud")],
             ["F", T("Khoanh mây tự do", "Freehand cloud")],
+            ["P", T("Hình tự do (đa giác)", "Free shape (polygon)")],
             ["A", T("Mũi tên", "Arrow")],
             ["K", T("Dấu ✓", "Tick ✓")],
             ["J", T("Dấu ✗", "Cross ✗")],

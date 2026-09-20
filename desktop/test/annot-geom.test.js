@@ -431,13 +431,23 @@ check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(G).sort(),
   // .sort() is by UTF-16 code unit, so "STROKE_*" (0x54 T) sorts BEFORE "SYMBOL_SIZE"
   // (0x59 Y). Not a typo — the same trap as strToBytes/stripManagedAnnots in test:managed.
+  // v0.2.71 added the tô-sáng-theo-chữ / hình-tự-do maths: the two shape-family sets and
+  // their predicates, polyPath + countDistinct, quadsFromRects + its two tolerances and
+  // the wash strength, and scalePts. Their own grid is test:shape.
   ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN",
-   "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE",
+   "PTS_KINDS", "QUAD_GAP", "QUAD_KINDS", "QUAD_MIN",
+   "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE", "TEXTHL_OPACITY",
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "fitShift", "resizeRect", "simplifyStroke", "snapLineEnd", "strokeExtend",
+   "countDistinct", "fitShift", "isPtsKind", "isQuadKind", "polyPath", "quadsFromRects",
+   "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
-check("the constants are numbers, the rest functions",
-  Object.keys(G).map((k) => (/^[A-Z]/.test(k) ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
+// The two KIND sets are the exception to "SHOUTY name ⇒ number": they are Sets, and
+// spelling that out here is cheaper than a second rule nobody would remember.
+const SET_EXPORTS = new Set(["PTS_KINDS", "QUAD_KINDS"]);
+check("the constants are numbers (or the two kind Sets), the rest functions",
+  Object.keys(G).map((k) => (SET_EXPORTS.has(k)
+    ? G[k] instanceof Set
+    : /^[A-Z]/.test(k) ? typeof G[k] === "number" : typeof G[k] === "function")).every(Boolean),
   true);
 // resizeRect lives here but is exercised by test:geom — assert it is reachable so a
 // move/rename cannot quietly leave that grid testing nothing.

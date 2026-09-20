@@ -168,57 +168,62 @@
       <div class="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-orange-50/60 p-7 shadow-card md:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Mới</span>
-          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.70</span> · 16/09/2026</span>
+          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.71</span> · 20/09/2026</span>
           <a href="/lich-su-phien-ban.html" class="ml-auto text-sm font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">Xem toàn bộ lịch sử →</a>
         </div>
 
-        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">OCR thôi cần mạng — và thôi bỏ sót dòng chữ ký</h2>
+        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Tô sáng bằng cách bôi đen như trong Word — và hình tự do nhiều cạnh</h2>
 
         <div class="mt-6 grid gap-6 md:grid-cols-2">
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M8.5 16.4a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 5.2-2.7"/><path d="M19 12.9a10 10 0 0 0-2-1.5"/><path d="M2 8.8a15 15 0 0 1 4.2-2.6"/><path d="M22 8.8A15 15 0 0 0 10.7 5"/><path d="m2 2 20 20"/></svg>
-              Lần OCR đầu tiên không còn phải chờ tải
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 18h9"/><rect x="3.5" y="10" width="14" height="4.5" rx="1"/></svg>
+              Vệt tô bám đúng chữ, không phải một ô áng chừng
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Trước đây, lần đầu bạn bấm OCR trên một máy mới, app phải tải <b>151,8 MB</b> bộ nhận dạng
-              tiếng Việt từ một máy chủ bên ngoài. Đo thực tế: <b>286 giây</b> mới sẵn sàng đọc trang đầu —
-              và nếu máy chủ đó trục trặc thì OCR không chạy được, <b>kể cả khi bạn không cần mạng cho
-              việc gì khác</b>. Tệ hơn: bản tải về nằm ở thư mục tạm của Windows, nên Windows dọn dẹp là
-              lần sau tải lại từ đầu.
+              Từ trước đến nay tô sáng là <b>kéo một ô chữ nhật</b> đè lên chữ — lệch một chút là thừa ra lề
+              hoặc cắt mất chân chữ, và đoạn cần đánh dấu vắt qua năm dòng thì phải kéo năm lần. Nay với
+              tài liệu có chữ thật, bạn chỉ cần <b>bôi đen bằng chuột</b> đúng như trong Word: thả ra là vệt
+              vàng ôm sát <b>từng dòng</b>, kể cả khi đoạn chọn bắt đầu và kết thúc giữa dòng. Chọn vắt qua
+              hai trang thì thành hai vệt, mỗi trang một. Cách tô cũ vẫn còn nguyên cho bản scan và bản vẽ.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Nay bộ nhận dạng nằm sẵn <b>trong bộ cài</b>. Cắm máy không mạng, OCR vẫn chạy ngay từ lần
-              đầu. Đổi lại, <b>file cài nặng thêm khoảng 120 MB</b> — tải một lần, đổi lấy việc không bao
-              giờ phải chờ nữa.
+              Tiện thể, chúng tôi sửa một lỗi đã nằm đó từ lâu: vệt tô sáng sau khi “Áp dụng”
+              <b>làm chữ bên dưới bạc đi</b> — trên màn hình thì không, nhưng trong file đã lưu thì có, vì
+              màu được phủ <i>lên trên</i> chữ thay vì thấm qua. Nay chữ giữ nguyên độ đen ở cả hai nơi.
             </p>
           </div>
 
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
-              Đọc nhanh hơn, và đọc được chỗ trước đây bị bỏ
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l8 5.5-3 9.5H7L4 9.5z"/><circle cx="12" cy="4" r="1.6"/><circle cx="20" cy="9.5" r="1.6"/><circle cx="4" cy="9.5" r="1.6"/></svg>
+              Hình tự do: bấm từng điểm, sửa từng đỉnh
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Chúng tôi đem một bộ hợp đồng scan <b>78 trang</b> ra đo lại từ đầu. Khâu dò dòng chữ nhanh
-              hơn <b>ba lần</b>, và không trang nào bị sót dòng so với cách cũ.
+              Chữ nhật và elip không ôm được một khu đất, một mảng trần hay một đoạn ống đi chéo.
+              Công cụ <b>Hình tự do</b> cho bạn <b>bấm từng điểm</b> để dựng một hình nhiều cạnh — hoặc giữ
+              chuột kéo để vẽ tự do. Bấm vào điểm đầu hoặc <code>Enter</code> để <b>đóng kín</b> (đóng kín mới
+              tô được nền), hoặc <code>Esc</code> để <b>để hở</b> thành một đường gấp khúc. Màu, độ dày nét,
+              nền / không nền / mờ nền, copy–dán sang file khác đều giống khung chữ nhật; lưu xong mở lại
+              vẫn sửa tiếp được, và phóng to bao nhiêu nét vẫn sắc.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Quan trọng hơn tốc độ: ở <b>trang ký</b>, cách cũ trả về <b>khối chữ ký trống</b>. Dòng tên
-              người ký nằm giữa “Chữ ký:” và “Ngày:” bị một bộ lọc bên trong loại bỏ — vì bộ lọc ấy chấm
-              điểm bằng một trình đọc chữ <b>không đọc được dấu tiếng Việt</b>. Nó không hỏi “đây có phải
-              chữ không”, nó hỏi “trình đọc tiếng Anh có đọc nổi không”. Nay dòng đó được đọc ra.
+              Kèm theo, <b>nét vẽ tay và khoanh mây tự do lần đầu tiên kéo giãn được</b>: chọn hình là hiện
+              bốn nút ở góc, kéo để phóng to thu nhỏ cả hình mà <b>độ dày nét không mảnh đi theo</b>. Mây
+              tự do và hình tự do còn hiện một chấm tròn ở mỗi đỉnh để nắn lại đúng một góc — vẽ hơi lệch
+              thì sửa, không phải xoá đi vẽ lại.
             </p>
           </div>
         </div>
 
         <p class="mt-6 text-sm text-ink-muted">
-          Kèm theo, phần lớn là những thứ bạn chỉ thấy khi chúng biến mất: app <b>mở nhanh gấp đôi</b>,
-          nén file nhanh hơn <b>ba lần</b>; bản vẽ khổ lớn ở màn <b>So sánh</b> và <b>Chồng lớp</b> không
-          còn <b>trắng trang</b> khi phóng to, và cuộn một tài liệu dài không còn ngốn bộ nhớ; nền tối
-          thôi <b>nháy trắng</b> mỗi lần mở thẻ mới; hộp thoại Mở / Lưu <b>nhớ thư mục lần trước</b>. Nền
-          trình duyệt bên trong app cũng được nâng lên bản mới nhất — bản cũ đã hết được vá lỗi bảo mật.
-          App tự cập nhật — thường bạn không cần tải lại bằng tay.
+          Kèm theo một việc bạn chỉ thấy khi mở bản vẽ: <b>bộ bản vẽ CAD nhiều trang hiện trang đầu nhanh
+          hơn 4–5 lần</b> — trước đây app vẽ xong cả dải thumbnail rồi mới vẽ trang bạn đang chờ, mà
+          trên bản vẽ thì một thumbnail 150px tốn đúng bằng cả một trang. Đo trên ba bộ bản vẽ thật:
+          1 224 / 913 / 147 ms → <b>298 / 253 / 116 ms</b>.
+          Cả hai công cụ mới đều nằm trong thanh <b>Chú thích</b> (phím tắt <code>B</code> và <code>P</code>), và
+          <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã có mục riêng cho từng cái, cả tiếng Việt và
+          tiếng Anh. App tự cập nhật — thường bạn không cần tải lại bằng tay.
         </p>
       </div>
     </section>

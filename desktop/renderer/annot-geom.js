@@ -34,6 +34,28 @@
  * DOWN (the pdf.js viewport at scale 1) — not pdf-lib's bottom-left user space.
  */
 
+// ---- which SHAPE FAMILY a kind belongs to ---------------------------------
+//
+// Three families, and almost every function below has to know which one it is looking
+// at: a BOX (x/y/w/h), a POINT LIST (`pts`) and — since the text highlighter — a QUAD
+// LIST (`quads`, one box per line of selected text). The split used to be spelled out
+// as `a.kind === "draw" || a.kind === "cloudpen"` inline in annotBounds, translateAnnot,
+// and five places in editor.js. Adding `poly` to an inline chain in six files is exactly
+// the drift editor.js's RESIZABLE_KINDS note warns about, so the chain gets a name.
+//
+// `poly` sits with draw/cloudpen and NOT with box/ellipse even though it can be closed
+// and filled: what decides membership is the STORAGE shape, because that is what every
+// caller here is branching on.
+//
+// Declared at the top of the file rather than beside annotBounds: these are `const`s,
+// and annot-geom.js is a classic script whose names are read from editor.js. Anything
+// that ran at load time and reached a function below would hit their TDZ. Nothing does
+// today — keeping them first keeps it that way (same argument as editor.js COLOR_SLOTS).
+const PTS_KINDS = new Set(["draw", "cloudpen", "poly"]);
+const QUAD_KINDS = new Set(["texthl"]);
+function isPtsKind(k) { return PTS_KINDS.has(k); }
+function isQuadKind(k) { return QUAD_KINDS.has(k); }
+
 // ---- arrow label ---------------------------------------------------------
 
 // Centre point (in whatever coord space the endpoints are given) where an arrow's
@@ -294,13 +316,27 @@ function annotBounds(a) {
     const y = Math.min(a.y1, a.y2);
     return { x, y, w: Math.abs(a.x2 - a.x1), h: Math.abs(a.y2 - a.y1) };
   }
-  if (a.kind === "draw" || a.kind === "cloudpen") {
+  if (isQuadKind(a.kind)) {
+    // A text highlight is N line boxes, not one — its bound is their union. An empty
+    // list is a real state (a selection that hit no glyphs), and a zero box is what
+    // keeps fitShift / unionBounds from reading NaN out of Math.min of nothing.
+    const qs = a.quads || [];
+    if (!qs.length) return { x: 0, y: 0, w: 0, h: 0 };
+    const x = Math.min(...qs.map((q) => q.x));
+    const y = Math.min(...qs.map((q) => q.y));
+    return {
+      x, y,
+      w: Math.max(...qs.map((q) => q.x + q.w)) - x,
+      h: Math.max(...qs.map((q) => q.y + q.h)) - y,
+    };
+  }
+  if (isPtsKind(a.kind)) {
     const pts = a.pts || [];
     if (!pts.length) return { x: 0, y: 0, w: 0, h: 0 };
     const xs = pts.map((p) => p.x);
     const ys = pts.map((p) => p.y);
     // A freehand cloud is scalloped outward like a boxed one, so it carries the same
-    // one-bump margin; a plain `draw` stroke is just the polyline.
+    // one-bump margin; a plain `draw` stroke and a `poly` are just the polyline.
     const pad = a.kind === "cloudpen" ? bumpOf(a) : 0;
     const x = Math.min(...xs) - pad;
     const y = Math.min(...ys) - pad;
@@ -322,7 +358,9 @@ function translateAnnot(a, dx, dy) {
   if (a.kind === "arrow" || a.kind === "dim") {
     a.x1 += dx; a.y1 += dy;
     a.x2 += dx; a.y2 += dy;
-  } else if (a.kind === "draw" || a.kind === "cloudpen") {
+  } else if (isQuadKind(a.kind)) {
+    a.quads = (a.quads || []).map((q) => ({ x: q.x + dx, y: q.y + dy, w: q.w, h: q.h }));
+  } else if (isPtsKind(a.kind)) {
     a.pts = (a.pts || []).map((p) => ({ x: p.x + dx, y: p.y + dy }));
   } else {
     a.x = (a.x || 0) + dx;
@@ -413,6 +451,34 @@ function resizeRect(dir, orig, dx, dy, ratio, min) {
   };
 }
 
+// Stretch a POINT LIST so that its bounding box becomes `box` — the resize gesture for
+// the shapes that have no x/y/w/h of their own (draw / cloudpen / poly).
+//
+// `from` is the bounding box the points had when the drag STARTED, and `pts` must be
+// the points from that same moment: the caller keeps both in `drag.orig` and recomputes
+// from them on every move, exactly like resizeRect. Deriving `from` fresh each move
+// instead would compound the rounding of the previous move into the next one and the
+// shape would creep away from the cursor.
+//
+// A zero-width or zero-height source (a perfectly horizontal stroke, which is a real
+// thing on a drawing) cannot be scaled on that axis — there is nothing to scale FROM.
+// Those points are TRANSLATED on that axis instead of being multiplied by infinity, so
+// a flat stroke slides with the grip rather than vanishing into NaN.
+//
+// The PEN WIDTH is deliberately not touched: `width` is a property of the mark, not of
+// its geometry, and a reviewer scaling a callout down does not want the line to thin
+// out. Same for a cloud's `bump`. Both are what the GUI grid rows 13/14 pin.
+function scalePts(pts, from, box) {
+  const src = pts || [];
+  if (!from || !box) return src.map((p) => ({ x: p.x, y: p.y }));
+  const kx = from.w > 1e-6 ? box.w / from.w : 0;
+  const ky = from.h > 1e-6 ? box.h / from.h : 0;
+  return src.map((p) => ({
+    x: kx ? box.x + (p.x - from.x) * kx : box.x + (p.x - from.x),
+    y: ky ? box.y + (p.y - from.y) * ky : box.y + (p.y - from.y),
+  }));
+}
+
 // ---- freehand stroke: the path, and thinning it for the file ---------------
 
 // The SVG `d` of a freehand stroke, in LOCAL coordinates (its own bounding box's
@@ -454,6 +520,41 @@ function strokePath(pts) {
     .map((p, k) => (k ? "L " : "M ") + (p.x - minX).toFixed(2) + " " + (p.y - minY).toFixed(2))
     .join(" ");
   return { d, minX, minY, W: maxX - minX, H: maxY - minY };
+}
+
+// The SVG `d` of a FREE SHAPE (hình tự do): the same polyline strokePath emits, plus a
+// `Z` when the shape is closed. Separate function rather than a flag on strokePath
+// because the two have different callers and different failure answers, and because
+// `Z` is not cosmetic — it is what lets pdf-lib fill the interior (`B` instead of `S`)
+// and what makes the last corner a JOIN instead of two caps.
+//
+// Same contract as strokePath in every other respect: LOCAL coordinates (the shape's
+// own bounding box top-left is 0,0), 2dp, and null for fewer than two distinct points.
+// ONE string drives the on-screen <svg>, the round-trip /AP and the flattened bake
+// (BI-40 / BI-69) — there is deliberately no second implementation to disagree with.
+//
+// A closed shape needs THREE distinct points to enclose anything; two would be a
+// degenerate "there and back" sliver. It still returns a path (the user drew it, and a
+// 2-point open segment is a legitimate thing to keep) — the CLOSING is what is refused,
+// by falling back to the open form. Callers that must know ask `closed` back.
+function polyPath(pts, closed) {
+  const g = strokePath(pts);
+  if (!g) return null;
+  const shut = !!closed && countDistinct(pts) >= 3;
+  return { d: shut ? g.d + " Z" : g.d, minX: g.minX, minY: g.minY, W: g.W, H: g.H, closed: shut };
+}
+
+// How many DISTINCT consecutive points a list carries. Shared by polyPath and the
+// editor's "is this worth keeping?" guards so the two cannot disagree about whether a
+// shape exists — the same reason cloudPathPoly's null is read by both writers.
+function countDistinct(pts) {
+  let n = 0;
+  let last = null;
+  for (const p of pts || []) {
+    if (!p || !isFinite(+p.x) || !isFinite(+p.y)) continue;
+    if (!last || last.x !== +p.x || last.y !== +p.y) { n++; last = { x: +p.x, y: +p.y }; }
+  }
+  return n;
 }
 
 // Ramer–Douglas–Peucker: drop the points that carry no shape.
@@ -538,24 +639,112 @@ function strokeRdp(pts, tol) {
   return out;
 }
 
+// ---- text highlight: selection rectangles → one quad per line ---------------
+
+// Turn the raw rectangles a DOM Range hands back (`getClientRects()`, already converted
+// to the annotation's scale-1 page space by the caller) into ONE quad per line of text.
+//
+// WHY THIS IS NOT "just use the rects". Measured on a real Vietnamese standards PDF
+// (1.TCVN 3890 - 2023.pdf, 14 selected lines): the browser returned **154 rectangles**,
+// several of them EXACT DUPLICATES of each other. A highlight is painted with
+// `mix-blend-mode: multiply`, so two stacked quads multiply twice and that line comes
+// out VISIBLY DARKER than its neighbours — a patchy wash, not a highlight. The first
+// version of this grouped by a rounded y-bucket and still left 18 quads for 14 lines,
+// with the doubling plainly visible in the screenshot. Grouping by vertical OVERLAP
+// leaves 14 quads, 0 overlapping pairs, all exactly one line high. See
+// docs/RESEARCH-2026-09-20c-text-highlight-free-shape.md §3.2 for the pictures.
+//
+// The line test is SYMMETRIC — this rect's centre must fall inside the line's band AND
+// the line's centre inside this rect. A one-sided test lets a tall rect (a superscript,
+// or a run in a bigger font) swallow the line above or below it into one giant quad.
+//
+// GAP is in PDF points: quads closer than this on the same line are one run of text
+// with an inter-word or inter-span gap, and merging them is what stops a highlight from
+// looking like a row of separate stickers. 1.5pt ≈ half a space at 12pt.
+//
+// Degenerate rects (zero or sub-pixel size) are dropped up front: pdf.js emits
+// zero-height `markedContent` spans, and a selection that starts at the very end of a
+// span produces empty rects. 7 of 71 rects on the cover page of that same file.
+const QUAD_GAP = 1.5;
+const QUAD_MIN = 0.4;
+// The wash strength of a text highlight, in ONE place because four writers have to agree
+// to the digit: the overlay quads (editor.js renderAnnot), the flattened bake
+// (drawOneAnnot), the round-trip /AP (addManagedAnnot) and the rotation grid. 0.4 is what
+// the rectangle highlighter has always used on screen (app.css `.an-highlight`), and
+// matching it is the point — the two tools lay down the SAME mark, so a document with
+// both must not show two shades of yellow.
+const TEXTHL_OPACITY = 0.4;
+function quadsFromRects(rects, gap) {
+  const g = gap == null ? QUAD_GAP : gap;
+  const src = (rects || [])
+    .filter((r) => r && isFinite(r.x) && isFinite(r.y) && r.w > QUAD_MIN && r.h > QUAD_MIN)
+    .map((r) => ({ x: +r.x, y: +r.y, w: +r.w, h: +r.h }))
+    .sort((p, q) => p.y - q.y || p.x - q.x);
+  const lines = [];
+  for (const r of src) {
+    const mid = r.y + r.h / 2;
+    let line = null;
+    for (const L of lines) {
+      const lmid = L.y + L.h / 2;
+      if (mid > L.y && mid < L.y + L.h && lmid > r.y && lmid < r.y + r.h) { line = L; break; }
+    }
+    if (!line) { lines.push({ y: r.y, h: r.h, items: [r] }); continue; }
+    const top = Math.min(line.y, r.y);
+    const bot = Math.max(line.y + line.h, r.y + r.h);
+    line.y = top;
+    line.h = bot - top;
+    line.items.push(r);
+  }
+  const out = [];
+  for (const L of lines) {
+    L.items.sort((p, q) => p.x - q.x);
+    let cur = null;
+    for (const r of L.items) {
+      if (!cur) { cur = { x: r.x, y: r.y, w: r.w, h: r.h }; continue; }
+      if (r.x <= cur.x + cur.w + g) {
+        const right = Math.max(cur.x + cur.w, r.x + r.w);
+        const top = Math.min(cur.y, r.y);
+        const bot = Math.max(cur.y + cur.h, r.y + r.h);
+        cur.x = Math.min(cur.x, r.x);
+        cur.w = right - cur.x;
+        cur.y = top;
+        cur.h = bot - top;
+      } else {
+        out.push(cur);
+        cur = { x: r.x, y: r.y, w: r.w, h: r.h };
+      }
+    }
+    if (cur) out.push(cur);
+  }
+  // 2dp for the same reason strokePath rounds: these numbers go in the file, and
+  // 1/100 pt is three orders of magnitude finer than anything that renders.
+  return out.map((q) => ({
+    x: +q.x.toFixed(2), y: +q.y.toFixed(2), w: +q.w.toFixed(2), h: +q.h.toFixed(2),
+  }));
+}
+
 // node (tests) takes the module export; the browser already has the bare names
 // above in the shared script scope. window.AnnotGeom is the same set under a name a
 // probe can assert on. Mirrors the tail of wire.js / annot-text.js exactly.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS,
-    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
-    resizeRect, simplifyStroke, snapLineEnd, strokeExtend, strokePath, symbolStrokes,
+    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind,
+    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
+    fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
+    snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotGeom = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
-    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS,
-    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, fitShift,
-    resizeRect, simplifyStroke, snapLineEnd, strokeExtend, strokePath, symbolStrokes,
+    ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind,
+    annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
+    fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
+    snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
   };
 }

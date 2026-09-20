@@ -62,15 +62,26 @@
   // Kinds drawn as a plain x/y/w/h box — the ones that get resize grips. Named
   // because it used to be an inline `||` chain inside renderAnnot, which is the kind
   // of thing that quietly drifts out of step with the .handle rules in app.css.
+  //
+  // v0.2.71: this is only HALF the answer to "which shapes get resize grips". The
+  // point-list kinds (draw / cloudpen / poly — `isPtsKind`, annot-geom.js) grew the same
+  // gesture, but they have no x/y/w/h to write back into: their grips drive `scalePts`
+  // against the bounding box, and each of them hangs its own grips via `addPtsGrips`
+  // because each builds its own element box and returns from renderAnnot early. So a new
+  // shape belongs to exactly one of the two halves, deliberately — it cannot inherit the
+  // wrong one by falling through.
   const RESIZABLE_KINDS = new Set(["highlight", "redact", "image", "box", "ellipse", "check", "cross"]);
   const HANDLE_DIRS = ["nw", "ne", "sw", "se"];
   // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
   // `x` was already redact, so the ✗ symbol takes `j` — j/k are neighbours on the
   // keyboard and the pair is learned as one, which beats a second lone mnemonic.
+  // `b` = bôi chữ (tô sáng theo đoạn chữ) and `p` = polygon (hình tự do), the two tools
+  // added at v0.2.71. Both letters were free; `h` stays with the rectangle highlighter
+  // because that is the one people already have in their fingers.
   const TOOL_KEYS = {
-    v: "select", t: "text", h: "highlight", d: "draw", r: "box", o: "ellipse",
-    c: "cloud", f: "cloudpen", a: "arrow", n: "note", i: "image", x: "redact", m: "measure",
-    k: "check", j: "cross",
+    v: "select", t: "text", h: "highlight", b: "texthl", d: "draw", r: "box", o: "ellipse",
+    c: "cloud", f: "cloudpen", p: "poly", a: "arrow", n: "note", i: "image", x: "redact",
+    m: "measure", k: "check", j: "cross",
   };
   // The ✓ / ✗ stamps. Grouped because six places have to treat them alike, and an
   // inline `||` chain in each is how those places drift apart (see RESIZABLE_KINDS).
@@ -85,7 +96,7 @@
   // load-bearing: isVectorKind routes a kind to `shapeAppearance()`, a VECTOR /AP.
   // A text box's fill is painted into its raster PNG by renderTextPng, so `text`
   // belongs here and must never be added there.
-  const FILLABLE_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "text"]);
+  const FILLABLE_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "poly", "text"]);
   // Which remembered default colour a tool/kind draws with. Four kinds keep their OWN
   // slot because their colour carries meaning rather than preference: ✓ = đúng (green),
   // ✗ = sai (red), tô sáng = highlighter yellow, che thông tin = black. Every other kind
@@ -104,6 +115,11 @@
     ["check", "checkColor"],
     ["cross", "crossColor"],
     ["highlight", "highlightColor"],
+    // Tô sáng theo chữ shares the highlighter's slot rather than owning a new one: it
+    // is the same mark made a different way, and a user who sets their highlighter to
+    // green expects BOTH ways of laying it down to come out green. Sharing is the
+    // whole reason this is a Map and not four ternaries (BI-61).
+    ["texthl", "highlightColor"],
     ["redact", "redactColor"],
   ]);
   function colorSlotFor(k) {
@@ -147,6 +163,35 @@
   // TDZ and blank the app — the trap the COLOR_SLOTS note above records. Nothing calls it
   // at init today; this keeps it that way.
   const FILL_ON_FROM_ZERO_PCT = 100;
+  // `TEXTHL_OPACITY` lives in annot-geom.js, not here: FOUR writers have to agree to the
+  // digit (the overlay quads, the flattened bake, the round-trip /AP and test:rotate),
+  // and a const inside this IIFE is reachable by none of the grids. Same bare name.
+  // How many vertices are worth showing grips for. A `poly` clicked out by hand is a
+  // handful of corners; a `cloudpen` DRAGGED freehand is hundreds of samples and a
+  // `draw` stroke is thousands — painting a grip per point would bury the drawing under
+  // dots and make the layer re-render crawl. Past the limit the shape still resizes by
+  // its box, it just has no per-vertex editing, which is the honest behaviour for a
+  // scribble nobody placed point by point.
+  const VERTEX_GRIP_MAX = 60;
+  // Which point-list kinds offer per-vertex editing. `draw` is out on purpose: a
+  // freehand stroke's points are samples of a gesture, not corners anybody placed, and
+  // its list is thinned on save (simplifyStroke, BI-69) so the point a user dragged may
+  // not survive the round trip. It still resizes by its box like the other two.
+  const VERTEX_KINDS = new Set(["poly", "cloudpen"]);
+  // The two tools that click out a polygon (or drag a freehand loop). One gesture, one
+  // state machine (`ed._poly`), two outlines.
+  const PEN_TOOLS = new Set(["cloudpen", "poly"]);
+  // "Is there enough here to close?" asked in the THREE places that can end a polygon
+  // (clicking the first vertex, Enter/double-click, mouse-up after a freehand drag).
+  // Each kind answers with the same function its renderer and its bake use, so a shape
+  // that closes on screen cannot be one the file refuses to draw:
+  //   · cloudpen → cloudPathPoly, which needs a non-degenerate scalloped ring
+  //   · poly     → three distinct corners, which is what polyPath will emit a `Z` for
+  function canClosePts(a) {
+    if (!a || !a.pts) return false;
+    if (a.kind === "cloudpen") return !!cloudPathPoly(a.pts, bumpOf(a));
+    return countDistinct(a.pts) >= 3;
+  }
   // Which parts of the chrome are "the palette": the style controls an inline editor's
   // text is allowed to KEEP being edited from. Focus landing in here does not commit the
   // open textarea (see openTextEditor's blur handler) — before v0.2.65 it did, and that
@@ -701,7 +746,76 @@
       path.setAttribute("stroke-linejoin", "round");
       svg.appendChild(path);
       el.appendChild(svg);
+      addPtsGrips(el, a, s);
       return el;
+    }
+
+    if (a.kind === "poly") {
+      // Hình tự do: the same <svg>-over-the-bounding-box shape as `draw`, with two
+      // differences that are the whole feature — the path may CLOSE (so it can be
+      // filled) and the fill is a real interior, not a wash.
+      //
+      // polyPath, not an inline join, for the reason the draw branch gives: this exact
+      // string is what shapeAppearance puts in the round-trip /AP. `closed` comes back
+      // FROM the path rather than from `a.closed` because a 2-point shape cannot close
+      // and both writers have to agree about that (BI-40).
+      const pp = polyPath(a.pts, a.closed);
+      if (!pp) return el; // fewer than two distinct points — draws nothing, anywhere
+      const w = Math.max(1, pp.W);
+      const h = Math.max(1, pp.H);
+      el.style.left = pp.minX * s + "px";
+      el.style.top = pp.minY * s + "px";
+      el.style.width = w * s + "px";
+      el.style.height = h * s + "px";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pp.d);
+      // An OPEN shape is never filled, whatever the palette says: filling an unclosed
+      // path means letting the renderer invent the closing edge, and SVG and PDF do not
+      // have to invent the same one.
+      const filled = pp.closed && a.fill && a.fill !== "none";
+      path.setAttribute("fill", filled ? a.fill : "none");
+      if (filled) path.setAttribute("fill-opacity", String(a.fillOpacity != null ? a.fillOpacity : 1));
+      path.setAttribute("stroke", a.color);
+      path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      el.appendChild(svg);
+      addPtsGrips(el, a, s);
+      return el;
+    }
+
+    if (a.kind === "texthl") {
+      // Tô sáng theo chữ: N line boxes under ONE annotation. The wrapper is the union
+      // box (so a click anywhere on it selects the whole mark, and dragging moves every
+      // line together); the children carry the wash.
+      //
+      // `mix-blend-mode: multiply` lives on the CHILD (.an-texthl-q in app.css), not on
+      // the wrapper: blending the wrapper would blend its own transparent background
+      // over the page as one layer and the quads would stop multiplying against the
+      // text. The children must also never OVERLAP — two multiplies stack into a darker
+      // band — which is quadsFromRects' whole job (see annot-geom.js).
+      const b = annotBounds(a);
+      el.style.left = b.x * s + "px";
+      el.style.top = b.y * s + "px";
+      el.style.width = Math.max(1, b.w) * s + "px";
+      el.style.height = Math.max(1, b.h) * s + "px";
+      for (const q of a.quads || []) {
+        const d = document.createElement("div");
+        d.className = "an-texthl-q";
+        d.style.left = (q.x - b.x) * s + "px";
+        d.style.top = (q.y - b.y) * s + "px";
+        d.style.width = q.w * s + "px";
+        d.style.height = q.h * s + "px";
+        d.style.background = a.color;
+        d.style.opacity = String(a.opacity != null ? a.opacity : TEXTHL_OPACITY);
+        el.appendChild(d);
+      }
+      return el; // no resize grips: the mark belongs to the words, not to a box
     }
 
     if (a.kind === "arrow") {
@@ -933,6 +1047,7 @@
         });
         el.appendChild(svg);
       }
+      addPtsGrips(el, a, s);
       return el;
     }
 
@@ -1065,6 +1180,9 @@
     }
     // redact needs no extra content (solid black via CSS)
 
+    // The BOX half of "which shapes get grips". Every point-list kind (draw / cloudpen /
+    // poly) returns before this line and calls `addPtsGrips` itself, because each builds
+    // its own element box — see the note on RESIZABLE_KINDS for the two halves.
     if (gripsFor(a.id) && RESIZABLE_KINDS.has(a.kind)) {
       for (const dir of HANDLE_DIRS) {
         const h = document.createElement("div");
@@ -1074,6 +1192,48 @@
       }
     }
     return el;
+  }
+
+  // Grips for a POINT-LIST shape (draw / cloudpen / poly). Two kinds, and they do
+  // different jobs, which is why they wear different data attributes:
+  //
+  //   · four corner grips (`data-dir`) — stretch the whole shape by its bounding box,
+  //     the gesture box/ellipse have always had. Handled by `scalePts`.
+  //   · one grip per vertex (`data-vtx`) — move a single corner.
+  //
+  // `data-vtx` and NOT `data-pt`: `data-pt` already means "one END of a two-point
+  // annotation" (arrow / dim) and is read by a branch in onDown that writes a.x1/a.x2.
+  // A polygon vertex index of 1 or 2 would fall straight into it and rewrite fields the
+  // shape does not have — the exact failure the `data-pt`-before-`data-dir` note in
+  // onDown was written about. Distinct attribute, distinct branch, no overlap.
+  //
+  // The element this appends to is positioned at the shape's own bounding box, so the
+  // corner grips need no coordinates (app.css pins them by class) and a vertex grip is
+  // simply the point minus that box's origin.
+  function addPtsGrips(el, a, s) {
+    if (!gripsFor(a.id)) return;
+    // A shape still being clicked out gets NO grips: they would sit on top of the very
+    // vertices the next click is meant to place, and `ed.sel` is already the in-progress
+    // object. Same for a cloudpen mid-drag, which is not closed yet.
+    if (ed._poly && ed._poly.id === a.id) return;
+    if (a.kind === "cloudpen" && !a.closed) return;
+    for (const dir of HANDLE_DIRS) {
+      const h = document.createElement("div");
+      h.className = "handle h-" + dir;
+      h.dataset.dir = dir;
+      el.appendChild(h);
+    }
+    const pts = a.pts || [];
+    if (!VERTEX_KINDS.has(a.kind) || pts.length > VERTEX_GRIP_MAX) return;
+    const b = annotBounds(a);
+    for (let i = 0; i < pts.length; i++) {
+      const h = document.createElement("div");
+      h.className = "handle h-vtx";
+      h.dataset.vtx = String(i);
+      h.style.left = (pts[i].x - b.x) * s + "px";
+      h.style.top = (pts[i].y - b.y) * s + "px";
+      el.appendChild(h);
+    }
   }
 
   function renderWatermarkEl() {
@@ -1270,6 +1430,8 @@
     ellipse: "hình bầu dục",
     cloud: "khung mây",
     cloudpen: "mây vẽ tay",
+    poly: "hình tự do",
+    texthl: "vệt tô sáng chữ",
     draw: "nét vẽ tay",
     check: "dấu tích ✓",
     cross: "dấu ✗",
@@ -1491,7 +1653,7 @@
       setFmtBtn("ed-italic", a.italic);
       setFmtBtn("ed-underline", a.underline);
     }
-    if (["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
     if (a.kind === "cloud" || a.kind === "cloudpen") {
       const b = bumpOf(a);
@@ -1536,14 +1698,16 @@
   // group drag needs one of these per member and cancelDrag needs to put them all back
   // — three copies of this ternary is how the three would drift apart.
   function moveOrigOf(a) {
-    if (a.kind === "draw" || a.kind === "cloudpen") return { pts: a.pts.map((q) => ({ ...q })) };
+    if (isPtsKind(a.kind)) return { pts: (a.pts || []).map((q) => ({ ...q })) };
+    if (isQuadKind(a.kind)) return { quads: (a.quads || []).map((q) => ({ ...q })) };
     if (a.kind === "arrow" || a.kind === "dim") return { x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 };
     return { x: a.x, y: a.y };
   }
   // Put one annot back where `orig` says it was. The inverse of a move, used by
   // cancelDrag (Esc mid-drag) for every member of the group.
   function restoreMoveOrig(a, orig) {
-    if (a.kind === "draw" || a.kind === "cloudpen") a.pts = orig.pts;
+    if (isPtsKind(a.kind)) a.pts = orig.pts;
+    else if (isQuadKind(a.kind)) a.quads = orig.quads;
     else if (a.kind === "arrow" || a.kind === "dim") {
       a.x1 = orig.x1;
       a.y1 = orig.y1;
@@ -1589,6 +1753,24 @@
       return;
     }
 
+    // Polygon vertex grip — same reasoning as the arrow branch above, one attribute
+    // further along: `data-vtx` is an INDEX into `pts`, not an endpoint number, and it
+    // is checked before the box branch for the same reason (a poly has no w/h).
+    if (e.target.classList.contains("handle") && e.target.dataset.vtx) {
+      const id = +e.target.closest(".an").dataset.id;
+      const a = findAnnot(id).a;
+      const vi = +e.target.dataset.vtx;
+      if (!a.pts || !a.pts[vi]) return;
+      drag = {
+        type: "vertex", page: i, id, layer, vtx: vi,
+        sx: p.x, sy: p.y,
+        orig: { pts: a.pts.map((q) => ({ ...q })) },
+        pushed: false, // undo pushed lazily on the first real move, like move/resize
+      };
+      e.preventDefault();
+      return;
+    }
+
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
       const a = findAnnot(id).a;
@@ -1596,10 +1778,18 @@
       // origin as well as its size, and cancelDrag has to be able to put both back.
       // undo pushed lazily on the first real resize move (see onMove); a click
       // that grabs the handle but never drags leaves the session untouched
+      //
+      // A POINT-LIST shape has no x/y/w/h to snapshot, so `orig` carries its points
+      // AND the bounding box they had when the drag started. Both are needed on every
+      // move: resizeRect works out the new box from the ORIGINAL one (deriving it
+      // afresh each move compounds rounding and the shape creeps away from the
+      // cursor), and scalePts maps the ORIGINAL points into it.
       drag = {
         type: "resize", page: i, id, layer, sx: p.x, sy: p.y,
         dir: e.target.dataset.dir || "se", // "se" = the single-grip behaviour this replaced
-        orig: { x: a.x, y: a.y, w: a.w, h: a.h },
+        orig: isPtsKind(a.kind)
+          ? { pts: (a.pts || []).map((q) => ({ ...q })), box: annotBounds(a) }
+          : { x: a.x, y: a.y, w: a.w, h: a.h },
         pushed: false,
       };
       e.preventDefault();
@@ -1760,7 +1950,12 @@
       return;
     }
 
-    if (ed.tool === "cloudpen") {
+    // Khoanh mây tự do and Hình tự do are ONE gesture with two outlines: click out the
+    // corners, or drag for a freehand loop. They share this branch (and `ed._poly`,
+    // closePoly, cancelPoly, the rubber band in onMove) because every line of the
+    // INTERACTION is the same — what differs is the path each one draws, which lives in
+    // annot-geom. Two copies of a state machine this fiddly would drift within a release.
+    if (PEN_TOOLS.has(ed.tool)) {
       // A polygon is being clicked out: only its own page is interactive. Add a
       // vertex, or close if the click lands on the first vertex (≥3 points).
       if (ed._poly) {
@@ -1783,19 +1978,19 @@
       // (no drag) starts a click-to-add-vertex polygon.
       const a = {
         id: ed.seq++,
-        kind: "cloudpen",
+        kind: ed.tool,
         pts: [p],
         closed: false,
-        color: ed.color,
+        color: ed[colorSlotFor(ed.tool)],
         width: ed.penWidth,
-        fill: effFill("cloudpen"),
-        fillOpacity: effFillOpacity("cloudpen"),
-        bump: ed.cloudBump,
+        fill: effFill(ed.tool),
+        fillOpacity: effFillOpacity(ed.tool),
       };
+      if (ed.tool === "cloudpen") a.bump = ed.cloudBump;
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
-      drag = { type: "cloudpen", page: i, id: a.id, layer, downX: p.x, downY: p.y, moved: false };
+      drag = { type: ed.tool, page: i, id: a.id, layer, downX: p.x, downY: p.y, moved: false };
       e.preventDefault();
       return;
     }
@@ -1827,7 +2022,7 @@
     // genuinely shifts a point records a snapshot. A click that merely selects (or
     // grabs a handle) without dragging leaves the session clean, so exiting won't
     // re-bake.
-    if ((drag.type === "move" || drag.type === "resize" || drag.type === "point") && !drag.pushed && (p.x !== drag.sx || p.y !== drag.sy)) {
+    if ((drag.type === "move" || drag.type === "resize" || drag.type === "point" || drag.type === "vertex") && !drag.pushed && (p.x !== drag.sx || p.y !== drag.sy)) {
       drag.pushed = true;
       pushEdUndo();
     }
@@ -1844,8 +2039,10 @@
         const mh = findAnnot(m.id);
         if (!mh) continue;
         const t = mh.a;
-        if (t.kind === "draw" || t.kind === "cloudpen") {
+        if (isPtsKind(t.kind)) {
           t.pts = m.orig.pts.map((q) => ({ x: q.x + dx, y: q.y + dy }));
+        } else if (isQuadKind(t.kind)) {
+          t.quads = m.orig.quads.map((q) => ({ x: q.x + dx, y: q.y + dy, w: q.w, h: q.h }));
         } else if (t.kind === "arrow" || t.kind === "dim") {
           t.x1 = m.orig.x1 + dx;
           t.y1 = m.orig.y1 + dy;
@@ -1877,11 +2074,27 @@
     } else if (drag.type === "resize") {
       // Shift is read live off the event, so it can be pressed or released
       // mid-drag and the box follows immediately.
-      const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
-      a.x = g.x;
-      a.y = g.y;
-      a.w = g.w;
-      a.h = g.h;
+      if (isPtsKind(a.kind)) {
+        // Same gesture, no x/y/w/h to write into: resizeRect decides the new bounding
+        // box, scalePts maps the ORIGINAL points into it. Driving from `drag.orig` on
+        // every move (not from the current points) is what keeps a long drag from
+        // compounding its own rounding — the rule the box branch below follows too.
+        const g = resizeRect(drag.dir, drag.orig.box, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
+        a.pts = scalePts(drag.orig.pts, drag.orig.box, g);
+      } else {
+        const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
+        a.x = g.x;
+        a.y = g.y;
+        a.w = g.w;
+        a.h = g.h;
+      }
+    } else if (drag.type === "vertex") {
+      // One corner of a polygon follows the cursor. No snapping: the grid the user is
+      // tracing is in the drawing underneath, not in our coordinate space, and a 15°
+      // quantiser (what Shift does for an arrow) would fight it.
+      const q = drag.orig.pts.map((o) => ({ ...o }));
+      q[drag.vtx] = { x: p.x, y: p.y };
+      a.pts = q;
     } else if (drag.type === "rect" || drag.type === "symbol") {
       a.x = Math.min(drag.sx, p.x);
       a.y = Math.min(drag.sy, p.y);
@@ -1896,7 +2109,7 @@
       const ext = strokeExtend(a.pts, p, e.shiftKey, drag.lineFrom);
       a.pts = ext.pts;
       drag.lineFrom = ext.anchor;
-    } else if (drag.type === "cloudpen") {
+    } else if (PEN_TOOLS.has(drag.type)) {
       // Past the click threshold this stroke is a freehand drag → collect points.
       if (!drag.moved && Math.hypot(p.x - drag.downX, p.y - drag.downY) * state.scale > 5) drag.moved = true;
       if (drag.moved) a.pts.push(p);
@@ -1904,15 +2117,83 @@
     renderLayer(drag.layer, drag.page);
   }
 
+  // Tô sáng theo đoạn chữ được chọn — the mark is made by the SELECTION, not by a drag,
+  // so it is captured on mouse-up instead of being built in onDown/onMove like every
+  // other kind. Nothing here touches `drag`.
+  //
+  // WHY IT WALKS THE PAGES INSTEAD OF THE RECTS. A selection can run past the bottom of
+  // one page and into the next, and each page is its own coordinate system (its own
+  // .text-layer, its own annotation list). Clipping the range to one text layer at a
+  // time and asking THAT for its rectangles is what keeps a cross-page selection from
+  // becoming one impossible annotation spanning two pages — it becomes one mark per
+  // page, which is also what Acrobat does.
+  //
+  // The raw rectangles are NOT usable as they come: the browser returns one per text
+  // run, with duplicates, and a highlight multiplies, so overlapping quads paint a
+  // darker band. quadsFromRects (annot-geom.js) is what turns them into one quad per
+  // line — see its note, and §3.2 of the research doc, for the measurements.
+  function captureTextHighlight() {
+    if (!ed.active || ed.tool !== "texthl") return;
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+    const s = state.scale;
+    const made = [];
+    let pushed = false;
+    for (let r = 0; r < sel.rangeCount; r++) {
+      const rng = sel.getRangeAt(r);
+      for (const layer of document.querySelectorAll("#viewer .page-wrap .text-layer")) {
+        if (!rng.intersectsNode(layer)) continue;
+        const wrap = layer.closest(".page-wrap");
+        if (!wrap) continue;
+        const i = +wrap.dataset.index;
+        // Clip this range to this page: a selection that starts on page 3 and ends on
+        // page 4 must contribute only its page-3 half here.
+        const lr = document.createRange();
+        lr.selectNodeContents(layer);
+        const sub = rng.cloneRange();
+        if (sub.compareBoundaryPoints(Range.START_TO_START, lr) < 0) sub.setStart(lr.startContainer, lr.startOffset);
+        if (sub.compareBoundaryPoints(Range.END_TO_END, lr) > 0) sub.setEnd(lr.endContainer, lr.endOffset);
+        if (sub.collapsed) continue;
+        const box = layer.getBoundingClientRect();
+        const rects = [...sub.getClientRects()].map((q) => ({
+          x: (q.left - box.left) / s, y: (q.top - box.top) / s, w: q.width / s, h: q.height / s,
+        }));
+        const quads = quadsFromRects(rects);
+        if (!quads.length) continue;
+        if (!pushed) { pushEdUndo(); pushed = true; } // ONE undo step for the whole gesture
+        const a = {
+          id: ed.seq++,
+          kind: "texthl",
+          quads,
+          color: ed[colorSlotFor("texthl")],
+          opacity: TEXTHL_OPACITY,
+          // The words themselves, so a re-opened file can show what was marked (and so
+          // the PDF annotation can carry them in /Contents, where Acrobat's comment list
+          // reads them from). Capped: this is a label, not a copy of the document.
+          text: sub.toString().replace(/\s+/g, " ").trim().slice(0, 500),
+        };
+        annotsFor(i).push(a);
+        made.push({ id: a.id, page: i, layer: wrap.querySelector(".annot-layer") });
+      }
+    }
+    if (!made.length) return;
+    sel.removeAllRanges(); // the blue selection tint would otherwise sit on top of the wash
+    ed.sel = made[made.length - 1].id;
+    ed.selMore.clear();
+    for (const m of made) if (m.layer) renderLayer(m.layer, m.page);
+    syncControls();
+  }
+
   function onUp() {
+    captureTextHighlight();
     if (!drag) return;
     // A freehand cloud drag ends by closing the loop; a click (no drag) instead
     // arms polygon mode so further clicks add vertices.
-    if (drag.type === "cloudpen") {
+    if (PEN_TOOLS.has(drag.type)) {
       const hit = findAnnot(drag.id);
       if (hit) {
         if (drag.moved) {
-          if (cloudPathPoly(hit.a.pts, bumpOf(hit.a))) {
+          if (canClosePts(hit.a)) {
             hit.a.closed = true;
           } else {
             ed.annots[drag.page] = ed.annots[drag.page].filter((x) => x.id !== drag.id);
@@ -1923,7 +2204,11 @@
           ed._poly = { page: drag.page, id: drag.id, layer: drag.layer, cx: null, cy: null };
           // Kept when the per-tool instruction hints were removed: this is not advice,
           // it is the ONLY signal that a polygon is currently open and how to close it.
-          setEdStatus("Bấm thêm điểm; bấm vào điểm đầu (hoặc nhấn Enter / bấm đúp) để đóng mây. Esc để huỷ.");
+          // Two sentences, one per tool: the polygon can be FINISHED OPEN, which a cloud
+          // cannot, and that is the only gesture with no other way to discover it.
+          setEdStatus(hit.a.kind === "poly"
+            ? "Bấm thêm điểm; bấm vào điểm đầu (hoặc Enter / bấm đúp) để đóng kín. Esc để kết thúc để hở."
+            : "Bấm thêm điểm; bấm vào điểm đầu (hoặc nhấn Enter / bấm đúp) để đóng mây. Esc để huỷ.");
         }
       }
       const layer = drag.layer, page = drag.page;
@@ -2003,8 +2288,9 @@
     const info = ed._poly;
     ed._poly = null;
     const hit = findAnnot(info.id);
+    const kind = hit ? hit.a.kind : ed.tool;
     if (hit) {
-      if (hit.a.pts.length >= 3 && cloudPathPoly(hit.a.pts, bumpOf(hit.a))) {
+      if (canClosePts(hit.a)) {
         hit.a.closed = true;
       } else {
         ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
@@ -2012,19 +2298,29 @@
         dropLastEdUndo();
       }
     }
-    setTool("cloudpen"); // clears the "polygon open" status; stays on the tool for the next cloud
+    setTool(kind); // clears the "polygon open" status; stays on the tool for the next one
     renderLayer(info.layer, info.page);
   }
 
-  // Abandon a click-to-add-vertex cloud without closing it (Esc).
+  // Esc on a polygon still being clicked out. A CLOUD is abandoned — a cloud that does
+  // not close is not a revision cloud. A Hình tự do is KEPT AS AN OPEN SHAPE if it has
+  // a segment to keep: "để hở" is one of the two shapes the tool exists to draw, and
+  // there has to be a gesture that says so. Either way the polygon state ends here.
   function cancelPoly() {
     if (!ed._poly) return;
     const info = ed._poly;
     ed._poly = null;
-    ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
-    ed.sel = null;
-    dropLastEdUndo();
-    setTool("cloudpen");
+    const hit = findAnnot(info.id);
+    const kind = hit ? hit.a.kind : ed.tool;
+    const keepOpen = hit && hit.a.kind === "poly" && countDistinct(hit.a.pts) >= 2;
+    if (keepOpen) {
+      hit.a.closed = false;
+    } else {
+      ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
+      ed.sel = null;
+      dropLastEdUndo();
+    }
+    setTool(kind);
     renderLayer(info.layer, info.page);
   }
 
@@ -2037,7 +2333,7 @@
     const hit = findAnnot(d.id);
     if (hit) {
       const a = hit.a;
-      if (d.type === "rect" || d.type === "draw" || d.type === "arrow" || d.type === "cloudpen" || d.type === "symbol") {
+      if (d.type === "rect" || d.type === "draw" || d.type === "arrow" || d.type === "cloudpen" || d.type === "poly" || d.type === "symbol") {
         // creation in progress → remove it entirely
         ed.annots[d.page] = ed.annots[d.page].filter((x) => x.id !== d.id);
         ed.sel = null;
@@ -2050,10 +2346,18 @@
           if (mh) restoreMoveOrig(mh.a, m.orig);
         }
       } else if (d.type === "resize") {
-        a.x = d.orig.x;
-        a.y = d.orig.y;
-        a.w = d.orig.w;
-        a.h = d.orig.h;
+        // A point-list shape's `orig` holds its points, not a box (see onDown).
+        if (isPtsKind(a.kind)) a.pts = d.orig.pts;
+        else {
+          a.x = d.orig.x;
+          a.y = d.orig.y;
+          a.w = d.orig.w;
+          a.h = d.orig.h;
+        }
+      } else if (d.type === "vertex") {
+        // The WHOLE point list goes back, not just the dragged vertex — same reason the
+        // arrow branch below restores both ends.
+        a.pts = d.orig.pts;
       } else if (d.type === "point") {
         // Both ends restored, not just the dragged one: `orig` holds the whole line
         // and putting back a single point would leave the other wherever a snap had
@@ -2065,7 +2369,7 @@
       }
       // Creation gestures push on mousedown; move/resize/end-grip push lazily. Only
       // drop a snapshot this gesture actually recorded, else we'd pop a prior step.
-      if ((d.type !== "move" && d.type !== "resize" && d.type !== "point") || d.pushed) dropLastEdUndo();
+      if ((d.type !== "move" && d.type !== "resize" && d.type !== "point" && d.type !== "vertex") || d.pushed) dropLastEdUndo();
     }
     renderLayer(d.layer, d.page);
   }
@@ -2866,7 +3170,7 @@
                   // it exists so a hand-edited /NabuData still draws something visible.
                   color: data.color || "#000000", width: +data.width || 2,
                   _managed: true };
-      if (data.k === "cloudpen" || data.k === "draw") {
+      if (isPtsKind(data.k)) {
         // Junk points are dropped rather than tolerated: a NaN reaches cloudPathPoly's
         // Math.hypot, poisons the whole perimeter length and the cloud renders nowhere.
         const pts = (Array.isArray(data.pts) ? data.pts : [])
@@ -2876,13 +3180,18 @@
         // unselectable ghost in ed.annots that a re-bake would silently drop. Refuse
         // the import instead. A cloud needs 3 (cloudPathPoly closes a loop); an open
         // stroke needs 2 (strokePath).
-        if (pts.length < (data.k === "draw" ? 2 : 3)) return null;
+        // A `poly` needs 2 like a stroke: "để hở" is one of the two shapes it draws, and
+        // an open one is a polyline.
+        if (pts.length < (data.k === "cloudpen" ? 3 : 2)) return null;
         a.pts = pts;
         // Always true for a cloudpen: the only one a writer can put in a file is a
         // CLOSED scallop loop (cloudPathPoly emits `Z` unconditionally), and renderAnnot
         // draws the open, still-being-clicked polygon down a different path entirely.
         // A `draw` is never closed — leave the flag off.
+        // A `poly` remembers which it was; a payload from a writer that omitted the key
+        // reads as OPEN, which is the shape that draws something either way.
         if (data.k === "cloudpen") a.closed = true;
+        else if (data.k === "poly") a.closed = !!data.closed;
       } else {
         a.x = +data.x || 0; a.y = +data.y || 0;
         a.w = +data.w || 1; a.h = +data.h || 1;
@@ -2895,6 +3204,23 @@
         a.fillOpacity = data.fillOpacity != null ? +data.fillOpacity : 1;
       }
       return a;
+    }
+    if (data.k === "texthl") {
+      // Junk quads are dropped rather than tolerated — a NaN here would put a line of
+      // the wash somewhere impossible and drag the whole mark's bound with it. An empty
+      // list means there is nothing to show OR select, so the import is refused and the
+      // /Highlight in the file is left alone (the same contract as an image with no
+      // recoverable bytes).
+      const quads = (Array.isArray(data.quads) ? data.quads : [])
+        .filter((q) => q && isFinite(+q.x) && isFinite(+q.y) && +q.w > 0 && +q.h > 0)
+        .map((q) => ({ x: +q.x, y: +q.y, w: +q.w, h: +q.h }));
+      if (!quads.length) return null;
+      return { id: ed.seq++, kind: "texthl", quads,
+               // A literal fallback, never ed.highlightColor — same rule as the vector
+               // branch above, and test:defaults enforces it.
+               color: data.color || "#ffd54a",
+               opacity: data.opacity != null ? +data.opacity : 0.4,
+               text: String(data.text || ""), _managed: true };
     }
     if (data.k === "note") {
       return { id: ed.seq++, kind: "note", x: +data.x || 0, y: +data.y || 0,
@@ -2931,6 +3257,69 @@
     // re-derived /Rect (managed-codec.js apMatrixFor/apRectFor). Anything that is not
     // a clean quarter turn still falls through to flattening. BI-59.
     const angle = page.getRotation().angle;
+    // Tô sáng theo chữ — the only managed kind that is NOT a /Stamp.
+    //
+    // It goes in as a real /Highlight with /QuadPoints, so every other PDF reader treats
+    // it as the highlight it is: Acrobat and Foxit list it in the comment pane with the
+    // marked words (/Contents), and a reader that wants to re-derive an appearance has
+    // the quads to do it from. We still write our OWN /AP, because that is the only way
+    // to pin the BLEND: a synthesised highlight may paint opaque over the glyphs, and
+    // the whole point of multiply is that the text underneath stays black (see the
+    // measurement in docs/RESEARCH-2026-09-20c §3.4).
+    //
+    // EVERY QUAD IS MAPPED BY ITS OWN TWO CORNERS. That is what makes this correct on a
+    // rotated page for free — BI-45's rule, the same one the flattened rectangle path
+    // relies on — and it is why the /AP is a form whose BBox is the union box in USER
+    // space rather than a local coordinate system needing a /Matrix.
+    if (a.kind === "texthl") {
+      const qs = (a.quads || []).filter((q) => q && q.w > 0 && q.h > 0);
+      if (!qs.length) return true; // nothing to draw, and nothing to flatten either
+      const mapped = qs.map((q) => {
+        const [x1, y1] = map(q.x, q.y);
+        const [x2, y2] = map(q.x + q.w, q.y + q.h);
+        return { x0: Math.min(x1, x2), y0: Math.min(y1, y2),
+                 x1: Math.max(x1, x2), y1b: Math.max(y1, y2) };
+      });
+      const bx0 = Math.min(...mapped.map((m) => m.x0));
+      const by0 = Math.min(...mapped.map((m) => m.y0));
+      const bx1 = Math.max(...mapped.map((m) => m.x1));
+      const by1 = Math.max(...mapped.map((m) => m.y1b));
+      const col = hexRgb(a.color);
+      const alpha = a.opacity != null ? a.opacity : TEXTHL_OPACITY;
+      // The form's own space is the union box translated to 0,0 — a pure translation, so
+      // no /Matrix is involved and a rotated page needs no special case.
+      const ops = ["q", "/NabuHL gs",
+        `${col.red.toFixed(4)} ${col.green.toFixed(4)} ${col.blue.toFixed(4)} rg`]
+        .concat(mapped.map((m) =>
+          `${(m.x0 - bx0).toFixed(2)} ${(m.y0 - by0).toFixed(2)} ` +
+          `${(m.x1 - m.x0).toFixed(2)} ${(m.y1b - m.y0).toFixed(2)} re f`))
+        .concat(["Q"]).join("\n");
+      const apDict = {
+        Type: "XObject", Subtype: "Form", FormType: 1,
+        BBox: [0, 0, bx1 - bx0, by1 - by0],
+        Resources: {
+          ExtGState: { NabuHL: { Type: "ExtGState", BM: PDFName.of("Multiply"), ca: alpha } },
+        },
+      };
+      const apStream = PDFRawStream.of(ctx.obj(apDict), strToBytes(ops));
+      // PDF quad order is TL, TR, BL, BR — what Acrobat writes, which is not the order
+      // the spec's prose implies. Readers follow Acrobat.
+      const quadPoints = [];
+      for (const m of mapped) quadPoints.push(m.x0, m.y1b, m.x1, m.y1b, m.x0, m.y0, m.x1, m.y0);
+      const annot = ctx.obj({
+        Type: "Annot", Subtype: "Highlight", F: 4,
+        Rect: [bx0, by0, bx1, by1],
+        QuadPoints: quadPoints,
+        C: [col.red, col.green, col.blue],
+        CA: 1, // the wash's alpha lives in the ExtGState, not here — see the note above
+        Contents: PDFHexString.fromText(a.text || ""),
+        AP: { N: ctx.register(apStream) },
+      });
+      annot.set(PDFName.of("NabuKind"), PDFName.of(a.kind));
+      annot.set(PDFName.of("NabuData"), dataHex);
+      pushPageAnnot(doc, page, ctx.register(annot));
+      return true;
+    }
     if (a.kind === "image") {
       if (!apRotatable(angle)) return false; // /Rotate 45 & friends keep flattening
       const bytes = dataUrlToBytes(a.dataUrl);
@@ -3199,17 +3588,64 @@
   }
 
   async function drawOneAnnot(doc, page, a, map) {
-    if (a.kind === "highlight") {
-        const [x1, y1] = map(a.x, a.y);
-        const [x2, y2] = map(a.x + a.w, a.y + a.h);
-        page.drawRectangle({
-          x: Math.min(x1, x2),
-          y: Math.min(y1, y2),
-          width: Math.abs(x2 - x1),
-          height: Math.abs(y2 - y1),
-          color: hexRgb(a.color),
-          opacity: 0.35,
-        });
+    if (a.kind === "highlight" || a.kind === "texthl") {
+        // MULTIPLY, not a plain 35% wash — and this is a FIX, not a style change.
+        // On screen a highlight has always been `mix-blend-mode: multiply` (app.css), so
+        // the glyphs under it stay black. The bake used `opacity: 0.35` in Normal mode,
+        // which paints the yellow ON TOP of the text: measured side by side in the app,
+        // the words under a baked highlight came out visibly GREY while the same words
+        // outside it stayed black (docs/RESEARCH-2026-09-20c §3.4, hl-zoom.png). Multiply
+        // at the overlay's own alpha makes the two writers agree — BI-40's rule applied
+        // to a blend mode instead of to geometry.
+        //
+        // `BlendMode.Multiply` is supported by the vendored pdf-lib 1.17.1 (checked: it
+        // emits /BM /Multiply in an ExtGState). Note for anyone verifying by hand: the
+        // default save uses object streams, so grepping the file for /Multiply finds
+        // nothing — save with {useObjectStreams:false} to read it.
+        //
+        // Both highlighters land here: one box, or one box per line of selected text.
+        // A `texthl` normally goes in as a real /Highlight annotation and never reaches
+        // this branch; it is here so that the flattening path cannot silently draw a
+        // different mark from the round-tripping one.
+        const boxes = a.kind === "texthl"
+          ? (a.quads || []).filter((q) => q && q.w > 0 && q.h > 0)
+          : [{ x: a.x, y: a.y, w: a.w, h: a.h }];
+        const alpha = a.kind === "texthl" && a.opacity != null ? a.opacity : TEXTHL_OPACITY;
+        for (const q of boxes) {
+          const [x1, y1] = map(q.x, q.y);
+          const [x2, y2] = map(q.x + q.w, q.y + q.h);
+          page.drawRectangle({
+            x: Math.min(x1, x2),
+            y: Math.min(y1, y2),
+            width: Math.abs(x2 - x1),
+            height: Math.abs(y2 - y1),
+            color: hexRgb(a.color),
+            opacity: alpha,
+            blendMode: PDFLib.BlendMode.Multiply,
+          });
+        }
+      } else if (a.kind === "poly") {
+        // Only reachable on a page whose /Rotate is not a quarter turn (addManagedAnnot
+        // hands those back); the normal path is the vector /AP. Per-segment drawLine for
+        // exactly the reason the `draw` branch below gives — independently mapped
+        // endpoints are correct at any angle, a local coordinate system is not.
+        //
+        // The INTERIOR is dropped in this fallback, and that is deliberate rather than
+        // an oversight: filling would mean handing pdf-lib one path in a local space,
+        // i.e. the very thing this branch exists to avoid. An exotic page rotation costs
+        // the wash and keeps the outline, which is the shape the reviewer drew.
+        const pts = a.pts || [];
+        const chain = a.closed && pts.length > 2 ? pts.concat([pts[0]]) : pts;
+        for (let k = 1; k < chain.length; k++) {
+          const [px, py] = map(chain[k - 1].x, chain[k - 1].y);
+          const [qx, qy] = map(chain[k].x, chain[k].y);
+          page.drawLine({
+            start: { x: px, y: py }, end: { x: qx, y: qy },
+            thickness: Math.max(0.1, a.width || 2),
+            color: hexRgb(a.color),
+            lineCap: PDFLib.LineCapStyle.Round,
+          });
+        }
       } else if (a.kind === "draw") {
         // Still per-segment `drawLine` and NOT one drawSvgPath, deliberately: every
         // endpoint is mapped independently, which is what keeps a stroke correct on a
@@ -3728,6 +4164,8 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
+    poly: ["color", "penwidth", "fill"],
+    texthl: ["color"],
     // No "arrowrev" here: reversing needs an arrow to reverse, and under the arrow
     // TOOL nothing is selected yet. It is a KIND_CTLS-only control (see below).
     arrow: ["color", "penwidth", "arrowlabel"],
@@ -3749,6 +4187,8 @@
     ellipse: ["color", "penwidth", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
+    poly: ["color", "penwidth", "fill"],
+    texthl: ["color"],
     arrow: ["color", "penwidth", "arrowlabel", "arrowrev"],
     note: ["color"],
     image: ["imgpages"],
@@ -3784,8 +4224,11 @@
   }
 
   function setTool(tool) {
-    // Leaving the cloud-pen tool abandons a polygon still being clicked out.
-    if (ed._poly && tool !== "cloudpen") {
+    // Leaving the pen tool abandons a polygon still being clicked out. The comparison is
+    // against the IN-PROGRESS SHAPE'S kind, not a literal: switching from Khoanh mây tự
+    // do to Hình tự do must still drop the half-drawn cloud.
+    const openHit = ed._poly ? findAnnot(ed._poly.id) : null;
+    if (ed._poly && (!openHit || openHit.a.kind !== tool)) {
       const info = ed._poly;
       ed._poly = null;
       ed.annots[info.page] = (ed.annots[info.page] || []).filter((x) => x.id !== info.id);
@@ -3794,6 +4237,10 @@
       renderLayer(info.layer, info.page);
     }
     ed.tool = tool;
+    // The text highlighter needs the pdf.js text layer back: `body.editing` turns it off
+    // so drawing tools own the mouse (app.css). One class, flipped here, is the whole
+    // switch — see the CSS block for why pointer-events and not z-index.
+    document.body.classList.toggle("tool-texthl", tool === "texthl");
     document.querySelectorAll("#ed-tools .tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     // Show the colour this tool actually draws with, or picking ✓ would display the
     // shared default while stamping green — and picking Tô sáng would show red while
@@ -4395,7 +4842,7 @@
     ed.penWidth = Math.max(1, +e.target.value || 2);
     // Applies to the whole selection, same reasoning as the colour picker above.
     const targets = selAnnots().filter((a) =>
-      ["draw", "box", "ellipse", "cloud", "cloudpen", "arrow", "check", "cross"].includes(a.kind)
+      ["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind)
     );
     if (targets.length) {
       pushEdUndo("pwidth:" + ed.sel);
