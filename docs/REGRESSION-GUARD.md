@@ -719,6 +719,22 @@ chỉ tên hàm.
   nằm trong khung nhìn **và bấm tích được** (`elementFromPoint` trả về chính nó) ở **tất cả
   68 tổ hợp**. Thanh cao tối đa **127px ở 900/1024px**, **87px ở 1366/1920px** — đúng bằng
   con số trước khi thêm. `flex-wrap` nuốt trọn +152px; đó là lý do nó còn ở đó.
+- **17 nút chia thành 5 nhóm bằng `.sep` (2026-09-20).** Một dãy 17 icon không phân nhóm
+  là một bức tường phải đọc từ trái sang phải mỗi lần. Năm họ: **chọn · chữ & tô sáng ·
+  hình vẽ · ký hiệu & ghi chú · chèn & xử lý**. **Thứ tự nút KHÔNG đổi** — mọi họ vốn
+  đã liền nhau, nên việc chia nhóm không lấy đi trí nhớ tay của ai; đảo thứ tự thì có.
+  Đo lại sau khi thêm 4 dấu phân cách (9px mỗi cái): thanh cao **y nguyên** 127px @900/1024
+  và 87px @1366/1920, "Xong" bấm được ở cả 68 tổ hợp.
+- **`.edit-bar .tools` cũng `flex-wrap: wrap` (2026-09-20).** Dãy công cụ là **một** flex item
+  của thanh, nên nếu nó không tự gấp thì dưới ~700px nó đẩy "Xoá mục"/"Xong" ra khỏi mép
+  — đúng kiểu hỏng mà BI-41 sinh ra để chặn, chỉ ở bề rộng mà bảng đo đầu tiên không
+  chạm tới. Đo sau khi thêm: **640 / 700 / 800px** — "Xong" bấm được ở **mọi** công cụ
+  (thanh cao tối đa 206px ở 640px, chấp nhận được — nút commit vẫn trên màn hình).
+- **Icon phải được CHỌN BẮNG CÁCH NHÌN, ở đúng 18px.** `ic-texthl` và `ic-poly` đều phải vẽ
+  lại sau khi dựng thử trong app: bản đầu của `ic-texthl` ("mấy dòng chữ + một dải") đọc
+  ra **icon canh lề / danh sách**, và `ic-poly` vẽ kèm 5 chấm đỉnh thì ở 18px các chấm **dính
+  vào đường biên thành hình ngôi sao**. Dựng 4 phương án cạnh nhau ở đúng cỡ thật rồi chọn
+  mới ra được — **đừng chọn icon bằng cách đọc đường `d`**.
 - Có `wrap` thì ở mọi width 900–1920px nút Xong luôn bấm được, thanh cao **46–127px**.
 - **Luật:** thêm nút vào `#ed-tools` (hay control vào palette) thì phải trả lời câu hỏi
   bề rộng, không chỉ nhìn cho vừa mắt trên màn hình của mình. Và **đừng gỡ `flex-wrap`**

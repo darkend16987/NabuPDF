@@ -633,7 +633,16 @@ body.presenting .viewer .page-wrap { box-shadow: none; }
      fewer items. See docs/REGRESSION-GUARD.md BI-41. */
   flex-wrap: wrap;
 }
-.edit-bar .tools { gap: 4px; }
+/* The tool row is ONE flex item of a wrapping bar, so without this it is an
+   unbreakable block: below ~700px it would push "Xóa mục"/"Xong" off the edge rather
+   than fold, which is the exact failure BI-41 exists to prevent — just at a width the
+   original measurement did not reach. Letting the row itself fold keeps every width safe.
+   `row-gap` is larger than the column gap so two folded rows of icons stay readable. */
+.edit-bar .tools { gap: 4px; flex-wrap: wrap; row-gap: 6px; }
+/* Divider between tool families. Shorter than the toolbar's own .sep (24px): these sit
+   between 34px icon buttons, and a full-height rule between every group reads as five
+   separate toolbars rather than one row with structure. */
+.edit-bar .tools .sep { height: 18px; margin: 0 2px; }
 .edit-bar .tool { width: 34px; padding: 6px 0; display: inline-flex; align-items: center; justify-content: center; position: relative; }
 .edit-bar .tool .tool-pen {
   position: absolute; right: 0; bottom: -2px;
