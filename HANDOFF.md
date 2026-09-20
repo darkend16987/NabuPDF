@@ -4,7 +4,44 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-16 · v0.2.70 đã phát hành (dưới đây) · v0.2.69 là bản trước đó_
+_Cập nhật: 2026-09-20 · v0.2.71 đã phát hành (dưới đây) · v0.2.70 là bản trước đó_
+
+> **v0.2.71 — tô sáng theo đoạn chữ, hình tự do, và bộ bản vẽ CAD mở nhanh hơn.**
+>
+> Ba mảng, hai tài liệu nghiên cứu:
+> [docs/RESEARCH-2026-09-20b-cad-perf-real-files.md](docs/RESEARCH-2026-09-20b-cad-perf-real-files.md)
+> (tốc độ mở bản vẽ) và
+> [docs/RESEARCH-2026-09-20c-text-highlight-free-shape.md](docs/RESEARCH-2026-09-20c-text-highlight-free-shape.md)
+> (hai công cụ mới). Bất biến mới: **BI-87, BI-88, BI-89**.
+>
+> **1. Tô sáng theo đoạn chữ** (`texthl`, phím `B`) — bôi đen bằng chuột như Word, vệt bám
+> sát từng dòng. Ghi vào file thành `/Highlight` thật (QuadPoints + `/AP` + `/NabuData`) nên
+> mở lại vẫn sửa/xoá được và Foxit/Acrobat liệt kê trong danh sách chú thích. **Bẫy đo được:**
+> một đoạn chọn 14 dòng trả về **154 hình chữ nhật có cả bản sao y hệt**, mà vệt tô vẽ bằng
+> `multiply` nên ô chồng nhau = dòng đó đậm gấp đôi — `quadsFromRects()` gom theo độ chồng lấn
+> dọc, ra 14 ô, 0 cặp chồng. **Lỗi cũ sửa kèm:** bake ghi `opacity 0.35` chế độ Normal, tức
+> phủ màu **lên trên** chữ — chữ dưới vệt tô bạc đi trong file đã lưu; nay dùng `/BM /Multiply`
+> cho **cả hai** kiểu tô sáng.
+>
+> **2. Hình tự do** (`poly`, phím `P`) — đa giác bấm từng điểm hoặc kéo tự do, đóng kín hoặc
+> để hở. Dùng chung state machine đa giác với `cloudpen` (`PEN_TOOLS`/`canClosePts`). Kèm theo:
+> **nét vẽ tay / mây tự do / hình tự do lần đầu kéo giãn được** (`scalePts`, độ dày nét không co
+> theo) và **sửa từng đỉnh** (`data-vtx`, cố ý khác `data-pt` của mũi tên).
+>
+> **3. Mở bộ bản vẽ CAD nhiều trang.** Chi phí một lần `page.render` là **phát lại operator
+> list**, gần như không phụ thuộc số điểm ảnh (A1 77k lệnh: 0,04 MP → 173 ms, 36 MP → 189 ms)
+> ⇒ **một thumbnail 150px tốn đúng bằng cả trang**. Đưa dải thumbnail xếp hàng **sau** trang đầu:
+> thời gian tới lúc thấy trang đầu **1 224 / 913 / 147 ms → 298 / 253 / 116 ms** trên ba bộ bản
+> vẽ thật. Lớp chữ thôi dựng lại mỗi nấc zoom (96–134 ms → ~0 trên trang nhiều chữ).
+> Hai ý tưởng **bị chính phép đo bác bỏ** và đã gỡ: thumbnail thu từ bitmap trang (bạc phếch
+> — xem BI-87 luật 3) và `page.cleanup()` (đổi 1,5 s lấy RAM, cuộn ngược chậm 2,2×).
+>
+> **4. Thanh công cụ chú thích chia 5 nhóm.** 17 nút không phân nhóm là một bức tường; thêm 4
+> dấu phân cách, **thứ tự nút không đổi**. Hai icon mới phải vẽ lại sau khi dựng thử ở đúng
+> 18px (bản đầu: một cái đọc ra "canh lề", cái kia thành "ngôi sao").
+>
+> **Lưới:** thêm `npm run test:shape` (35) + `test:thumbs` (19); `test:rotate` 645 → 816.
+> 23/23 bộ xanh. Nghiệm thu GUI lái bằng CDP `Input.dispatchMouseEvent` trên app thật.
 
 > **v0.2.70 — không còn cần mạng để OCR, và nền móng được thay gần hết.**
 >
