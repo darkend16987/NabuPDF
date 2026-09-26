@@ -726,6 +726,74 @@
     "Sửa file này": "Edit this file",
     "Mở file này ở khung chính để sửa": "Open this file in the editable pane",
     "Khung xem — chưa chọn tài liệu.": "View pane — no document selected.",
+
+    // --- Thay trang (v0.2.72) ---
+    "Thay trang đang chọn bằng PDF khác…": "Replace selected pages with another PDF…",
+    "Thay các trang đang chọn (liền nhau) bằng trang của một PDF khác":
+      "Replace the selected (consecutive) pages with pages from another PDF",
+    "Thay trang bằng PDF khác… (chọn các trang liền nhau)": "Replace with another PDF… (select consecutive pages)",
+    "Thay các trang đang chọn bằng PDF khác…": "Replace the selected pages with another PDF…",
+    "Thay trang này bằng PDF khác…": "Replace this page with another PDF…",
+    "Thay trang": "Replace pages",
+    "Chỉ các trang được chọn": "Only these pages",
+    "Trang của file nguồn": "Pages of the source file",
+    "vd: 1-3, 5": "e.g. 1-3, 5",
+    "trang {a}–{b}": "pages {a}–{b}",
+    "trang {n}": "page {n}",
+    "Thay {target} bằng trang của: {name} ({m} trang).": "Replace {target} with pages from: {name} ({m} pages).",
+    "Tất cả {m} trang": "All {m} pages",
+    "Nhập các trang của file nguồn, vd 1-3, 5.": "Type the source pages, e.g. 1-3, 5.",
+    "Chưa nhận ra trang nào — vd 1-3, 5.": "No page recognised yet — e.g. 1-3, 5.",
+    "Sẽ thay {target} bằng {k} trang ({list}) — tài liệu còn {n} trang.":
+      "Will replace {target} with {k} page(s) ({list}) — the document will have {n} pages.",
+
+    // --- Chữ ký lưu sẵn (v0.2.72) ---
+    "Chèn chữ ký đã lưu sẵn — hoặc chuột phải lên trang → Chèn chữ ký":
+      "Insert a saved signature — or right-click the page → Insert signature",
+    "Chữ ký của tôi": "My signatures",
+    "Ảnh chữ ký / con dấu lưu sẵn — chuột phải lên trang để chèn nhanh · mã hoá bằng tài khoản Windows":
+      "Saved signature / stamp images — right-click a page to insert one · encrypted with your Windows account",
+    "Quản lý…": "Manage…",
+    "Lưu sẵn ảnh chữ ký hoặc con dấu để chèn nhanh: chuột phải lên trang → Chèn chữ ký, hoặc nút chữ ký trên thanh Chú thích. Chỉ lưu trên máy này, mã hoá bằng tài khoản Windows của bạn.":
+      "Save signature or stamp images for quick insertion: right-click a page → Insert signature, or the signature button on the Annotate bar. Stored on this computer only, encrypted with your Windows account.",
+    "Xoá nền trắng (ảnh chụp / scan trên giấy)": "Remove white background (photo / scan on paper)",
+    "Độ mạnh": "Strength",
+    "Cắt sát nét ký (bỏ khoảng trống xung quanh)": "Trim to the strokes (drop the empty margin)",
+    "Tên": "Name",
+    "vd: Chữ ký Giám đốc": "e.g. Director's signature",
+    "Bỏ": "Discard",
+    "Lưu chữ ký": "Save signature",
+    "Tạo kho mới": "Start a new store",
+    "+ Thêm chữ ký…": "+ Add signature…",
+    "Thêm chữ ký lưu sẵn…": "Add a saved signature…",
+    "Chèn chữ ký: {name}": "Insert signature: {name}",
+    "Chữ ký khác…": "Other signatures…",
+    "Chèn chữ ký": "Insert signature",
+    "Chưa có chữ ký nào — thêm chữ ký…": "No signatures yet — add one…",
+    "Quản lý chữ ký…": "Manage signatures…",
+    "Chưa có chữ ký nào. Bấm “+ Thêm chữ ký…”.": "No signatures yet. Click “+ Add signature…”.",
+    "Không đọc được kho chữ ký (có thể do tài khoản Windows khác tạo ra). “Tạo kho mới” sẽ bắt đầu lại — file cũ được giữ nguyên bên cạnh, không bị xoá.":
+      "The signature store cannot be read (it may belong to another Windows account). “Start a new store” begins again — the old file is kept next to it, not deleted.",
+    "Đổi tên — gõ rồi bấm Enter": "Rename — type, then press Enter",
+    "Bề rộng khi chèn — tự nhớ theo lần dùng gần nhất": "Width when inserted — remembered from the last use",
+    "Xoá": "Delete",
+    "Xoá chữ ký “{name}”?": "Delete signature “{name}”?",
+    "Xem trước trên nền caro — phần caro là trong suốt.": "Preview on a checkerboard — the checkered part is transparent.",
+    "Độ mạnh quá cao — không còn nét nào. Kéo thanh Độ mạnh sang trái.":
+      "Strength too high — no strokes are left. Move the Strength slider left.",
+    "Đã lưu chữ ký. Chuột phải lên trang → Chèn chữ ký để dùng.": "Signature saved. Right-click a page → Insert signature to use it.",
+    "Tạo kho chữ ký mới? File cũ không đọc được sẽ được giữ nguyên bên cạnh (không xoá).":
+      "Start a new signature store? The unreadable old file is kept next to it (not deleted).",
+    "Không thực hiện được.": "Could not be done.",
+    "Máy này không mã hoá được (Windows DPAPI không sẵn sàng) nên không lưu chữ ký.":
+      "This computer cannot encrypt (Windows DPAPI unavailable), so signatures are not saved.",
+    "Không đọc được kho chữ ký hiện có — bấm “Tạo kho mới” trước.": "The current signature store cannot be read — click “Start a new store” first.",
+    "Đã đủ số chữ ký tối đa — xoá bớt một chữ ký trước.": "The signature limit is reached — delete one first.",
+    "Ảnh quá lớn — thử ảnh nhỏ hơn.": "The image is too large — try a smaller one.",
+    "Không đọc được ảnh này — thử PNG hoặc JPG.": "This image cannot be read — try PNG or JPG.",
+    "Tên không được để trống.": "The name cannot be empty.",
+    "Chữ ký này không còn nữa.": "This signature no longer exists.",
+    "Không ghi được kho chữ ký.": "The signature store could not be written.",
   };
 
   // Elements whose text/attrs change at runtime — never register these, or a

@@ -211,11 +211,34 @@ contextBridge.exposeInMainWorld("desktop", {
   // The shared clip as it stands, for a tab that loaded after the copy. Startup
   // path only — never called while handling a paste.
   readAnnotClip: () => ipcRenderer.invoke("annots:clip-read"),
-  // Another tab copied (or cleared). Payload is { items, srcPage } or null.
+  // The FULL items (image pixels included) of shared clip `id`, or null once a newer
+  // copy replaced it. Called only from editor.js requestPaste, AFTER the paste
+  // gesture has been claimed — never to decide it (BI-77).
+  fetchAnnotClip: (id) => ipcRenderer.invoke("annots:clip-fetch", id),
+  // Another tab copied (or cleared). Payload is the LIGHT clip
+  // { id, items, srcPage, heavy } (images without pixels) or null.
   onAnnotClipChanged: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on("annots:clip-changed", handler);
     return () => ipcRenderer.removeListener("annots:clip-changed", handler);
+  },
+
+  // --- chữ ký lưu sẵn (saved signatures, encrypted with DPAPI in main) ---
+  // Every call resolves { ok, reason? }; list() also carries { items, unreadable,
+  // encryption, max }. Items: { id, name, dataUrl (PNG), wPt }.
+  signatures: {
+    list: () => ipcRenderer.invoke("sig:list"),
+    add: (p) => ipcRenderer.invoke("sig:add", p), // { name, dataUrl, wPt? }
+    rename: (id, name) => ipcRenderer.invoke("sig:rename", { id, name }),
+    remove: (id) => ipcRenderer.invoke("sig:remove", id),
+    setWidth: (id, wPt) => ipcRenderer.invoke("sig:set-width", { id, wPt }),
+    reset: () => ipcRenderer.invoke("sig:reset"),
+    // Any tab changed the store — re-read list().
+    onChanged: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on("sig:changed", handler);
+      return () => ipcRenderer.removeListener("sig:changed", handler);
+    },
   },
 
   // The real filesystem path of a dropped File, or null.

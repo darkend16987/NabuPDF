@@ -990,6 +990,41 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
   color: var(--muted); padding: 6px 12px 3px;
 }
 .ctx-menu-item.danger { color: var(--danger); }
+/* Thumbnail in a menu entry (saved signatures). White behind it on purpose: a signature
+   is dark ink on transparency and would vanish on the dark theme's menu background. */
+.ctx-menu-img {
+  height: 22px; max-width: 64px; object-fit: contain; vertical-align: middle;
+  margin: -3px 8px -3px 0; background: #fff; border-radius: 3px; padding: 1px 3px;
+}
+
+/* ---- chữ ký lưu sẵn (renderer/signatures.js) ---- */
+.edit-bar .sig-btn { width: 34px; padding: 6px 0; display: inline-flex; align-items: center; justify-content: center; }
+.edit-bar .sig-btn .ic { width: 18px; height: 18px; margin: 0; }
+/* Checkerboard = "this part is transparent", the same convention as #ed-fill-swatch. */
+.sig-checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #d4d4d4 25%, transparent 25%, transparent 75%, #d4d4d4 75%),
+    linear-gradient(45deg, #d4d4d4 25%, transparent 25%, transparent 75%, #d4d4d4 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+}
+.sig-card { width: min(560px, calc(100vw - 32px)); }
+.sig-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow: auto; margin: 8px 0; }
+.sig-row { display: flex; align-items: center; gap: 8px; }
+.sig-row input[type="text"] { flex: 1 1 auto; min-width: 0; }
+.sig-thumb {
+  flex: 0 0 120px; height: 48px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+}
+.sig-thumb img { max-width: 100%; max-height: 100%; }
+.sig-size { white-space: nowrap; margin: 0; }
+.sig-edit { margin: 8px 0; }
+.sig-preview {
+  display: flex; align-items: center; justify-content: center; min-height: 120px;
+  padding: 8px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.sig-preview canvas { max-width: 100%; max-height: 220px; object-fit: contain; }
 .ctx-menu-item.danger:hover { background: var(--danger); color: var(--bg); }
 
 /* ---- selectable text layer (text-based PDFs) ---- */

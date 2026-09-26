@@ -124,5 +124,79 @@ check(
   true
 );
 
-console.log(`\npage-range: ${pass} pass, ${fail} fail`);
-process.exit(fail ? 1 : 0);
+// ---- contiguousRun / replacePlan (Thay trang, v0.2.72) ----------------------
+
+check("run: single page", PR.contiguousRun([4]), { start: 4, count: 1 });
+check("run: unsorted contiguous", PR.contiguousRun(new Set([5, 3, 4])), { start: 3, count: 3 });
+check("run: duplicates ignored", PR.contiguousRun([2, 2, 3]), { start: 2, count: 2 });
+check("run: a gap is refused", PR.contiguousRun([1, 4]), null);
+check("run: empty is refused", PR.contiguousRun([]), null);
+check("run: junk only is refused", PR.contiguousRun(["a", -1, 1.5]), null);
+
+check("plan: all source pages", PR.replacePlan([2], 10, "", 3), { start: 2, remove: 1, take: [0, 1, 2], error: null });
+check("plan: null spec = all", PR.replacePlan([2], 10, null, 2).take, [0, 1]);
+check("plan: whitespace spec = all", PR.replacePlan([2], 10, "   ", 2).take, [0, 1]);
+check("plan: chosen pages, ascending", PR.replacePlan([2], 10, "4, 1-2", 5).take, [0, 1, 3]);
+check("plan: en dash from Word", PR.replacePlan([0], 3, "2–3", 5).take, [1, 2]);
+check("plan: range of targets", PR.replacePlan(new Set([3, 4, 5]), 10, "1", 2), { start: 3, remove: 3, take: [0], error: null });
+check("plan: overlarge source number clamps", PR.replacePlan([0], 3, "99", 4).take, [3]);
+check("plan: gap refused", PR.replacePlan([1, 3], 10, "", 2).error, "gap");
+check("plan: nothing selected refused", PR.replacePlan([], 10, "", 2).error, "gap");
+check("plan: selection past the end refused", PR.replacePlan([9, 10], 10, "", 2).error, "gap");
+check("plan: junk spec refused", PR.replacePlan([0], 3, "abc", 4).error, "empty");
+check("plan: empty source refused", PR.replacePlan([0], 3, "", 0).error, "no-src");
+check("plan: empty doc refused", PR.replacePlan([0], 0, "", 3).error, "no-doc");
+
+// ---- replaceInDoc against REAL pdf-lib documents ----------------------------
+//
+// Pages are told apart by their WIDTH (target pages 100+i pt wide, source pages
+// 500+i), so the assertion reads the actual page tree after save → reload, not
+// our own bookkeeping.
+
+const { PDFDocument } = require("pdf-lib");
+async function mk(n, base) {
+  const d = await PDFDocument.create();
+  for (let i = 0; i < n; i++) d.addPage([base + i, 200]);
+  return d;
+}
+const widths = async (d) => (await PDFDocument.load(await d.save())).getPages().map((p) => Math.round(p.getWidth()));
+
+(async () => {
+  let doc = await mk(5, 100);
+  let src = await mk(4, 500);
+  const n = await PR.replaceInDoc(doc, src, PR.replacePlan([2], 5, "", 4));
+  check("real: replace page 3 with all 4", await widths(doc), [100, 101, 500, 501, 502, 503, 103, 104]);
+  check("real: returns inserted count", n, 4);
+  check("real: source untouched", await widths(src), [500, 501, 502, 503]);
+
+  doc = await mk(5, 100);
+  src = await mk(4, 500);
+  await PR.replaceInDoc(doc, src, PR.replacePlan([1, 2, 3], 5, "4, 2", 4));
+  check("real: replace 2-4 with source 2,4", await widths(doc), [100, 501, 503, 104]);
+
+  doc = await mk(3, 100);
+  src = await mk(2, 500);
+  await PR.replaceInDoc(doc, src, PR.replacePlan([0, 1, 2], 3, "", 2));
+  check("real: replace EVERY page (never an empty tree)", await widths(doc), [500, 501]);
+
+  doc = await mk(3, 100);
+  src = await mk(3, 500);
+  await PR.replaceInDoc(doc, src, PR.replacePlan([2], 3, "1", 3));
+  check("real: replace the LAST page", await widths(doc), [100, 101, 500]);
+
+  doc = await mk(3, 100);
+  src = await mk(3, 500);
+  await PR.replaceInDoc(doc, src, PR.replacePlan([0], 3, "3", 3));
+  check("real: replace the FIRST page", await widths(doc), [502, 101, 102]);
+
+  let threw = false;
+  try {
+    await PR.replaceInDoc(doc, src, { error: "gap" });
+  } catch (_) {
+    threw = true;
+  }
+  check("real: an error plan is refused, doc untouched", [threw, await widths(doc)], [true, [502, 101, 102]]);
+
+  console.log(`\npage-range: ${pass} pass, ${fail} fail`);
+  process.exit(fail ? 1 : 0);
+})();

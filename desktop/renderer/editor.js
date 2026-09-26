@@ -1382,8 +1382,10 @@
   // whether we call preventDefault() during the event, and an awaited answer
   // arrives after that decision is already gone.
   //
-  // Cross-tab carries annotation JSON only — images are left behind on purpose
-  // (see SHARE_EXCLUDED). They still copy WITHIN a tab exactly as before.
+  // Images cross too since v0.2.72, WITHOUT being broadcast: main pushes a light
+  // clip (pixels left out, `heavy: true`) and the pixels are fetched once, by the
+  // tab that pastes, inside requestPaste — the work, after the decision. See
+  // hydrateClip and main.js lightClip().
   //
   // WHAT IT CANNOT DO, so nobody goes looking for the bug: only kinds that
   // round-trip (MANAGED_KINDS) come back as live objects after a save. As of
@@ -1392,15 +1394,27 @@
   // FLATTENED TO PIXELS when baked (BI-42), so once applied there is no object left
   // to select and copy. Copy those BEFORE applying — the clip outlives the bake,
   // which is what makes that sequence work.
-  let clip = null; // { items: [<annot minus id>], page: <source page>, dropped: {page: n} }
+  // { items: [<annot minus id>], page: <source page>, dropped: {page: n},
+  //   id?, heavy? }  — `id`/`heavy` only on a clip ADOPTED from another tab whose
+  //   images still have to be fetched (hydrateClip).
+  let clip = null;
   const PASTE_STEP = 12; // pt of cascade per repeat paste, so copies don't hide
 
-  // Kinds held back from the cross-tab mirror. `image` is the whole list and the
-  // reason is size, not correctness: a re-opened photo is a multi-megabyte base64
-  // string (see edSnapshot), and pushing that through IPC on every Ctrl+C is the
-  // cost the per-tab-clipboard note was right to refuse. Everything else in
-  // MANAGED_KINDS is a few hundred bytes of JSON.
-  const SHARE_EXCLUDED = new Set(["image"]);
+  // Kinds held back from the cross-tab mirror: none since v0.2.72. `image` used to
+  // be the whole list, for size — a re-opened photo is a multi-megabyte base64 string
+  // (see edSnapshot), and main used to BROADCAST every clip to every tab. main now
+  // broadcasts a light clip and hands the pixels only to the tab that pastes (main.js
+  // lightClip / annots:clip-fetch), so the size objection is answered structurally and
+  // the one thing left is a ceiling on a single copy: SHARE_IMAGE_CAP below. The set
+  // stays, empty, as the one place to hold a kind back — `test:clip` pins it.
+  const SHARE_EXCLUDED = new Set();
+
+  // Upper bound on the image pixels ONE copy may send to main (sum of dataUrl
+  // lengths, in characters ≈ bytes). Far above any real signature, stamp or photo —
+  // it exists so a pathological selection (dozens of re-opened scans) degrades to
+  // the old "ảnh chỉ dán được trong tab này" instead of a huge structured clone on
+  // the copy gesture. Local copy/paste is never capped.
+  const SHARE_IMAGE_CAP = 48 * 1024 * 1024;
 
   // …and kinds that cross even though they are NOT managed (v0.2.69).
   //
@@ -1442,15 +1456,28 @@
     dim: "kích thước",
   };
 
+  // The part of a copy that may cross to other tabs: the shareable kinds, minus the
+  // images when together they exceed SHARE_IMAGE_CAP (all-or-none for images, so a
+  // group never arrives with an arbitrary subset of its pictures). Pure — shared by
+  // shareClip and by copySelected's toast, so the toast cannot promise what the
+  // mirror did not send.
+  function shareableItems(items) {
+    let send = items.filter((a) => isShareableKind(a.kind));
+    let px = 0;
+    for (const a of send) if (a.kind === "image" && typeof a.dataUrl === "string") px += a.dataUrl.length;
+    if (px > SHARE_IMAGE_CAP) send = send.filter((a) => a.kind !== "image");
+    return send;
+  }
+
   // Mirror `clip` to the other tabs. Fire-and-forget BY DESIGN — see BI-77: the
   // copy gesture calls preventDefault() synchronously, so this must not be awaited,
   // and a mirror that fails costs cross-tab paste only, never the local one.
   function shareClip(items, srcPage) {
     try {
       if (!window.desktop || !window.desktop.writeAnnotClip) return;
-      const send = items.filter((a) => isShareableKind(a.kind));
-      // Sending [] deliberately CLEARS the shared clip (an image-only copy): the
-      // alternative is another tab silently pasting a clip from two gestures ago.
+      const send = shareableItems(items);
+      // Sending [] deliberately CLEARS the shared clip (e.g. a highlight-only copy):
+      // the alternative is another tab silently pasting a clip from two gestures ago.
       window.desktop.writeAnnotClip({ items: send, srcPage }).catch(() => {});
     } catch (_) {
       /* cross-tab paste is a bonus; never let it break the local copy */
@@ -1467,14 +1494,57 @@
   // srcPage would do, nudging every cross-document paste 12pt off the spot the user
   // copied it from. -1 is never a page index, so the "same page" branch is dead
   // here and the paste lands exactly where it came from.
+  //
+  // `heavy` + `id` come from main's lightClip(): the items are complete except for
+  // image pixels, which hydrateClip fetches on the first paste. Everything that
+  // DECIDES (the paste guard, "Dán" lighting up) reads only `items.length`, so a
+  // heavy clip decides exactly like a light one.
   function adoptSharedClip(payload) {
     const items = payload && Array.isArray(payload.items) ? payload.items : null;
-    clip = items && items.length ? { items, page: -1, dropped: {} } : null;
+    clip = items && items.length
+      ? { items, page: -1, dropped: {}, id: payload.id, heavy: !!payload.heavy }
+      : null;
     try {
       syncCtlVisibility(ed.tool); // lights (or greys) "Dán" in this tab
     } catch (_) {
       /* palette not built yet — the next syncCtlVisibility picks it up */
     }
+  }
+
+  // Fill in the image pixels of a clip adopted from another tab. Resolves true when
+  // `clip` is ready to paste.
+  //
+  // BI-77: this is WORK, reached only from requestPaste — by then the `paste`
+  // listener has already claimed the gesture off the light clip, synchronously. Do
+  // not call it from anything that decides.
+  //
+  // `clip !== c` after the await means another copy landed while we waited (a
+  // broadcast, or this tab's own Ctrl+C). The newer clip is what the user now has on
+  // the clipboard, so it is the one to paste — re-enter for it, bounded so a stream
+  // of copies can never spin this.
+  async function hydrateClip(depth = 0) {
+    const c = clip;
+    if (!c || !c.heavy) return !!(c && c.items.length);
+    if (depth > 2) return false;
+    let full = null;
+    try {
+      full = await window.desktop.fetchAnnotClip(c.id);
+    } catch (_) {
+      full = null;
+    }
+    if (clip !== c) return hydrateClip(depth + 1);
+    // null = main has a newer clip than the one we adopted (its broadcast is still
+    // in flight) or none at all; a length mismatch would mean a different clip. In
+    // both cases pasting `c` would paste something the user no longer has copied.
+    if (!Array.isArray(full) || full.length !== c.items.length) {
+      clip = null;
+      syncCtlVisibility(ed.tool);
+      toast("Mục đã sao chép không còn nữa — hãy sao chép lại.", "bad");
+      return false;
+    }
+    c.items = full;
+    c.heavy = false; // later pastes of the same clip are local, no second fetch
+    return true;
   }
 
   // Deep copy via JSON, which is sound here BECAUSE every field an annotation holds is
@@ -1505,12 +1575,14 @@
     // button — "Đã sao chép 1 mục (check)" tells a Vietnamese user nothing.
     const kindName = KIND_VI[items[0].kind] || items[0].kind;
     // Say so when part of the selection will not cross tabs, rather than letting the
-    // user find out by pasting in the other document and counting.
-    const held = items.filter((a) => !isShareableKind(a.kind)).length;
+    // user find out by pasting in the other document and counting. Since images
+    // cross (v0.2.72) what stays behind is the text-anchored family (tô sáng, gạch
+    // chân…), ô che, kích thước — or images over SHARE_IMAGE_CAP.
+    const held = items.length - shareableItems(items).length;
     const where = held
       ? held === items.length
-        ? " Ảnh chỉ dán được trong tab này."
-        : ` ${held} ảnh chỉ dán được trong tab này.`
+        ? " Mục này chỉ dán được trong tab này."
+        : ` ${held} mục chỉ dán được trong tab này.`
       : "";
     toast(
       (items.length > 1
@@ -1545,13 +1617,19 @@
       // than paste into an editor that is no longer open.
       if (!ed.active || !clip || !clip.items.length) return false;
     }
+    // An image copied in ANOTHER tab arrives without its pixels (main.js lightClip);
+    // fetch them now — work, after the decision, exactly like enter() above.
+    if (clip.heavy && !(await hydrateClip())) return false;
+    if (!ed.active || !clip || !clip.items.length) return false;
     return pasteClip(pageIndex);
   }
 
   // Drop the clipboard onto `pageIndex` (default: the page being read). Returns true if
   // something was pasted.
   function pasteClip(pageIndex) {
-    if (!clip || !clip.items.length) return false;
+    // `heavy` = image pixels not fetched yet; pasting now would drop an image with no
+    // dataUrl onto the page. requestPaste hydrates first; this is the backstop.
+    if (!clip || !clip.items.length || clip.heavy) return false;
     if (!ed.active || !state.numPages) return false;
     let i = pageIndex;
     if (i == null) i = typeof currentPageIndex === "function" ? currentPageIndex() : clip.page;
@@ -2740,29 +2818,89 @@
     inp.click();
   }
 
+  // `ed.pendingImage` may also carry, for a SAVED SIGNATURE (renderer/signatures.js):
+  //   wPt    — the width it was last placed at (instead of the 240pt image rule)
+  //   center — `p` is where the middle goes, not the top-left corner: the user pointed
+  //            at a spot ("ký ở đây"), so the signature is centred on it
+  //   sigId  — kept on the annot so bakePending can remember the size it ended up at.
+  //            managed-codec writes image annots from a FIXED field list (x/y/w/h/fmt),
+  //            so this never reaches the PDF.
+  // Captured up front: the onload below is async, and an Esc in between nulls the slot.
   function placeImage(i, p) {
+    const pend = ed.pendingImage;
+    if (!pend) return;
     const img = new Image();
     img.onload = () => {
       const maxW = 240; // points
       const ratio = img.naturalHeight / img.naturalWidth || 1;
-      const w = Math.min(img.naturalWidth, maxW);
+      const layer = layerFor(i);
+      const pw = layer ? +layer.dataset.w : 0;
+      const ph = layer ? +layer.dataset.h : 0;
+      let w = pend.wPt > 0 ? pend.wPt : Math.min(img.naturalWidth, maxW);
+      // A remembered signature width from an A4 contract must still fit a small page.
+      // (Signatures only — the plain image tool keeps its rule exactly as before.)
+      if (pend.wPt > 0 && pw > 0 && w > pw * 0.9) w = pw * 0.9;
+      const h = w * ratio;
       const a = {
         id: ed.seq++,
         kind: "image",
-        x: p.x,
-        y: p.y,
+        x: pend.center ? p.x - w / 2 : p.x,
+        y: pend.center ? p.y - h / 2 : p.y,
         w,
-        h: w * ratio,
-        dataUrl: ed.pendingImage.dataUrl,
-        fmt: ed.pendingImage.fmt,
+        h,
+        dataUrl: pend.dataUrl,
+        fmt: pend.fmt,
       };
+      if (pend.sigId) a.sigId = pend.sigId;
+      if (pend.center) {
+        // Centring can push it over the edge when the click was near one; pull it back
+        // onto the sheet (same helper and rule as pasteClip).
+        const s = fitShift(unionBounds([a]), pw, ph);
+        if (s.dx || s.dy) translateAnnot(a, s.dx, s.dy);
+      }
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
       setTool("select");
       syncOverlays();
     };
-    img.src = ed.pendingImage.dataUrl;
+    img.src = pend.dataUrl;
+  }
+
+  // Place a saved signature (renderer/signatures.js). With a page + point it lands
+  // there at once (right-click "Chèn chữ ký"); without, the image tool is armed and
+  // the next click on a page places it (the toolbar picker). Enters Chỉnh sửa first
+  // when needed, like beginImagePaste. `sig` = { id, name, dataUrl, wPt }.
+  async function placeSignature(sig, pageIndex, pt) {
+    if (!state.bytes || !sig || !sig.dataUrl) return false;
+    if (!ed.active) {
+      await enter();
+      if (!ed.active) return false;
+    }
+    ed.pendingImage = { dataUrl: sig.dataUrl, fmt: "png", wPt: sig.wPt, sigId: sig.id, center: true };
+    if (pageIndex != null && pt && pageIndex >= 0 && pageIndex < state.numPages) {
+      placeImage(pageIndex, pt);
+      toast("Đã chèn chữ ký — kéo để chỉnh vị trí, kéo góc để đổi cỡ, bấm Xong để ghi.", "good");
+    } else {
+      setTool("image");
+      toast(`Bấm lên trang để đặt chữ ký “${sig.name}”.`, "good");
+    }
+    return true;
+  }
+
+  // Client (mouse) coordinates → the page's annotation space, for callers outside
+  // this file (the right-click menu). Same arithmetic as layerPoint, but measured on
+  // the page canvas so it also works in view mode, before any .annot-layer exists.
+  function pagePointFromClient(pageIndex, clientX, clientY) {
+    const wrap = document.querySelector(`#viewer .page-wrap[data-index="${pageIndex}"]`);
+    const canvas = wrap && wrap.querySelector("canvas");
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    const s = state.scale;
+    return {
+      x: Math.max(0, Math.min(r.width / s, (clientX - r.left) / s)),
+      y: Math.max(0, Math.min(r.height / s, (clientY - r.top) / s)),
+    };
   }
 
   // Paste an image (from the OS clipboard) onto a page. Enters edit mode if
@@ -3912,12 +4050,27 @@
 
   // Bake all pending overlay edits into state.bytes and re-render. Returns
   // whether anything was applied. Called by Save and on exit.
+  // Chữ ký lưu sẵn: the width each saved signature ENDED UP at (after the user's
+  // resize) becomes its default next time. Last one on the pages wins — "the size I
+  // used most recently". Fire-and-forget: a store that cannot be written (encryption
+  // off, unreadable) must never hold up or fail the bake.
+  function rememberSignatureWidths() {
+    const api = window.desktop && window.desktop.signatures;
+    if (!api || !api.setWidth) return;
+    const last = new Map();
+    for (const list of Object.values(ed.annots)) {
+      for (const a of list) if (a.kind === "image" && a.sigId && a.w > 0) last.set(a.sigId, a.w);
+    }
+    for (const [id, w] of last) api.setWidth(id, w).catch(() => {});
+  }
+
   async function bakePending() {
     if (ed._taCommit) ed._taCommit(); // an open editor's text must make the bake
     // `!hasAny()` alone was the bug: with every round-trip annot deleted there is
     // nothing to ADD but plenty to REMOVE, and returning early left them in the PDF —
     // so Ctrl+S and "Xong" both looked like they worked and changed nothing. BI-60.
     if (!hasAny() && !ed._importedManaged) return false;
+    rememberSignatureWidths();
     showOverlay("Đang áp dụng chỉnh sửa…");
     try {
       const anyRedact = Object.values(ed.annots).some((a) => a.some((x) => x.kind === "redact"));
@@ -4426,7 +4579,7 @@
   $("ed-delete").onclick = deleteSelected;
   $("ed-arrow-reverse").onclick = reverseSelectedArrow;
   $("ed-copy").onclick = () => {
-    if (!copySelected()) toast("Chọn một mục trên trang trước khi sao chép.", "bad");
+    if (!copyGesture()) toast("Chọn một mục trên trang trước khi sao chép.", "bad");
   };
   $("ed-paste").onclick = async () => {
     if (!(await requestPaste())) toast("Chưa có mục nào được sao chép.", "bad");
@@ -4448,6 +4601,20 @@
   // (no preventDefault → the bubble listener runs as before), and only claim Ctrl+V
   // when the clipboard carries no image AND we have an object to paste. So neither
   // feature can shadow the other, in either order.
+  //
+  // "THE LATEST COPY WINS" (v0.2.72). The hand-off above used to be "an OS image
+  // always wins", and that was wrong in the most common image workflow there is:
+  // screenshot → Ctrl+V onto the page → resize → Ctrl+C the object → Ctrl+V. The
+  // screenshot is STILL on the OS clipboard (copying an object never touched it),
+  // so capture.js took the paste and re-placed the raw screenshot at default size —
+  // for boxes and text boxes too, whenever any image sat on the clipboard. Now a
+  // copied object TAKES the OS clipboard, like Copy in any app: the `copy` handler
+  // writes NABU_CLIP_MIME (Chromium empties the OS clipboard before writing, so the
+  // stale image is gone), and `paste` treats that marker as "ours". An image copied
+  // anywhere AFTER that replaces the marker and wins, exactly as BI-77 requires.
+  const NABU_CLIP_MIME = "application/x-nabu-annots";
+  let copyEventHandled = false; // set by the `copy` listener for copyGesture()
+
   document.addEventListener(
     "copy",
     (e) => {
@@ -4456,10 +4623,35 @@
       if (isTypingTarget(e.target)) return;
       const sel = window.getSelection && window.getSelection();
       if (sel && String(sel).length) return;
-      if (copySelected()) e.preventDefault();
+      if (copySelected()) {
+        e.preventDefault();
+        copyEventHandled = true;
+        try {
+          if (e.clipboardData) e.clipboardData.setData(NABU_CLIP_MIME, String(Date.now()));
+        } catch (_) {
+          /* no OS marker → a stale OS image may still win Ctrl+V; the copy itself stands */
+        }
+      }
     },
     true
   );
+
+  // The Sao chép button and the right-click "Sao chép" have no `copy` event of their
+  // own, so they RAISE one: every copy route then takes the OS clipboard the same way
+  // as Ctrl+C. If the event does not reach the listener above (a focused field, a
+  // text selection, execCommand refused) the object copy still happens directly —
+  // it only misses the marker.
+  function copyGesture() {
+    copyEventHandled = false;
+    try {
+      document.execCommand("copy");
+    } catch (_) {
+      /* fall through */
+    }
+    const ok = copyEventHandled || copySelected();
+    copyEventHandled = false;
+    return ok;
+  }
   // Right-click on a page while annotating → Sao chép / Dán / Xoá for OBJECTS, instead
   // of capture.js's image menu. Reuses capture.js's ONE menu widget (window.Capture.
   // showMenu) so there is a single menu look, a single dismiss behaviour, and opening
@@ -4502,9 +4694,12 @@
         {
           label: n > 1 ? tr("Sao chép") + ` (${n} mục)` : tr("Sao chép"),
           enabled: n > 0,
-          onClick: copySelected,
+          onClick: copyGesture,
         },
         { label: tr("Dán vào trang này"), enabled: hasClip, onClick: () => requestPaste(i) },
+        // Chèn chữ ký lưu sẵn at the spot that was right-clicked (renderer/signatures.js;
+        // resolved at call time, so a missing module just means no entries).
+        ...(window.Signatures ? window.Signatures.menuEntries(i, e.clientX, e.clientY) : []),
         { separator: true },
         {
           label: n > 1 ? tr("Xoá mục") + ` (${n} mục)` : tr("Xoá mục"),
@@ -4526,8 +4721,12 @@
       // OS-clipboard image. `clip` is still read SYNCHRONOUSLY — BI-77.
       if (!clip) return;
       if (isTypingTarget(e.target)) return; // Ctrl+V inside a textarea is plain text
-      const items = (e.clipboardData && e.clipboardData.items) || [];
-      for (const it of items) if (it.type && it.type.indexOf("image/") === 0) return; // capture.js's
+      const cd = e.clipboardData;
+      // Our marker = the OS clipboard's newest content is an object copy (see
+      // NABU_CLIP_MIME). Without it, an image there was copied later → capture.js's.
+      const ours = !!(cd && cd.types && Array.prototype.indexOf.call(cd.types, NABU_CLIP_MIME) >= 0);
+      const items = (cd && cd.items) || [];
+      if (!ours) for (const it of items) if (it.type && it.type.indexOf("image/") === 0) return; // capture.js's
       e.preventDefault();
       e.stopPropagation(); // we own this gesture now — don't let capture.js re-handle it
       requestPaste();
@@ -5124,9 +5323,14 @@
     // Paste has NO such fallback on purpose — a double fire there would insert two
     // objects, so it stays on the single `paste` event, which webContents.paste()
     // reliably dispatches (capture.js has shipped on that same guarantee for releases).
+    //
+    // Through copyGesture (v0.2.72), not copySelected: execCommand("copy") is MEASURED
+    // to dispatch the `copy` event with no text selection (Chromium 152, docs/RESEARCH-
+    // 2026-09-26-… §2.4), so this route writes the NABU_CLIP_MIME marker too — whichever
+    // of the two Ctrl+C routes fires, the OS clipboard ends up owned by the object copy.
     if ((e.key === "c" || e.key === "C") && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !typing && ed.sel != null) {
       const sel = window.getSelection && window.getSelection();
-      if (!(sel && String(sel).length)) copySelected();
+      if (!(sel && String(sel).length)) copyGesture();
     }
     // Single-key tool shortcuts (no modifiers, not while typing) — mirror the
     // toolbar; each letter is shown in that tool's tooltip.
@@ -5175,6 +5379,8 @@
     bakePending,
     reset,
     beginImagePaste, // paste an OS-clipboard image onto a page (Ctrl+V)
+    placeSignature, // chữ ký lưu sẵn (renderer/signatures.js)
+    pagePointFromClient,
     undo: edUndo, // annotation-level (pre-bake) — routed from Ctrl+Z while active
     redo: edRedo,
     getComments, // Comments panel data source while editing

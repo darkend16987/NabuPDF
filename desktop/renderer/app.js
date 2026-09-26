@@ -1711,6 +1711,7 @@ function openThumbMenu(e, i) {
   // Deleting every page is refused by deletePages(); grey it out up front rather
   // than letting the user pick a command that can only fail.
   const canDelete = sel.length < state.numPages;
+  const canReplace = !!(window.PageRange && window.PageRange.contiguousRun(sel));
 
   window.Capture.showMenu(e.clientX, e.clientY, [
     {
@@ -1724,6 +1725,17 @@ function openThumbMenu(e, i) {
     { label: tr("Thêm trang trắng phía trên"), onClick: () => addBlankPageAt(i) },
     { label: tr("Thêm trang trắng phía dưới"), onClick: () => addBlankPageAt(i + 1) },
     { label: tr("Chèn PDF khác phía dưới…"), onClick: () => insertFileAt(i + 1) },
+    // Thay trang (v0.2.72). Greyed — not hidden — on a selection with a gap, so the
+    // command stays discoverable and the label says what would make it work.
+    {
+      label: !canReplace
+        ? tr("Thay trang bằng PDF khác… (chọn các trang liền nhau)")
+        : many
+          ? tr("Thay các trang đang chọn bằng PDF khác…")
+          : tr("Thay trang này bằng PDF khác…"),
+      enabled: canReplace,
+      onClick: () => replaceSelectedFromFile(),
+    },
     { separator: true },
     {
       label: many ? tr("Tách các trang đang chọn ra file mới…") : tr("Tách trang này ra file mới…"),
@@ -2246,6 +2258,185 @@ async function insertBuffersAt(buffers, at) {
     state.selected = new Set([at]); // land on the first inserted page
     await renderAll();
     toast(`Đã chèn ${added} trang ${where}.`, "good");
+  } finally {
+    hideOverlay();
+  }
+}
+
+// ---- thay trang bằng trang của PDF khác (PDF24's "Replace pages", v0.2.72) ----
+//
+// Right-click a page (or a contiguous run of ticked pages) → "Thay trang…" → pick a
+// PDF → choose ALL of its pages or a range → the run is removed and the chosen
+// source pages take its place. One pushUndo, one load/save: Ctrl+Z gives back the
+// document exactly as it was.
+//
+// The arithmetic (which pages go, which come in, in what order) is
+// PageRange.replacePlan and the pdf-lib surgery is PageRange.replaceInDoc — both
+// DOM-free and run against real pdf-lib documents by `npm run test:pages`. Only the
+// dialog lives here. A selection with a GAP is refused on purpose (see
+// contiguousRun): "replace pages 2 and 5 with three pages" has no single meaning, and
+// a guess that lands pages in the wrong place of a contract is silent data loss.
+
+// Resolve the modal: null (cancelled) or the source range spec ("" = all pages).
+function askReplaceSpec(run, srcName, srcCount) {
+  return new Promise((resolve) => {
+    const tr = (vi, p) => (window.t ? window.t(vi, p) : vi);
+    const modal = $("replace-modal");
+    const all = $("replace-all");
+    const pick = $("replace-pick");
+    const inp = $("replace-spec");
+    const hint = $("replace-hint");
+    const ok = $("replace-ok");
+    const target =
+      run.count > 1
+        ? tr("trang {a}–{b}", { a: run.start + 1, b: run.start + run.count })
+        : tr("trang {n}", { n: run.start + 1 });
+    $("replace-what").textContent = tr("Thay {target} bằng trang của: {name} ({m} trang).", {
+      target,
+      name: srcName,
+      m: srcCount,
+    });
+    $("replace-all-label").textContent = tr("Tất cả {m} trang", { m: srcCount });
+    all.checked = true;
+    inp.value = "";
+    const sync = () => {
+      const spec = pick.checked ? inp.value : "";
+      const plan = window.PageRange.replacePlan(
+        [...Array(run.count).keys()].map((k) => run.start + k),
+        state.numPages,
+        pick.checked ? spec : null,
+        srcCount
+      );
+      if (plan.error === "empty") {
+        hint.textContent = pick.checked && !inp.value.trim()
+          ? tr("Nhập các trang của file nguồn, vd 1-3, 5.")
+          : tr("Chưa nhận ra trang nào — vd 1-3, 5.");
+        ok.disabled = true;
+        return;
+      }
+      if (plan.error) {
+        hint.textContent = "";
+        ok.disabled = true;
+        return;
+      }
+      hint.textContent = tr("Sẽ thay {target} bằng {k} trang ({list}) — tài liệu còn {n} trang.", {
+        target,
+        k: plan.take.length,
+        list: window.PageRange.formatList(plan.take),
+        n: state.numPages - plan.remove + plan.take.length,
+      });
+      ok.disabled = false;
+    };
+    all.onchange = pick.onchange = sync;
+    // Clicking into / typing in the range box IS choosing "Chỉ các trang được chọn", so
+    // the radio follows instead of making the user click it first. The box is never
+    // `disabled` for that reason: a disabled input cannot take focus at all, which
+    // made this very handler dead code in the first build (caught by the GUI probe).
+    const choosePick = () => {
+      if (!pick.checked) pick.checked = true;
+      sync();
+    };
+    inp.onfocus = choosePick;
+    inp.oninput = choosePick;
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter" && !ok.disabled) {
+        e.preventDefault();
+        ok.click();
+      }
+    };
+    const done = (val) => {
+      modal.hidden = true;
+      all.onchange = pick.onchange = inp.oninput = inp.onfocus = inp.onkeydown = null;
+      ok.onclick = null;
+      $("replace-cancel").onclick = null;
+      resolve(val);
+    };
+    $("replace-cancel").onclick = () => done(null);
+    ok.onclick = () => done(pick.checked ? inp.value : "");
+    modal.hidden = false;
+    sync();
+    // Focus the default action — Enter then means "replace with all pages". (Focusing
+    // the range box instead would silently switch the choice to "Chỉ các trang".)
+    ok.focus();
+  });
+}
+
+// Entry point for the thumbnail menu, the Trang ▾ button and the native Page menu.
+// Acts on state.selected, which openThumbMenu has already narrowed per BI-26.
+async function replaceSelectedFromFile() {
+  if (gateProFeature()) return;
+  if (!state.bytes || !state.numPages) return;
+  // Same freeze as the toolbar and the thumbnail menu: page indices must not move
+  // under a live overlay. The native menu is the one route that can still get here.
+  if ((window.Editor && window.Editor.active) || (window.TextEdit && window.TextEdit.active)) {
+    toast("Bấm Xong ở chế độ chỉnh sửa trước khi thay trang.", "bad");
+    return;
+  }
+  const PR = window.PageRange;
+  const run = PR.contiguousRun(state.selected);
+  if (!run) {
+    toast("Chọn một trang, hoặc các trang liền nhau, để thay.", "bad");
+    return;
+  }
+  const files = await window.desktop.openPdf({ multi: false });
+  if (!files.length) return;
+  await replaceSelectedWith(toU8(files[0].data), files[0].name);
+}
+
+// The part after the file is chosen — split out so it can take bytes from anywhere
+// (the picker today; the GUI probe drives it directly, past the native dialog).
+async function replaceSelectedWith(srcBytes, name) {
+  if (!state.bytes || !state.numPages) return;
+  const PR = window.PageRange;
+  const run = PR.contiguousRun(state.selected);
+  if (!run) return;
+  // Parse the source BEFORE the dialog: its page count drives the dialog, and a file
+  // pdf-lib cannot open (damaged, or password-protected) should say so now, not after
+  // the user has typed a range for it.
+  let src;
+  try {
+    src = await PDFDocument.load(srcBytes);
+  } catch (err) {
+    const locked = err && /encrypt/i.test(String(err.message || err));
+    toast(
+      locked
+        ? "File nguồn có mật khẩu — mở nó, bỏ mật khẩu rồi thử lại."
+        : "Không đọc được file nguồn: " + ((err && err.message) || err),
+      "bad"
+    );
+    return;
+  }
+  const srcName = name || "file nguồn";
+  const spec = await askReplaceSpec(run, srcName, src.getPageCount());
+  if (spec == null) return; // cancelled
+  const targets = [...Array(run.count).keys()].map((k) => run.start + k);
+  const plan = PR.replacePlan(targets, state.numPages, spec, src.getPageCount());
+  if (plan.error) return; // the dialog only enables OK on a valid plan
+  // A hidden page (page-vault.js) holds the ONLY copy of its original, encrypted.
+  // Deleting one is an explicit "Xoá"; replacing is easy to read as "keeps the old one
+  // somewhere", so it is spelled out before anything happens.
+  const hidden = targets.filter((i) => state.vaultPages.has(i));
+  if (
+    hidden.length &&
+    !(await window.uiConfirm(
+      `Trang ${PR.formatList(hidden)} đang được ẩn bằng mật khẩu. Thay trang sẽ xoá luôn nội dung đã ẩn (chỉ còn Ctrl+Z trong lần mở này). Vẫn thay?`,
+      { okText: "Vẫn thay", cancelText: "Hủy" }
+    ))
+  )
+    return;
+  showOverlay("Đang thay trang…");
+  pushUndo();
+  try {
+    const doc = await PDFDocument.load(state.bytes);
+    const added = await PR.replaceInDoc(doc, src, plan);
+    state.bytes = await doc.save();
+    state.selected = new Set([...Array(added).keys()].map((k) => plan.start + k));
+    state.lastClicked = plan.start;
+    await renderAll();
+    toast(
+      `Đã thay ${plan.remove > 1 ? `${plan.remove} trang` : `trang ${plan.start + 1}`} bằng ${added} trang của ${srcName}.`,
+      "good"
+    );
   } finally {
     hideOverlay();
   }
@@ -4367,6 +4558,7 @@ const GATED_BTNS = [
   "btn-text-edit",
   "btn-merge",
   "btn-insert",
+  "btn-replace",
   "btn-blank",
   "btn-extract",
   // Toolbar shortcuts for the same commands. A second entry point to a paid
@@ -4732,6 +4924,7 @@ $("btn-undo").onclick = () => (window.Editor && window.Editor.active ? window.Ed
 $("btn-redo").onclick = () => (window.Editor && window.Editor.active ? window.Editor.redo() : redo());
 $("btn-merge").onclick = mergeFiles;
 $("btn-insert").onclick = insertFile;
+$("btn-replace").onclick = replaceSelectedFromFile;
 $("btn-blank").onclick = addBlankPage;
 $("btn-extract").onclick = extractSelected;
 $("btn-rotate-l").onclick = () => rotateSelected(-90);
@@ -5349,6 +5542,7 @@ window.desktop.onMenuCommand((cmd) => {
     delete: deleteSelected,
     merge: mergeFiles,
     insert: insertFile,
+    replace: replaceSelectedFromFile,
     extract: extractSelected,
     zoomIn: () => zoomStep(1),
     zoomOut: () => zoomStep(-1),

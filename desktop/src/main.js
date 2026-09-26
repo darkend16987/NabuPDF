@@ -7,10 +7,11 @@ const { execFile } = require("child_process");
 // ClipboardItem exists only from Electron 44 on; on 33 it destructures to
 // undefined, which is exactly right — the clipboard handlers below branch on
 // `typeof clipboard.writeImage` and never reach it. See "TWO CLIPBOARD APIs".
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen, ClipboardItem } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen, ClipboardItem, safeStorage } = require("electron");
 const { startSidecar, stopSidecar } = require("./sidecar");
 const Session = require("./session");
 const Prefs = require("./prefs");
+const Signatures = require("./signatures");
 const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
@@ -336,6 +337,7 @@ const MENU_STR = {
     deletePage: "Xóa trang đang chọn",
     merge: "Ghép PDF…",
     insert: "Chèn trang…",
+    replace: "Thay trang đang chọn bằng PDF khác…",
     extract: "Tách trang đang chọn…",
     convert: "Chuyển đổi",
     encrypt: "Khoá file (đặt mật khẩu)…",
@@ -382,6 +384,7 @@ const MENU_STR = {
     deletePage: "Delete Selected Pages",
     merge: "Merge PDF…",
     insert: "Insert Pages…",
+    replace: "Replace Selected Pages with Another PDF…",
     extract: "Extract Selected Pages…",
     convert: "Convert",
     encrypt: "Lock File (set password)…",
@@ -521,6 +524,7 @@ function buildMenu(lang) {
         { type: "separator" },
         { label: L.merge, click: send("merge") },
         { label: L.insert, click: send("insert") },
+        { label: L.replace, click: send("replace") },
         { label: L.extract, click: send("extract") },
       ],
     },
@@ -1174,22 +1178,43 @@ ipcMain.handle("clipboard:read-image", async () => {
 // bubbled to capture.js's image-paste listener — the hand-off rule at the bottom
 // of editor.js depends on that decision being synchronous.
 //
-// Payload is small by construction: the renderer drops image annotations before
-// sending (an image's dataUrl is a multi-megabyte base64 string), so this
-// channel carries plain annotation JSON only — which answers the objection the
-// original per-tab-clipboard note raised against sharing at all.
-let objClip = null; // { items: [...], srcPage: n } | null
+// IMAGES CROSS TOO since v0.2.72 — without the objection that kept them out.
+// That objection was the BROADCAST: an image's dataUrl is a multi-megabyte base64
+// string, and pushing it to every open tab on every Ctrl+C is a cost paid by tabs
+// that will never paste. So main keeps the FULL clip, and what it pushes is
+// `lightClip()` — the same items with every image's pixels left out
+// (`_pending: true`, clip `heavy: true`). The pixels travel once more, to one
+// tab, only when that tab actually pastes: `annots:clip-fetch`, called from
+// editor.js requestPaste AFTER the synchronous decision (BI-77 still holds — the
+// decision reads the light clip; only the WORK waits for the pixels).
+// docs/RESEARCH-2026-09-26-replace-pages-image-clip-signatures.md §2.
+let objClip = null; // { id, items: [... FULL, images keep dataUrl], srcPage: n } | null
+let objClipSeq = 0; // id of the current clip; a fetch for an older id gets null
+
+// The clip as the OTHER tabs see it. Pure: the stored clip is never mutated.
+function lightClip(c) {
+  if (!c) return null;
+  let heavy = false;
+  const items = c.items.map((a) => {
+    if (!a || typeof a.dataUrl !== "string") return a;
+    heavy = true;
+    const { dataUrl, ...rest } = a; // eslint-disable-line no-unused-vars
+    return { ...rest, _pending: true };
+  });
+  return { id: c.id, items, srcPage: c.srcPage, heavy };
+}
 
 ipcMain.handle("annots:clip-write", (e, payload) => {
   try {
     const items = payload && Array.isArray(payload.items) ? payload.items : null;
-    // A copy with no shareable member (an image-only selection) CLEARS the
-    // mirror instead of leaving the last one standing: a stale clip would let
-    // another tab paste something the user copied two gestures ago, silently.
-    objClip = items && items.length ? { items, srcPage: payload.srcPage | 0 } : null;
+    // A copy with no shareable member (e.g. a highlight-only selection) CLEARS
+    // the mirror instead of leaving the last one standing: a stale clip would
+    // let another tab paste something the user copied two gestures ago, silently.
+    objClip = items && items.length ? { id: ++objClipSeq, items, srcPage: payload.srcPage | 0 } : null;
+    const out = lightClip(objClip);
     for (const wc of Tabs.allDocContents()) {
       if (wc === e.sender) continue; // the sender set its own clip synchronously
-      wc.send("annots:clip-changed", objClip);
+      wc.send("annots:clip-changed", out);
     }
     return { ok: true };
   } catch (err) {
@@ -1199,7 +1224,13 @@ ipcMain.handle("annots:clip-write", (e, payload) => {
 
 // The clip as it stands, for a tab that LOADED AFTER the copy happened and so
 // never saw the broadcast. Called once on renderer start — never while pasting.
-ipcMain.handle("annots:clip-read", () => objClip);
+// Light, like the broadcast: a tab that opens is not a tab that pastes.
+ipcMain.handle("annots:clip-read", () => lightClip(objClip));
+
+// The FULL items of clip `id`, or null once a newer copy has replaced it. The one
+// caller is editor.js hydrateClip(), reached only from requestPaste — i.e. after
+// the paste listener has already called preventDefault() (BI-77).
+ipcMain.handle("annots:clip-fetch", (_e, id) => (objClip && objClip.id === id ? objClip.items : null));
 
 // New empty document WINDOW (renderer "Cửa sổ mới" button / Ctrl+N). Each window
 // carries its own tabs.
@@ -1718,6 +1749,67 @@ ipcMain.handle("session:set-restore", (_e, on) => Session.setEnabled(on));
 // this crosses a process boundary, so the value is untrusted input).
 ipcMain.handle("prefs:get-open-in", () => Prefs.getOpenIn());
 ipcMain.handle("prefs:set-open-in", (_e, v) => Prefs.setOpenIn(v));
+
+// ---- IPC: chữ ký lưu sẵn (saved signatures, v0.2.72) ---------------------
+//
+// The store and its rules live in src/signatures.js (node-tested, `npm run
+// test:sig`); this is only the Electron half: DPAPI via safeStorage, a REAL PNG
+// decode via nativeImage, and a broadcast so every tab's menu is current.
+//
+// Created lazily: safeStorage answers isEncryptionAvailable() reliably only
+// after `ready`, and no renderer can call in before then.
+let sigStore = null;
+function sigs() {
+  if (!sigStore) {
+    sigStore = Signatures.createStore({
+      file: path.join(app.getPath("userData"), "signatures.bin"),
+      fs,
+      crypto: {
+        available: () => {
+          try {
+            return safeStorage.isEncryptionAvailable();
+          } catch (_) {
+            return false;
+          }
+        },
+        encrypt: (str) => safeStorage.encryptString(str),
+        decrypt: (buf) => safeStorage.decryptString(buf),
+      },
+      // The renderer already produced this PNG from a canvas, but it crosses a process
+      // boundary: decode it for real, and bound its pixel size, before it is stored.
+      checkPng: (buf) => {
+        try {
+          const img = nativeImage.createFromBuffer(buf);
+          if (img.isEmpty()) return { ok: false };
+          const { width, height } = img.getSize();
+          return { ok: width > 0 && height > 0 && width <= 4096 && height <= 4096, w: width, h: height };
+        } catch (_) {
+          return { ok: false };
+        }
+      },
+    });
+  }
+  return sigStore;
+}
+function sigChanged(res) {
+  if (res && res.ok && !res.unchanged) {
+    for (const wc of Tabs.allDocContents()) wc.send("sig:changed");
+  }
+  return res;
+}
+const sigSafe = (fn) => {
+  try {
+    return fn();
+  } catch (err) {
+    return { ok: false, reason: "error", detail: String((err && err.message) || err) };
+  }
+};
+ipcMain.handle("sig:list", () => sigSafe(() => sigs().list()));
+ipcMain.handle("sig:add", (_e, p) => sigSafe(() => sigChanged(sigs().add(p))));
+ipcMain.handle("sig:rename", (_e, p) => sigSafe(() => sigChanged(sigs().rename(p && p.id, p && p.name))));
+ipcMain.handle("sig:remove", (_e, id) => sigSafe(() => sigChanged(sigs().remove(id))));
+ipcMain.handle("sig:set-width", (_e, p) => sigSafe(() => sigChanged(sigs().setWidth(p && p.id, p && p.wPt))));
+ipcMain.handle("sig:reset", () => sigSafe(() => sigChanged(sigs().reset())));
 
 ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {}) => {
   try {

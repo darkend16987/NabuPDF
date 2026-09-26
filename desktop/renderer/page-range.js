@@ -188,7 +188,84 @@
     return out.length ? out : [i];
   }
 
-  const api = { parseSpec, computeRange, formatList, extractFileName, actionSet };
+  /**
+   * The selection as ONE unbroken run of pages → { start, count }, or null when it is
+   * empty or has a gap.
+   *
+   * "Thay trang" is only offered on a contiguous run (docs/RESEARCH-2026-09-26-…§1):
+   * replacing pages 2 and 5 with three source pages has no single obvious meaning —
+   * all at 2? split 1+2? — and a guess that lands pages in the wrong place of a
+   * contract is exactly the silent data loss this file exists to prevent. Duplicates
+   * and non-integers are ignored, so a Set, an array or state.selected all work.
+   */
+  function contiguousRun(indices) {
+    const src = indices instanceof Set ? [...indices] : Array.isArray(indices) ? indices : [];
+    const sorted = [...new Set(src.filter((k) => Number.isInteger(k) && k >= 0))].sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    for (let k = 1; k < sorted.length; k++) if (sorted[k] !== sorted[k - 1] + 1) return null;
+    return { start: sorted[0], count: sorted.length };
+  }
+
+  /**
+   * Plan "replace the selected pages with pages of another PDF" (PDF24's Replace).
+   *
+   *   targetSel    — the pages being replaced (0-based; Set or array), must be contiguous
+   *   targetCount  — pages in the document being edited
+   *   srcSpec      — null/"" = ALL source pages, otherwise a user range ("1-3, 5")
+   *   srcCount     — pages in the source PDF
+   *
+   * → { start, remove, take, error:null }  where the edit is: remove `remove` pages at
+   *   `start`, then insert source pages `take` (0-based, ascending, de-duplicated) at
+   *   `start`. Or { error } with a language-free code the caller translates:
+   *   "no-doc" · "no-src" · "gap" (selection not contiguous / empty / out of range) ·
+   *   "empty" (the spec named no source page).
+   *
+   * Ascending order is deliberate — "5, 2" means pages 2 and 5 in their own order,
+   * same as every other range box in the app (parseSpec returns a set, not a list).
+   */
+  function replacePlan(targetSel, targetCount, srcSpec, srcCount) {
+    const n = Math.max(0, Math.floor(targetCount) || 0);
+    const m = Math.max(0, Math.floor(srcCount) || 0);
+    if (!n) return { error: "no-doc" };
+    if (!m) return { error: "no-src" };
+    const run = contiguousRun(targetSel);
+    if (!run || run.start + run.count > n) return { error: "gap" };
+    const all = srcSpec == null || String(srcSpec).trim() === "";
+    const take = all
+      ? [...Array(m).keys()]
+      : [...parseSpec(srcSpec, m)].sort((a, b) => a - b);
+    if (!take.length) return { error: "empty" };
+    return { start: run.start, remove: run.count, take, error: null };
+  }
+
+  /**
+   * Carry out a replacePlan on pdf-lib documents: `doc` is edited in place, `src` is
+   * only read. Resolves to the number of pages inserted.
+   *
+   * Lives here, not in app.js, so the grid runs it against REAL pdf-lib documents —
+   * the order of the three steps is the whole correctness argument and it is
+   * invisible to a reader of the call site:
+   *   1. copyPages FIRST, while nothing has moved (and before any removal, so a
+   *      same-document source — never offered by the UI, but cheap to be right
+   *      about — still sees its original pages);
+   *   2. INSERT before removing, at start + k in order — so replacing EVERY page of
+   *      the document never passes through an empty page tree (a state pdf-lib is
+   *      not built to be in); the old run is now shifted to start + inserted;
+   *   3. remove that shifted run high → low, so each removal leaves the indices
+   *      still to go intact (deletePages' rule).
+   * The file touches no pdf-lib import of its own — it only calls methods on the
+   * documents it is handed — so it stays DOM-free and dependency-free.
+   */
+  async function replaceInDoc(doc, src, plan) {
+    if (!plan || plan.error) throw new Error("replaceInDoc: invalid plan");
+    const pages = await doc.copyPages(src, plan.take);
+    pages.forEach((p, k) => doc.insertPage(plan.start + k, p));
+    const from = plan.start + pages.length;
+    for (let k = from + plan.remove - 1; k >= from; k--) doc.removePage(k);
+    return pages.length;
+  }
+
+  const api = { parseSpec, computeRange, formatList, extractFileName, actionSet, contiguousRun, replacePlan, replaceInDoc };
   if (typeof window !== "undefined") window.PageRange = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

@@ -246,6 +246,10 @@
           ul: [
             T("**Ghép PDF khác vào…** · **Chèn trang từ PDF khác…** · **Thêm trang trắng…** — cả ba đều cho chọn vị trí (đầu / cuối / sau một trang).", "**Merge another PDF…** · **Insert pages from another PDF…** · **Add a blank page…** — all three let you choose the position (start / end / after a page)."),
             T(
+              "**Thay trang bằng PDF khác** — chuột phải lên một trang (hoặc chọn **các trang liền nhau** rồi chuột phải) → **Thay trang này bằng PDF khác…** → chọn file → **Tất cả các trang** của file đó, hoặc **Chỉ các trang được chọn** (gõ `1-3, 5`). Trang cũ được thay bằng các trang mới **ở đúng vị trí đó**; dòng tóm tắt cho biết trước tài liệu sẽ còn bao nhiêu trang. `Ctrl+Z` trả lại nguyên bản. Cũng có trong **Trang ▾** và menu **Trang**.",
+              "**Replace pages with another PDF** — right-click a page (or select **consecutive pages** and right-click) → **Thay trang này bằng PDF khác…** → pick a file → **all its pages**, or **only the pages you type** (`1-3, 5`). The old pages are replaced by the new ones **at that same position**; the summary line tells you beforehand how many pages the document will have. `Ctrl+Z` restores the original. Also under **Trang ▾** and the **Trang** menu."
+            ),
+            T(
               "**Gộp nhiều PDF thành một file** (nút ở màn hình rỗng): chọn nhiều file rồi **kéo–thả** hoặc nút ↑ / ↓ để sắp thứ tự. Không cần mở file nào trước.",
               "**Combine several PDFs into one** (the button on the empty screen): pick the files, then **drag** them or use ↑ / ↓ to order them. No document needs to be open first."
             ),
@@ -374,6 +378,10 @@
               "`Ctrl+C` sao chép, sang trang khác — hoặc sang **file PDF khác đang mở ở tab/cửa sổ khác** — rồi `Ctrl+V` để dán. Hoặc **bấm chuột phải** lên mục để có menu **Sao chép / Dán vào trang này / Xoá mục**.",
               "`Ctrl+C` copies; go to another page — or to **another PDF open in another tab or window** — and `Ctrl+V` pastes. Or **right-click** an object for **Sao chép / Dán vào trang này / Xoá mục** (copy / paste here / delete)."
             ),
+            T(
+              "**Ảnh cũng copy sang file khác được** (kể cả ảnh vừa dán từ ảnh chụp màn hình) — đúng cỡ, đúng vị trí bạn đã chỉnh. Lần **copy gần nhất luôn thắng**: copy một mục trong Nabu rồi `Ctrl+V` là dán mục đó, dù trước đó clipboard Windows đang có ảnh chụp; copy một ảnh ở app khác **sau đó** thì `Ctrl+V` dán ảnh mới. Vệt tô sáng / gạch chân / gạch ngang, vùng che và kích thước vẫn chỉ dán được trong cùng file.",
+              "**Images copy to another file too** (including one you just pasted from a screenshot) — at the size and position you set. The **most recent copy wins**: copy an object in Nabu and `Ctrl+V` pastes that object, even if the Windows clipboard held a screenshot before; copy an image in another app **afterwards** and `Ctrl+V` pastes the new image. Highlights / underline / strike-through, redactions and dimensions still paste only within the same file."
+            ),
             T("`Delete` xoá mục đang chọn.", "`Delete` removes the selected object."),
             T(
               "`Esc` theo thứ tự: huỷ thao tác kéo đang làm → bỏ chọn → về công cụ **Chọn**. Nó **không bao giờ** tự thoát chế độ chú thích, nên không có đường mất việc ngoài ý muốn.",
@@ -442,6 +450,10 @@
             T(
               "**Chèn ảnh / chữ ký** (`I`) — chọn ảnh rồi bấm lên trang để đặt. Chỉ nhận **PNG / JPG**; nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu. Nút **Áp nhiều trang** sao chép ảnh đang chọn sang các trang bạn nhập, **giữ nguyên vị trí và kích thước**.",
               "**Insert image / signature** (`I`) — pick an image, then click the page to place it. **PNG / JPG** only; prefer a **transparent PNG** so a signature doesn't sit in a white box over the document. **Áp nhiều trang** copies the selected image onto the pages you list, **at the same position and size**."
+            ),
+            T(
+              "**Chữ ký lưu sẵn** — thiết lập một lần ở **Cài đặt → Chữ ký của tôi → + Thêm chữ ký…**: chọn ảnh PNG/JPG, bật **Xoá nền trắng** nếu là ảnh chụp/scan trên giấy (thanh **Độ mạnh** chỉnh mức xoá), **Cắt sát nét ký**, đặt tên, **Lưu chữ ký**. Về sau: **chuột phải lên trang → Chèn chữ ký: <tên>** là chữ ký nằm **giữa chỗ bạn bấm**; hoặc nút **chữ ký** cạnh công cụ Ảnh → chọn → bấm lên trang. Kéo để chỉnh chỗ, kéo góc để đổi cỡ, bấm **Xong** để ghi vào file. App **nhớ cỡ** bạn dùng lần gần nhất cho từng chữ ký. Kho chữ ký chỉ nằm trên máy này và được **mã hoá bằng tài khoản Windows** — chép file sang máy khác không mở được.",
+              "**Saved signatures** — set up once in **Cài đặt → Chữ ký của tôi → + Thêm chữ ký…** (Settings → My signatures → Add): pick a PNG/JPG, turn on **Xoá nền trắng** (remove white background) for a photo/scan on paper — the **Độ mạnh** slider sets how much — keep **Cắt sát nét ký** (trim), name it, **Lưu chữ ký**. From then on: **right-click the page → Chèn chữ ký: <name>** drops it **centred where you clicked**; or the **signature** button next to the Image tool → pick → click the page. Drag to move, drag a corner to resize, **Xong** writes it into the file. The app **remembers the size** you last used for each signature. The store lives on this computer only and is **encrypted with your Windows account** — copying the file to another machine does not open it."
             ),
             T(
               "**Che thông tin — redact** (`X`) — kéo để che. Đây là che **thật**: nội dung gốc bị **xoá khỏi file** khi bấm Xong, không phải vẽ hình chữ nhật đen lên trên. Đổi **Màu che** nếu cần.",

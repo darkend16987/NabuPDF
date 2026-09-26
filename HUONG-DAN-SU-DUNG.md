@@ -237,6 +237,26 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > **Ký số** trên thanh công cụ — xem mục 5.1 ngay dưới. Hai thứ này dùng chung được: chèn ảnh con dấu
 > cho đẹp, rồi ký số để có hiệu lực.
 
+> ✍️ **Chữ ký lưu sẵn (từ v0.2.72):** thiết lập một lần, về sau chèn bằng hai cú bấm.
+> - **Thiết lập:** **Cài đặt → Chữ ký của tôi → Quản lý… → + Thêm chữ ký…** → chọn ảnh (PNG, JPG, BMP…).
+>   Ảnh được xem trước trên **nền caro** (phần caro là trong suốt):
+>   - **Xoá nền trắng** — cho ảnh **chụp/scan chữ ký trên giấy**: nền giấy thành trong suốt, mép nét
+>     vẫn mềm. App **tự bật** ô này khi ảnh không có nền trong suốt. Thanh **Độ mạnh** chỉnh mức xoá:
+>     giấy hơi xám thì kéo sang phải; nét ký bị mất thì kéo sang trái (app báo nếu không còn nét nào).
+>   - **Cắt sát nét ký** — bỏ khoảng trống quanh chữ ký để khung ôm sát, đặt dễ canh.
+>   - Đặt **tên** (vd *Chữ ký Giám đốc*, *Dấu công ty*) → **Lưu chữ ký**. Đổi tên / xoá ngay trong danh sách.
+> - **Chèn:** **chuột phải lên trang** (ở chế độ xem hay khi đang Chú thích đều được) → **Chèn chữ ký:
+>   <tên>** → chữ ký nằm **giữa chỗ bạn vừa bấm**. Hoặc khi đang Chú thích, bấm nút **chữ ký** cạnh
+>   công cụ Ảnh → chọn → bấm lên trang.
+> - Chữ ký chèn vào là một **ảnh bình thường**: kéo để chỉnh chỗ, kéo góc để đổi cỡ, dùng được **Áp nhiều
+>   trang**. Bấm **Xong** là **xác nhận** ghi vào file.
+> - **App nhớ cỡ:** cỡ bạn để lại lúc bấm Xong sẽ là cỡ mặc định lần chèn sau của chữ ký đó (lần đầu
+>   khoảng 5 cm).
+> - **Bảo mật:** kho chữ ký chỉ nằm trên máy này và được **mã hoá bằng tài khoản Windows** của bạn —
+>   chép file sang máy khác hay tài khoản khác thì không mở được. Nếu app báo **không đọc được kho**,
+>   nút **Tạo kho mới** bắt đầu lại và **giữ nguyên file cũ bên cạnh**, không xoá.
+> - ⚠️ Vẫn là **ảnh chữ ký**, không phải chữ ký số — xem lưu ý ngay trên.
+
 > **Ảnh vẫn sửa lại được sau khi Lưu:** giống hộp văn bản và ghi chú, ảnh/chữ ký bạn chèn **không bị
 > "dán chết"** vào trang. Mở lại file → bấm **Chỉnh sửa** → ảnh lại là một đối tượng riêng: kéo để
 > **di chuyển**, kéo **4 góc** để **đổi cỡ**, **Delete** để **xoá**, và vẫn dùng được **"Áp ảnh/chữ ký
@@ -337,9 +357,18 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - **Sang hẳn file PDF khác (từ v0.2.67; thêm dấu ✓/✗ từ v0.2.69):** copy ở file này rồi **Ctrl+V** ở **tab khác** hoặc
 >   **cửa sổ khác** — kể cả tab bạn mới mở **sau** khi đã copy. Bản dán giữ nguyên vị trí, cỡ chữ,
 >   phông, màu và nền; dán vào file có khổ giấy nhỏ hơn thì cả nhóm tự lùi vào trong tờ. Tab đích
->   chưa bật **Chỉnh sửa** thì app tự bật giúp. Riêng **ảnh** chỉ dán được **trong cùng một tab**
->   (ảnh nặng hàng megabyte, chuyển qua lại giữa các tab sẽ làm app ì) — copy một nhóm có lẫn ảnh
->   thì app báo rõ bao nhiêu mục ở lại.
+>   chưa bật **Chỉnh sửa** thì app tự bật giúp.
+> - **Ảnh cũng sang được file khác (từ v0.2.72)** — kể cả ảnh bạn vừa dán vào từ ảnh chụp màn hình —
+>   đúng cỡ và đúng chỗ bạn đã chỉnh. Trước bản này ảnh chỉ dán được trong cùng một tab.
+> - **Lần copy gần nhất luôn thắng (từ v0.2.72).** Trước đây, nếu clipboard Windows còn giữ một ảnh chụp
+>   (chẳng hạn chính ảnh bạn vừa dán vào trang), thì **Ctrl+V** sau khi copy một mục lại dán **ảnh chụp
+>   cũ ở cỡ mặc định** thay vì mục vừa copy. Nay copy một mục trong Nabu là **thay** nội dung clipboard
+>   Windows (như lệnh Copy ở mọi phần mềm), nên Ctrl+V dán đúng mục đó; còn nếu **sau đó** bạn copy một
+>   ảnh ở phần mềm khác thì Ctrl+V dán ảnh mới. Vì vậy copy một mục trong Nabu rồi sang Word dán sẽ
+>   không ra gì — đó là đúng như thiết kế.
+> - Vệt tô sáng / gạch chân / gạch ngang, ô che và đoạn đo vẫn chỉ dán được **trong cùng file** (chúng
+>   bám vào chữ hoặc nội dung của chính file đó) — copy một nhóm có lẫn chúng thì app báo rõ bao nhiêu
+>   mục ở lại.
 > - **Clipboard không mất khi bấm "Áp dụng"**: sao chép → Áp dụng → vẫn dán được. Lưu ý ngược lại:
 >   sau khi Áp dụng thì **tô sáng, ✓/✗, ô che và đoạn đo đã dán chết** thành hình trên trang nên
 >   **không chọn lại được để copy** — hãy **copy trước khi Áp dụng**. Hộp văn bản, ghi chú, mũi tên,
@@ -365,6 +394,20 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   bỏ tick là bật lại **đúng màu và đúng độ mờ đang hiện trên thanh**, nên dùng nó để thử có/không
 >   nền mà không mất giá trị đã chọn. Kéo **Mờ nền** về 0% cũng là tắt nền, và ô **Không nền** tự
 >   tick theo. (Ô này ở các bản trước ghi là *Trong suốt*.)
+
+> 🔁 **Thay trang bằng trang của PDF khác (từ v0.2.72):** chuột phải một trang trong **cột trang** →
+> **Thay trang này bằng PDF khác…** → chọn file → chọn:
+> - **Tất cả N trang** của file đó, hoặc
+> - **Chỉ các trang được chọn** — gõ khoảng trang như `1-3, 5` (bấm vào ô là tự chọn mục này).
+>
+> Dòng tóm tắt cho biết **trước** sẽ thay bằng những trang nào và tài liệu còn bao nhiêu trang. Bấm
+> **Thay trang** → trang cũ biến mất, các trang mới nằm **đúng vị trí đó**, theo thứ tự tăng dần.
+> - Muốn thay **nhiều trang một lúc**: tick chọn các trang **liền nhau** (vd 3–5) rồi chuột phải. Chọn
+>   các trang **rời nhau** (vd 2 và 5) thì lệnh này mờ đi — vì không rõ trang mới nên nằm ở đâu.
+> - `Ctrl+Z` trả lại nguyên bản. Cũng có trong nút **Trang ▾** và menu **Trang**.
+> - Trang mới giữ nguyên **khổ giấy và chiều xoay** của file nguồn.
+> - File nguồn có mật khẩu → mở nó, bỏ mật khẩu trước. Thay một **trang đang ẩn** (🔒) thì app hỏi lại,
+>   vì nội dung đã ẩn sẽ mất cùng trang đó.
 
 > 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
 > **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).

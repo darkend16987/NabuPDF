@@ -4,7 +4,26 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-20 · v0.2.71 đã phát hành (dưới đây) · v0.2.70 là bản trước đó_
+_Cập nhật: 2026-09-26 · v0.2.72 đã phát hành (dưới đây) · v0.2.71 là bản trước đó_
+
+> **v0.2.72 — thay trang, copy ảnh sang file khác, chữ ký lưu sẵn** (phát hành 2026-09-26).
+> Chi tiết + số đo: [docs/RESEARCH-2026-09-26-replace-pages-image-clip-signatures.md](docs/RESEARCH-2026-09-26-replace-pages-image-clip-signatures.md).
+> Bất biến mới **BI-90** (thay trang), **BI-91** (kho chữ ký); **BI-77 / BI-82 đã viết lại** (ảnh qua tab
+> bằng bản nhẹ + nạp khi dán; "lần copy gần nhất thắng").
+>
+> 1. **Thay trang** (học PDF24): chuột phải trang → *Thay trang này bằng PDF khác…* → tất cả / một
+>    khoảng trang của file nguồn. Chỉ trên dải **liền nhau**. Một bước Ctrl+Z.
+> 2. **Copy ảnh sang file khác — là lỗi thật, hai nguyên nhân**: ảnh bị loại khỏi clipboard liên-tab
+>    **có chủ đích** (`SHARE_EXCLUDED`), và ảnh chụp cũ còn trong clipboard Windows **cướp** Ctrl+V
+>    (kể cả trong cùng file, với mọi đối tượng). Sửa cả hai.
+> 3. **Chữ ký lưu sẵn**: Cài đặt → Chữ ký của tôi (xoá nền trắng, cắt viền) · chuột phải trang →
+>    *Chèn chữ ký: tên* · nhớ cỡ lần dùng trước · kho **mã hoá DPAPI** (`userData/signatures.bin`).
+>
+> **Lưới:** `test:sig` mới (71), `test:clip` 59 → 102, `test:pages` 50 → 77; 24/24 bộ xanh. Nghiệm thu
+> GUI CDP trên app thật **40/40**. Tài liệu: help.js, HUONG-DAN-SU-DUNG.md, README, site (khối "Mới", thẻ
+> tính năng, lịch sử phiên bản). Sidecar **không** build lại (không đổi `.py`).
+> ⚠️ **Chưa kiểm bằng máy, cần test tay trên bản cài:** vòng clipboard Windows thật (research §6.5) —
+> shell phát triển không truy cập được clipboard.
 
 > **v0.2.71 — tô sáng theo đoạn chữ, hình tự do, và bộ bản vẽ CAD mở nhanh hơn.**
 >

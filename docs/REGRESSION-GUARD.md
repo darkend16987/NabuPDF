@@ -1995,11 +1995,34 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   giữ `srcPage` sẽ khiến trang 0 của file B bị nhầm là trang nguồn của file A → **mọi** lần
   dán liên-tài-liệu lệch 12pt khỏi chỗ người dùng đã copy. `-1` không bao giờ là chỉ số
   trang, nên nhánh đó chết hẳn và bản dán rơi đúng toạ độ gốc.
-- **Ảnh cố ý không qua IPC** (`SHARE_EXCLUDED`). Ảnh mở lại là chuỗi base64 **nhiều MB**
-  (xem `edSnapshot`); đẩy nó qua IPC mỗi lần `Ctrl+C` đúng là cái giá mà ghi chú
-  “clipboard riêng từng tab” đã từ chối trả. Ảnh vẫn copy **trong cùng tab** y như cũ.
+- **Ảnh qua tab từ v0.2.72 — nhưng KHÔNG được broadcast.** Ảnh mở lại là chuỗi base64
+  **nhiều MB** (xem `edSnapshot`); đẩy nó tới **mọi** tab ở **mỗi** `Ctrl+C` là cái giá đã bị
+  từ chối từ đầu, và vẫn bị từ chối. main giữ clip **đầy đủ** (`objClip` + `id`) nhưng phát đi
+  `lightClip()` — ảnh bỏ `dataUrl`, gắn `_pending`, clip gắn `heavy`. Tab dán lấy pixel **một
+  lần** qua `annots:clip-fetch` trong `hydrateClip()`, gọi từ `requestPaste` **sau** khi quyết
+  định đã xong. Luật đồng bộ ở trên **không đổi một chữ**: listener `paste` vẫn chỉ đọc
+  `clip.items.length`, và clip `heavy` quyết định y hệt clip nhẹ. `pasteClip` **từ chối** clip
+  còn `heavy` (chốt chặn cuối). `hydrateClip` phải kiểm `clip !== c` sau `await` — một lần copy
+  mới đến giữa chừng thì dán **cái mới**, không bao giờ đè pixel cũ lên clip mới.
+  Trần `SHARE_IMAGE_CAP` cho **một** lần copy: vượt thì **tất cả** ảnh ở lại (không bao giờ một
+  tập con tuỳ ý), toast nói rõ.
   Một lần copy **không có** mục nào chia sẻ được thì **XOÁ** clip chung, không để clip cũ
   đứng lại — nếu không, tab khác sẽ lặng lẽ dán thứ người dùng đã copy từ hai thao tác trước.
+- **"Lần copy gần nhất thắng", không phải "ảnh OS luôn thắng" (v0.2.72).** Luật bàn giao cũ
+  nhường `Ctrl+V` cho `capture.js` hễ clipboard OS có ảnh — mà copy đối tượng thì **không
+  đụng** clipboard OS. Luồng thường gặp nhất vì thế hỏng: chụp màn hình → dán vào trang →
+  chỉnh cỡ → `Ctrl+C` → `Ctrl+V` = dán lại **ảnh chụp gốc cỡ mặc định** (và với **mọi** đối
+  tượng khác nữa, hễ clipboard OS còn ảnh). Nay listener `copy` ghi `NABU_CLIP_MIME`
+  (`application/x-nabu-annots`) vào clipboard OS — Chromium **làm rỗng** clipboard trước khi
+  ghi, nên ảnh cũ mất — và listener `paste` coi dấu đó là **của mình**. Ảnh copy ở đâu đó
+  **sau** thì thay dấu ⇒ `capture.js` thắng, đúng như luật bàn giao yêu cầu.
+  · **Mọi** đường copy phải đi qua `copyGesture()` (nút, menu chuột phải, `Ctrl+C` dự phòng ở
+  keydown): nó gọi `document.execCommand("copy")` — **đã đo** trên Chromium 152 là phát sự
+  kiện `copy` kể cả khi không có vùng chọn chữ — nên dấu được ghi dù đường nào chạy. Gọi thẳng
+  `copySelected()` từ một đường mới là **tái phạm**: đối tượng vẫn copy được nhưng ảnh cũ lại
+  cướp `Ctrl+V`. Lưới `test:clip` §3 canh cả ba đường.
+  · Hệ quả chấp nhận: copy một đối tượng trong Nabu **thay** nội dung clipboard Windows (như
+  Copy ở mọi app). Dán sang Word lúc đó không ra gì.
 - **Toạ độ vốn đã liên-tài-liệu**, đó là lý do việc này rẻ: annot nằm trong không gian
   **điểm PDF scale-1** (`editor.js` §đầu file, đo lại ở `layer.dataset.w = cw / state.scale`),
   nên trang đích chỉ tham gia qua khổ giấy `pw/ph` — và `fitShift(unionBounds(...))` đã kẹp
@@ -2007,6 +2030,9 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 - Đã kiểm bằng **mutation test**: đổi `page: -1` → `srcPage` ⇒ 2 ca đỏ; đổi guard của
   `paste` thành `await readAnnotClip()` ⇒ 2 ca đỏ. Ca định vị listener cũng khẳng định thân
   hàm **khác rỗng**, vì bản đầu tiên của lưới này *pass giả* khi regex trượt CRLF.
+  v0.2.72: phát `objClip` đầy đủ thay vì `lightClip` ⇒ 4 ca đỏ; bỏ dòng `c.items = full`
+  trong `hydrateClip` ⇒ 1 ca đỏ. Nghiệm thu GUI trên app thật (CDP, 2 tab): ảnh copy ở tab A
+  dán sang tab B **có pixel**; ảnh không kèm dấu ⇒ luồng đặt ảnh; có dấu ⇒ clip thắng.
 
 ---
 
@@ -2132,15 +2158,18 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 - **Luật:** `isShareableKind` **không** được rút gọn lại thành `isManagedKind(k) && …`. Nó trả lời
   câu hỏi về **payload** và **ý nghĩa ở tài liệu đích**; `MANAGED_KINDS` trả lời câu hỏi về
   **round-trip qua `/NabuData`**. Chúng trùng nhau ở gần hết mọi kind, và đó chính là cái bẫy.
-  - `image`: round-trip được nhưng **không** qua biên tab — dataUrl base64 vài MB mỗi `Ctrl+C`.
+  - `image`: round-trip được, và **qua** biên tab từ v0.2.72 — nhưng câu hỏi payload vẫn được
+    trả lời, ở **main** (`lightClip` + `annots:clip-fetch`, BI-77) chứ không bằng cách giữ lại.
+    `SHARE_EXCLUDED` nay **rỗng** và lưới khoá nó rỗng: thêm lại một kind vào đó phải là một
+    quyết định có lý do, không phải một dòng lén.
   - `check` / `cross` (v0.2.69): **không** round-trip (vẫn flatten, BI-42) nhưng **qua được** —
     vài chục byte JSON, và ở tài liệu đích nó đúng bằng thứ công cụ ✓ tạo ra tại chỗ.
   - `highlight` / `under` / `strike` / `redact`: **không** qua — chúng bám vào đoạn chữ, hoặc là
     lời hứa về nội dung của **chính** file này. "Cho tất cả qua" là sai, không phải là rộng rãi.
 - **BI-42 không bị chạm:** thêm một kind vào `SHARE_EXTRA` **không** đưa nó vào `MANAGED_KINDS`, nên
   không byte nào trong PDF xuất ra đổi khác. Test khoá cả hai chiều.
-- **Vỡ khi:** mỗi `Ctrl+C` trên một tấm ảnh đẩy vài MB qua IPC (nới nhầm) · hoặc copy liên-tab
-  **âm thầm** ngừng chạy cho một kind vốn vẫn chạy (thu nhầm).
+- **Vỡ khi:** mỗi `Ctrl+C` trên một tấm ảnh đẩy vài MB tới **mọi** tab (bỏ `lightClip`) · hoặc
+  copy liên-tab **âm thầm** ngừng chạy cho một kind vốn vẫn chạy (thu nhầm).
 - Lưới: `npm run test:clip` §1 — `SHARE_EXTRA` được so khớp **đúng bằng** `{check, cross}`.
 
 ### BI-83 · Electron 44 xoá `clipboard.writeImage`/`readImage` — hai nhánh dưới đây **đều là mã sống**
@@ -2308,6 +2337,48 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 - Lưới: `npm run test:shape` (nhóm 4, gồm cả ca nét **ngang tuyệt đối** — cao 0 thì không có
   gì để nhân, phải **tịnh tiến**, không được ra NaN) + `npm run test:geom`.
 
+### BI-90 · Thay trang: chỉ trên một dải **liền nhau**, và **chèn trước — xoá sau**
+- `page-range.js` `contiguousRun` · `replacePlan` · `replaceInDoc`; `app.js` `askReplaceSpec` ·
+  `replaceSelectedFromFile` · `replaceSelectedWith`; `#replace-modal`. Lưới `npm run test:pages`
+  (chạy `replaceInDoc` trên **tài liệu pdf-lib thật**, phân biệt trang bằng bề rộng).
+- **Luật 1 — vùng chọn có khoảng hở thì TỪ CHỐI**, mục menu **mờ** kèm gợi ý "(chọn các trang
+  liền nhau)". "Thay trang 2 và 5 bằng 3 trang" không có một nghĩa duy nhất; đoán sai là trang
+  hợp đồng nằm nhầm chỗ, không lỗi nào báo.
+- **Luật 2 — `copyPages` trước, `insertPage` trước, `removePage` SAU (cao → thấp).** Xoá trước
+  thì thay **toàn bộ** tài liệu đi qua trạng thái cây trang **rỗng**, pdf-lib không được làm
+  cho trạng thái đó. Mutation "chèn cùng một chỉ số" ⇒ 3 ca đỏ.
+- **Luật 3 — đọc file nguồn TRƯỚC khi mở hộp thoại**: số trang nguồn quyết định hộp thoại,
+  và file hỏng / có mật khẩu phải báo **ngay**, không phải sau khi người dùng đã gõ khoảng.
+- **Luật 4 — ô khoảng trang KHÔNG được `disabled`.** Phần tử disabled **không nhận focus**, nên
+  "bấm vào ô là tự chọn *Chỉ các trang*" thành mã chết — bản đầu vấp đúng chỗ này, probe GUI bắt.
+- Trang **ẩn có khoá** (BI-72) trong vùng thay ⇒ hỏi riêng (thay = mất vĩnh viễn bản gốc đã mã
+  hoá, chỉ còn `Ctrl+Z` trong phiên). **Một** `pushUndo` cho cả thao tác.
+- **Vỡ khi:** trang mới rơi sai chỗ · thay hết trang thì lỗi · `Ctrl+Z` không về đủ · chọn rời
+  mà vẫn thay được.
+
+### BI-91 · Chữ ký lưu sẵn: **mã hoá hoặc không lưu**, và kho không đọc được thì **không bao giờ bị ghi đè**
+- `src/signatures.js` (thuần, tiêm `fs`/`crypto`/`checkPng`) · `main.js` `sig:*` +
+  `safeStorage` · `preload.js` `signatures` · `renderer/sig-image.js` (thuần) ·
+  `renderer/signatures.js` · `editor.js` `placeSignature` / `pagePointFromClient` /
+  `rememberSignatureWidths`. Lưới `npm run test:sig`.
+- **Luật 1 — `safeStorage` không mã hoá được ⇒ TỪ CHỐI lưu.** Người dùng đã chọn lưu mã hoá;
+  âm thầm ghi PNG thường là đúng cái họ đã loại trừ.
+- **Luật 2 — giải mã / parse hỏng ⇒ danh sách rỗng + `unreadable`, và MỌI lệnh ghi bị từ chối**
+  cho tới khi người dùng bấm "Tạo kho mới" — lệnh đó **đổi tên file cũ sang bên cạnh**, không
+  xoá (luật page-vault §4). Ca điển hình: file bị chép sang tài khoản Windows khác.
+- **Luật 3 — kiểm hợp lệ lúc VÀO**, cả từ đĩa lẫn từ IPC: PNG thật (magic + `nativeImage` decode,
+  ≤ 4096 px), ≤ `MAX_PNG_BYTES`, ≤ `MAX_ITEMS`, tên cắt ký tự điều khiển. Mục hỏng trong file tay
+  sửa bị bỏ qua từng mục, không làm hỏng cả kho.
+- **Luật 4 — `sigId` nằm trên annotation nhưng KHÔNG được vào file.** `managed-codec` ghi ảnh từ
+  **danh sách trường cố định** (`x,y,w,h,fmt`); đổi sang kiểu "ghi cả object" là rò `sigId` vào
+  mọi PDF có chữ ký. Probe GUI giải mã `/NabuData` thật để khẳng định.
+- **Luật 5 — đường Ảnh cũ không đổi.** `placeImage` chỉ đọc thêm `wPt`/`center`/`sigId` khi
+  chúng có mặt; ảnh thường vẫn là quy tắc 240pt, góc trên-trái tại điểm bấm.
+- Menu chuột phải lấy toạ độ trang **lúc mở menu**; thanh Chú thích hiện ra đẩy trang xuống
+  ~41px nhưng chữ ký theo **trang**, không theo màn hình (probe đo trong không gian trang).
+- **Vỡ khi:** kho ghi ra dạng đọc được · mở app bằng tài khoản khác xoá mất kho · chữ ký lệch
+  khỏi chỗ bấm · ảnh chèn bằng công cụ Ảnh đổi cỡ/vị trí so với trước.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2354,9 +2425,9 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Tầng tab/cửa sổ (`main.js`, `tabs.js`) | Toàn bộ `docs/TABS-TEST-L1.md` (24 mục) |
 | Tách tab / kéo tab (`detachTab`, `adoptTab`, `classifyDrop`, `shell.js` dragend) | `docs/TABS-2B-DESIGN.md` §6.2 (18 mục) · BI-15/16/17 · **mục #1 là hồi quy của tính năng sắp xếp tab** |
 | Chuyển trang giữa 2 tài liệu (`renderer/page-move.js`, `classifyPageDrop`, `docViewScreenRect`, `routePages`, `pages:*`) | `cd desktop ; npm run test:pagedrop` · `docs/SPEC-page-drag.md` §7.1 (22 mục) · BI-55/56/57/58 · **mục #1 và #2 là hồi quy của kéo-sắp-xếp trang và kéo file PDF vào cột trang** — hai thứ đã chạy tốt từ v0.2.41 mà tính năng này gắn thêm việc lên đúng cùng một cử chỉ |
-| Clipboard vật thể **liên-tab/liên-tài-liệu** (`objClip` + `annots:clip-*` ở `main.js`, `writeAnnotClip`/`readAnnotClip`/`onAnnotClipChanged` ở `preload.js`, `SHARE_EXCLUDED`/`isShareableKind`/`shareClip`/`adoptSharedClip`/`requestPaste` ở `editor.js`) | `cd desktop ; npm run test:clip ; npm run test:managed ; npm run test:text` · **ca vỡ nguy hiểm nhất là hồi quy của dán-ảnh**: để một **ảnh** trên clipboard hệ điều hành (copy từ app khác) rồi `Ctrl+V` ở tab đang có clip vật thể → phải dán **ảnh**, **không** dán vật thể (luật bàn giao với `capture.js` — BI-77) · copy 1 hộp văn bản ở tab A → `Ctrl+V` ở tab B → **đúng vị trí, đúng cỡ chữ, đúng màu, đúng nền** · copy ở A → **Áp dụng** ở A → dán ở B (clip sống sót bake) · copy ở A → **xé tab B ra cửa sổ riêng** → dán được · copy ở A → **mở tab C mới** → dán được (đường `readAnnotClip` lúc khởi động) · dán vào tab **chưa bật Chỉnh sửa** → tự bật rồi dán, có toast · chọn nhóm Ctrl+click 3 mục → dán sang B **giữ nguyên cự ly tương đối** · dán sang trang **nhỏ hơn** ở B → cả nhóm lùi vào trong tờ, **không rời ra** · dán **hai lần liên tiếp** ở B → bản thứ hai lệch 12pt (không nấp lên nhau), bản **thứ nhất không lệch** · dán sang trang **đã xoay 90/180/270** ở B → Áp dụng → Lưu → mở lại: đúng chiều, đúng chỗ · copy **ảnh** ở A → nút “Dán” ở B **tối đi** (ảnh không qua tab) và toast nói rõ · copy nhóm **ảnh + hộp chữ** ở A → B chỉ nhận hộp chữ, toast báo số mục ở lại · đóng hết tab trừ một → clip cũ **không** làm app lỗi |
+| Clipboard vật thể **liên-tab/liên-tài-liệu** (`objClip` + `annots:clip-*` ở `main.js`, `writeAnnotClip`/`readAnnotClip`/`onAnnotClipChanged` ở `preload.js`, `SHARE_EXCLUDED`/`isShareableKind`/`shareClip`/`adoptSharedClip`/`requestPaste` ở `editor.js`) | `cd desktop ; npm run test:clip ; npm run test:managed ; npm run test:text` · **ca vỡ nguy hiểm nhất là hồi quy của dán-ảnh**: copy một vật thể trong Nabu, **sau đó** copy một **ảnh** ở app khác, rồi `Ctrl+V` ở tab đang có clip vật thể → phải dán **ảnh**, **không** dán vật thể (luật bàn giao với `capture.js` — BI-77; từ v0.2.72 là "lần copy gần nhất thắng", nên thứ tự copy là **bắt buộc** trong ca này) · copy 1 hộp văn bản ở tab A → `Ctrl+V` ở tab B → **đúng vị trí, đúng cỡ chữ, đúng màu, đúng nền** · copy ở A → **Áp dụng** ở A → dán ở B (clip sống sót bake) · copy ở A → **xé tab B ra cửa sổ riêng** → dán được · copy ở A → **mở tab C mới** → dán được (đường `readAnnotClip` lúc khởi động) · dán vào tab **chưa bật Chỉnh sửa** → tự bật rồi dán, có toast · chọn nhóm Ctrl+click 3 mục → dán sang B **giữ nguyên cự ly tương đối** · dán sang trang **nhỏ hơn** ở B → cả nhóm lùi vào trong tờ, **không rời ra** · dán **hai lần liên tiếp** ở B → bản thứ hai lệch 12pt (không nấp lên nhau), bản **thứ nhất không lệch** · dán sang trang **đã xoay 90/180/270** ở B → Áp dụng → Lưu → mở lại: đúng chiều, đúng chỗ · copy **ảnh** ở A (kể cả ảnh vừa dán từ ảnh chụp màn hình) → `Ctrl+V` ở B → **có ảnh, đúng cỡ đã chỉnh** (v0.2.72, BI-77) · chụp màn hình → dán vào A → chỉnh cỡ → `Ctrl+C` → `Ctrl+V` **ngay trong A** → ra **bản đã chỉnh**, không phải ảnh chụp gốc · copy nhóm **ảnh + hộp chữ** ở A → B nhận **cả hai** · copy **vệt tô sáng** ở A → B không nhận, toast nói rõ · đóng hết tab trừ một → clip cũ **không** làm app lỗi |
 | Chia đôi màn hình (`splitRects`/`solveWidths`/`_rects`/`viewPaneScreenRects`/`addViewPane`/`setPaneRatios` ở `tabs.js` · `sendFileToPane`/`view:*`/`split:*` ở `main.js` · `renderer/view.*` · `src/view-preload.js` · `#split`/`#gutters` ở `shell.*`) | `cd desktop ; npm run test:split ; npm run test:pagedrop ; npm run test:tabs` · **ba ca hồi quy phải làm trước**: app **không** chia khung phải y hệt bản cũ (chrome đúng 40px, tab chiếm hết) · `Ctrl+\` rồi **đổi tab** → tab mới nằm gọn trong khung chính, **không đè** khung xem · `Ctrl+\` rồi **kéo tab sang cửa sổ khác** / **xé tab ra** → không mất khung xem, không lỗi console (BI-79) · mở **cùng một file** ở cả hai khung → sửa + `Ctrl+S` ở khung chính → khung xem **tự nạp lại**, **giữ nguyên trang đang đọc** và chip "bản lưu HH:MM" đổi giờ · **kéo rãnh** hết cỡ sang trái → khung chính dừng ở sàn, tay nắm **không rời khỏi biên thật**; Alt-Tab **giữa lúc kéo** → phiên kéo kết thúc, không kẹt (BI-58) · bấm **tên file** trên khung xem → menu native có "Cùng tài liệu khung chính" + các tab + "Mở file khác…" · đổi khung xem sang file khác → nút **Sửa file này** hiện; bấm → file đó sang khung chính, tài liệu cũ sang khung xem · **kéo trang từ cửa sổ khác thả vào khung xem** → toast từ chối, **không** im lặng, và **không** chèn nhầm vào tài liệu phía sau (BI-80) · file **có mật khẩu** ở khung xem → dòng nhắc "hãy mở ở khung chính", không treo · file có **trang ẩn** (`/NabuVault`) ở khung xem → hiện **trang giữ chỗ** (đúng, không phải lỗi — BI-72) · bản vẽ **A0/A1** ở khung xem → **không trắng trang** (BI-78 dùng chung `raster-cap.js`) · `Ctrl+S` / **In** / `Ctrl+Z` khi đang chia khung → **luôn** tác động lên khung chính · `Ctrl+\` lần nữa → đóng hết, nút ◫ tắt, rãnh biến mất · **đóng app rồi mở lại** → bố cục chia khung **và** tỷ lệ rãnh quay lại (BI-81) · nâng cấp từ bản cũ → **phiên cũ không bị mất** (BI-81) |
-| Bộ lọc chia sẻ clipboard (`SHARE_EXTRA`/`SHARE_EXCLUDED`/`isShareableKind` ở `editor.js`) | `cd desktop ; npm run test:clip` · copy **dấu ✓** ở file A → `Ctrl+V` ở **tab khác** và ở **cửa sổ khác** → sang được, đúng màu/cỡ/vị trí · copy **✗ + hộp văn bản** cùng lúc → **cả hai** sang · copy **✓ + ảnh** cùng lúc → ✓ sang, ảnh ở lại, toast nói rõ · ở file đích bấm **Xong** → lưu → mở lại: dấu ✓ nằm trên trang và **không chọn lại được** (đúng BI-42, không phải lỗi) · toast sau khi copy gọi tên **tiếng Việt** ("1 dấu tích ✓"), không phải `check` (BI-82) |
+| Bộ lọc chia sẻ clipboard (`SHARE_EXTRA`/`SHARE_EXCLUDED`/`isShareableKind` ở `editor.js`) | `cd desktop ; npm run test:clip` · copy **dấu ✓** ở file A → `Ctrl+V` ở **tab khác** và ở **cửa sổ khác** → sang được, đúng màu/cỡ/vị trí · copy **✗ + hộp văn bản** cùng lúc → **cả hai** sang · copy **✓ + ảnh** cùng lúc → **cả hai** sang (v0.2.72) · ở file đích bấm **Xong** → lưu → mở lại: dấu ✓ nằm trên trang và **không chọn lại được** (đúng BI-42, không phải lỗi) · toast sau khi copy gọi tên **tiếng Việt** ("1 dấu tích ✓"), không phải `check` (BI-82) |
 | Khôi phục phiên (`src/session.js`, `snapshotSession`, `_closing`, `tab:reserved`) | `docs/SESSION-RESTORE.md` §5.3 (14 mục) · BI-18/19/20 · **mục #12 là hồi quy của khôi phục sự cố** |
 | Guard đóng | BI-6: nút X vs menu Thoát vs Ctrl+Q — cả 3 đường |
 | Recovery/autosave | BI-7: mở 2 tab, chỉ tab đầu được hỏi khôi phục |
@@ -2365,6 +2436,8 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 | Trang Hướng dẫn (`renderer/help.js`, `#help-modal`, khối `.help-*` trong `app.css`) | `cd desktop ; npm run test:help` · mở bằng **cả 3** đường: menu **Trợ giúp**, **F1**, nút **?** · bấm từng mục lục · ô tìm gõ **không dấu** ("mui ten") vẫn ra đúng phần · đóng bằng **Đóng / Esc / bấm nền** · đổi **VI↔EN** (cả nhãn menu native) · đổi theme **Sáng** · mở **trong lúc đang Chú thích** có 1 mục đang chọn rồi bấm `Delete` → mục **không** bị xoá (BI-47) |
 | `#ed-hint` / `setEdStatus` / `#te-hint` | BI-41: **không** đặt câu hướng dẫn vào đây · thu cửa sổ về 1024px ở công cụ *Khoanh mây* → thanh **không** phình, nút **Xong** còn bấm được · vẽ mây từng điểm → có dòng nhắc cách đóng; đổi công cụ → ô **trắng** · công cụ Đo → thấy `Tỷ lệ: chưa/đã hiệu chuẩn` đúng trạng thái |
 | Menu chuột phải trên thumbnail (`openThumbMenu`) | BI-26 · chuột phải **ngoài** vùng đang chọn → chỉ chọn trang đó · chuột phải **trong** vùng đang chọn → giữ nguyên nhiều trang · đang Chú thích/Sửa nội dung → **không** ra menu · chọn hết trang → mục Xoá phải mờ |
+| Thay trang (`replacePlan`/`replaceInDoc` ở `page-range.js`, `askReplaceSpec`/`replaceSelectedWith` ở `app.js`, `#replace-modal`) | `cd desktop ; npm run test:pages` · BI-90 · chuột phải trang 3 → Thay… → file 5 trang → **Tất cả** → tài liệu +4 trang, trang mới ở vị trí 3–7 · chọn trang 2–4 → Thay → `3, 1` → dòng tóm tắt ghi đúng số trang còn lại, trang mới theo thứ tự **1, 3** · chọn trang 1 **và** 3 → mục Thay **mờ** · thay **mọi** trang → không lỗi · bấm vào ô khoảng trang → radio tự chuyển *Chỉ các trang* · `Esc` → không đổi gì · file nguồn có mật khẩu → báo ngay, không mở hộp thoại · `Ctrl+Z` → về nguyên bản · thay một **trang ẩn** → hỏi xác nhận · đang Chú thích → menu Trang không thay được |
+| Chữ ký lưu sẵn (`src/signatures.js`, `sig:*` ở `main.js`, `renderer/signatures.js`, `renderer/sig-image.js`, `placeSignature` ở `editor.js`) | `cd desktop ; npm run test:sig ; npm run test:clip` · BI-91 · Cài đặt → Chữ ký của tôi → thêm **ảnh scan JPG nền trắng** → "Xoá nền trắng" **tự tick**, xem trước nền caro, kéo Độ mạnh → nét không mất · thêm **PNG nền trong** → "Xoá nền trắng" **không** tick · Lưu → đóng app → mở lại → còn · chuột phải lên trang (chế độ xem **và** Chú thích) → "Chèn chữ ký: tên" có ảnh nhỏ → chữ ký **giữa chỗ bấm** · đổi cỡ → Xong → lần chèn sau **đúng cỡ đó** · nút chữ ký trên thanh Chú thích → chọn → bấm trang · chép `signatures.bin` sang **tài khoản Windows khác** → báo không đọc được, **không** xoá, "Tạo kho mới" giữ file cũ bên cạnh · công cụ **Ảnh** thường → vẫn 240pt, góc trên-trái tại điểm bấm (không hồi quy) · đổi **VI↔EN** |
 | `page-range.js` hay hộp thoại xoá theo khoảng | `cd desktop ; npm run test:pages` · gõ “từ 5 đến 12, trừ 7” trên tài liệu thật → trang 7 **còn nguyên** · Ctrl+Z quay lại đủ trang (BI-27, BI-3) |
 | Hộp thoại “Áp ảnh / chữ ký cho nhiều trang” (`imgPagesSpec`, `syncImgPages`) | `npm run test:pages` · chèn 1 ảnh rồi Áp nhiều trang: gõ `1-3` → dòng gợi ý ghi đúng “Sẽ áp sang N trang: …” và nút Áp dụng **mở** · dán `1–3` (gạch en, copy từ Word) → **vẫn nhận** · gõ `abc` → “Chưa nhận ra trang nào”, nút Áp dụng **khoá** · gõ đúng số trang ảnh đang nằm → “Chỉ có đúng trang ảnh đang nằm”, nút **khoá** · gõ số lớn hơn số trang → gợi ý cho thấy nó **kẹp về trang cuối** trước khi bấm · Ctrl+Z hoàn tác được (BI-27, BI-10) |
 | Tên file gợi ý khi Tách trang (`extractFileName`) | `npm run test:pages` · mở PDF ≥200 trang → Chọn tất cả bỏ 1 trang → Tách → tên trong hộp thoại Lưu **ngắn, đọc được**, lưu thành công (BI-27) |

@@ -472,6 +472,15 @@
       item.className =
         "ctx-menu-item" + (en.enabled === false ? " disabled" : "") + (en.danger ? " danger" : "");
       item.textContent = en.label;
+      // Optional thumbnail (saved signatures, v0.2.72). A `data:` URL only — the menu
+      // never loads anything from outside the renderer.
+      if (typeof en.icon === "string" && en.icon.startsWith("data:image/")) {
+        const im = document.createElement("img");
+        im.className = "ctx-menu-img";
+        im.alt = "";
+        im.src = en.icon;
+        item.prepend(im);
+      }
       if (en.enabled !== false) {
         item.addEventListener("click", () => {
           closePageMenu();
@@ -560,6 +569,12 @@
           window.Editor.beginImagePaste(clipImg);
         },
       },
+      // Chèn chữ ký lưu sẵn, centred on the right-clicked spot (renderer/signatures.js).
+      ...(window.Signatures
+        ? window.Signatures.menuEntries(pageIndex, cx, cy, () => {
+            if (cap.active) exit();
+          })
+        : []),
     ]);
   }
 

@@ -201,6 +201,7 @@
             <div class="dd-head">Thêm / ghép</div>
             <button class="dd-item" id="btn-merge" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-copy"/></svg>Ghép PDF khác vào…</button>
             <button class="dd-item" id="btn-insert" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file-plus"/></svg>Chèn trang từ PDF khác…</button>
+            <button class="dd-item" id="btn-replace" title="Thay các trang đang chọn (liền nhau) bằng trang của một PDF khác"><svg class="ic"><use href="#ic-convert"/></svg>Thay trang đang chọn bằng PDF khác…</button>
             <button class="dd-item" id="btn-blank" title="Chọn vị trí (đầu/cuối/sau trang)"><svg class="ic"><use href="#ic-file"/></svg>Thêm trang trắng…</button>
             <div class="dd-sep"></div>
             <div class="dd-head">Tách</div>
@@ -309,6 +310,9 @@
         <button class="tool" data-tool="note" title="Ghi chú (comment) gắn vào một điểm (phím N)"><svg class="ic"><use href="#ic-message"/></svg></button>
         <div class="sep"></div>
         <button class="tool" data-tool="image" title="Chèn ảnh / chữ ký (phím I)"><svg class="ic"><use href="#ic-photo"/></svg></button>
+        <!-- NOT a .tool: it opens a picker, it is not a mode. The #ed-tools loop wires every
+             .tool to setTool(dataset.tool), which would be setTool(undefined) here. -->
+        <button id="ed-sig" class="sig-btn" title="Chèn chữ ký đã lưu sẵn — hoặc chuột phải lên trang → Chèn chữ ký"><svg class="ic"><use href="#ic-signature"/></svg></button>
         <button class="tool" data-tool="redact" title="Che thông tin (an toàn — xoá nội dung gốc) (phím X)"><svg class="ic fill"><use href="#ic-redact"/></svg></button>
         <button class="tool" data-tool="measure" title="Đo &amp; ghi kích thước (dim) — hiệu chuẩn 1 đoạn rồi tự ghi các đoạn khác (phím M)"><svg class="ic"><use href="#ic-ruler"/></svg></button>
       </div>
@@ -680,6 +684,24 @@
         <div class="modal-actions">
           <button id="pos-cancel" data-modal-close>Hủy</button>
           <button id="pos-ok" class="primary">Tiếp tục</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Thay trang bằng trang của PDF khác (replaceSelectedFromFile, app.js). The
+         arithmetic is PageRange.replacePlan — node-tested (npm run test:pages). -->
+    <div class="modal" id="replace-modal" hidden>
+      <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        <h3>Thay trang</h3>
+        <p class="cmp-note" id="replace-what" data-no-i18n></p>
+        <label class="chk"><input type="radio" name="replace-mode" id="replace-all" value="all" checked /> <span id="replace-all-label" data-no-i18n>Tất cả các trang</span></label>
+        <label class="chk"><input type="radio" name="replace-mode" id="replace-pick" value="pick" /> Chỉ các trang được chọn</label>
+        <label>Trang của file nguồn <input id="replace-spec" type="text" placeholder="vd: 1-3, 5" autocomplete="off" spellcheck="false" /></label>
+        <p class="cmp-note" id="replace-hint" data-no-i18n></p>
+        <div class="modal-actions">
+          <button id="replace-cancel" data-modal-close>Hủy</button>
+          <button id="replace-ok" class="primary">Thay trang</button>
         </div>
       </div>
     </div>
@@ -1212,6 +1234,15 @@
         <hr class="set-div" />
         <div class="set-row-between">
           <div>
+            <b>Chữ ký của tôi</b>
+            <p class="cmp-note" style="margin:2px 0 0">Ảnh chữ ký / con dấu lưu sẵn — chuột phải lên trang để chèn nhanh · mã hoá bằng tài khoản Windows</p>
+          </div>
+          <button id="set-signatures" type="button" class="ghost">Quản lý…</button>
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
             <b>Hiện đường dẫn file</b>
             <p class="cmp-note" style="margin:2px 0 0">Dải đường dẫn ngay dưới thanh công cụ — tắt đi để trang rộng thêm</p>
           </div>
@@ -1278,6 +1309,37 @@
         </div>
       </div>
     </div>
+
+    <!-- Chữ ký của tôi (renderer/signatures.js). AFTER #set-modal in the document on
+         purpose: every .modal shares one z-index, so document order is paint order, and
+         this one is opened from inside Cài đặt. -->
+    <div class="modal" id="sig-modal" hidden>
+      <div class="modal-card sig-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        <h3>Chữ ký của tôi</h3>
+        <p class="cmp-note">Lưu sẵn ảnh chữ ký hoặc con dấu để chèn nhanh: chuột phải lên trang → Chèn chữ ký, hoặc nút chữ ký trên thanh Chú thích. Chỉ lưu trên máy này, mã hoá bằng tài khoản Windows của bạn.</p>
+        <p class="set-status" id="sig-status" data-no-i18n></p>
+        <div id="sig-list" class="sig-list" data-no-i18n></div>
+        <div id="sig-edit" class="sig-edit" hidden>
+          <div class="sig-preview sig-checker"><canvas id="sig-canvas"></canvas></div>
+          <p class="cmp-note" id="sig-dims" data-no-i18n></p>
+          <label class="chk"><input type="checkbox" id="sig-rmbg" /> Xoá nền trắng (ảnh chụp / scan trên giấy)</label>
+          <label id="sig-level-row">Độ mạnh <input type="range" id="sig-level" min="0" max="100" step="1" value="50" /></label>
+          <label class="chk"><input type="checkbox" id="sig-trim" checked /> Cắt sát nét ký (bỏ khoảng trống xung quanh)</label>
+          <label>Tên <input type="text" id="sig-name" maxlength="60" placeholder="vd: Chữ ký Giám đốc" autocomplete="off" spellcheck="false" /></label>
+          <div class="modal-actions">
+            <button id="sig-edit-cancel" type="button">Bỏ</button>
+            <button id="sig-edit-save" type="button" class="primary">Lưu chữ ký</button>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="sig-reset" type="button" class="ghost" hidden>Tạo kho mới</button>
+          <button id="sig-add" type="button" class="ghost">+ Thêm chữ ký…</button>
+          <button id="sig-close" data-modal-close>Đóng</button>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="sig-file" accept="image/png,image/jpeg,image/bmp,image/webp,image/gif" hidden />
 
     <!-- Compare: pick two PDFs + mode -->
     <div class="modal" id="cmp2-modal" hidden>
@@ -1447,6 +1509,7 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
+    <script src="sig-image.js"></script>
     <!-- raster-cap.js: hạn mức bitmap trang (BI-78). Phải nạp TRƯỚC app.js —
          renderPageCanvas gọi window.RasterCap.viewRasterDpr trên mọi trang. -->
     <script src="raster-cap.js"></script>
@@ -1491,6 +1554,9 @@
          handler, so its position relative to capture.js does not matter. -->
     <script src="page-move.js"></script>
     <script src="sign.js"></script>
+    <!-- Chữ ký lưu sẵn. AFTER editor.js and capture.js: it calls Editor.placeSignature and
+         Capture.showMenu, and both of those resolve window.Signatures at call time. -->
+    <script src="signatures.js"></script>
     <!-- help.js last: it only needs $ from app.js and window.I18N from i18n.js, both of
          which are already up, and nothing else in the renderer depends on window.Help at
          load time (app.js resolves it lazily inside the menu handler). -->
