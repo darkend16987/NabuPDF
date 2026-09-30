@@ -1083,6 +1083,28 @@ body.editing.tool-texthl .annot-layer { pointer-events: none; }
 /* Legacy/broken-font text get_text mis-decoded — amber = "click to OCR-recover". */
 .span-box.suspect { background: rgba(251, 191, 36, 0.20); border-color: #f59e0b; border-style: dashed; }
 .span-box.suspect:hover { background: rgba(251, 191, 36, 0.34); border-color: #f59e0b; }
+/* Di chuyển chữ (v0.2.73). The moved box carries a DOM preview of the text Áp dụng will
+   write there, on a near-opaque page-white so it reads over whatever it was dropped on;
+   the ghost marks the original spot, whose glyphs the canvas keeps painting until the
+   edit is applied — hatched red = "this goes away". */
+.span-box.moved { background: rgba(255, 255, 255, 0.9); border-color: #4ade80; overflow: visible; }
+.span-box.dragging { transition: none; opacity: 0.9; border-style: dashed; border-color: var(--accent); z-index: 5; }
+.span-ghost {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 1px dashed #ef4444;
+  border-radius: 2px;
+  background: repeating-linear-gradient(45deg, rgba(239, 68, 68, 0.2) 0 3px, transparent 3px 6px);
+}
+.span-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  pointer-events: none;
+}
+body.span-dragging, body.span-dragging * { cursor: grabbing !important; user-select: none !important; }
 .span-input {
   position: absolute;
   box-sizing: border-box;

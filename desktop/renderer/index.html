@@ -320,7 +320,7 @@
       <!-- value= is only what shows for the split second before setTool() writes the
            slot the current tool actually draws with. It must stay equal to
            DEFAULT_ANNOT_COLOR in editor.js — `npm run test:defaults` fails if it drifts. -->
-      <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#d32f2f" /></label>
+      <label class="ctl" data-ctl="color" title="Màu (tô sáng / chữ / nét vẽ)">Màu <input type="color" id="ed-color" value="#e90000" /></label>
       <label class="ctl" data-ctl="redact" title="Màu che thông tin">Màu che <input type="color" id="ed-redact-color" value="#000000" /></label>
       <label class="ctl" data-ctl="font" title="Font chữ">Font
         <select id="ed-font">
@@ -340,7 +340,7 @@
            beside it is the common case (90) without making the field a dropdown. -->
       <label class="ctl" data-ctl="textrot" title="Xoay chữ trong hộp văn bản (độ, ngược chiều kim đồng hồ). Xoay được cả hộp đã gõ xong và hộp mở lại từ file đã lưu.">Xoay <input type="number" id="ed-textrot" min="-180" max="180" step="1" value="0" /></label>
       <button id="ed-textrot-90" data-ctl="textrot" title="Xoay thêm 90° ngược chiều kim đồng hồ">+90°</button>
-      <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="2" /></label>
+      <label class="ctl" data-ctl="penwidth" title="Độ dày nét vẽ / nét viền">Nét <input type="number" id="ed-penwidth" min="1" max="24" value="1" /></label>
       <label class="ctl" data-ctl="arrowlabel" title="Vị trí nhãn chữ của mũi tên">Nhãn
         <select id="ed-arrowlabel">
           <option value="head">Ở đầu (mũi nhọn)</option>
@@ -1228,7 +1228,17 @@
             <p class="cmp-note" style="margin:2px 0 0">Màu của vật thể mới khi Chú thích: hộp văn bản, mũi tên, mây, chữ nhật, tròn, bút vẽ, ghi chú, đo · dấu ✓ ✗, Tô sáng và Màu che giữ màu riêng · vật thể đã vẽ không đổi</p>
           </div>
           <!-- value= must stay equal to DEFAULT_ANNOT_COLOR in editor.js (test:defaults). -->
-          <input type="color" id="set-annot-color" value="#d32f2f" title="Màu mặc định cho chú thích mới" />
+          <input type="color" id="set-annot-color" value="#e90000" title="Màu mặc định cho chú thích mới" />
+        </div>
+
+        <hr class="set-div" />
+        <div class="set-row-between">
+          <div>
+            <b>Nét mặc định</b>
+            <p class="cmp-note" style="margin:2px 0 0">Độ dày nét (pt) của vật thể mới: bút vẽ, chữ nhật, tròn, mây, hình tự do, mũi tên, đo, dấu ✓ ✗ · vật thể đã vẽ không đổi</p>
+          </div>
+          <!-- min/max must stay equal to PEN_WIDTH_MIN/MAX in editor.js; the value is written by JS on open (test:defaults). -->
+          <input type="number" id="set-pen-width" min="1" max="24" step="1" value="1" style="width:64px" title="Độ dày nét mặc định cho chú thích mới" />
         </div>
 
         <hr class="set-div" />

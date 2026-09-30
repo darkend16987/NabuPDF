@@ -29,7 +29,7 @@ const I = {
 const FEATURES = [
   { i: "ai", t: "Bóc tách dữ liệu bằng AI", d: "OCR tiếng Việt kết hợp AI để đọc hợp đồng, hoá đơn, biểu mẫu — lấy ra đúng những trường bạn cần rồi xuất Excel hoặc JSON." },
   { i: "translate", t: "Dịch PDF bằng AI", d: "Dịch tài liệu sang ngôn ngữ khác mà giữ nguyên bố cục, kể cả bảng biểu, và xuất ra một file PDF mới. Xoá được cả chữ gốc đã chuyển thành nét vẽ, nên bản dịch không nằm đè lên bản gốc." },
-  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp chữ thật trong tài liệu chứ không vẽ đè, giữ đúng font, cỡ chữ và nền sẵn có." },
+  { i: "type", t: "Sửa nội dung gốc của PDF", d: "Chỉnh trực tiếp chữ thật trong tài liệu chứ không vẽ đè, giữ đúng font, cỡ chữ và nền sẵn có — và kéo được dòng chữ sang chỗ khác." },
   { i: "search", t: "Tìm & Thay thế chữ", d: "Tìm một từ khoá trong toàn bộ tài liệu rồi thay từng chỗ hoặc thay tất cả trong một lần — quen tay như trong Word." },
   { i: "pages", t: "Quản lý trang", d: "Ghép, tách, chèn, xoay, sắp xếp, xoá theo khoảng, thêm trang trắng và đánh số trang. Thay một trang — hay một dải trang — bằng trang của file PDF khác chỉ bằng chuột phải, như PDF24. Kéo được cả một trang từ tài liệu này sang tài liệu khác đang mở ở cửa sổ bên cạnh." },
   { i: "combine", t: "Gộp nhiều PDF thành một", d: "Chọn nhiều file cùng lúc, sắp xếp thứ tự rồi gộp thành một tài liệu duy nhất — ngay từ menu chuột phải trong Explorer, hoặc bằng cách kéo–thả vào cửa sổ app." },

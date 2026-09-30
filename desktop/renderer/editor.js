@@ -236,9 +236,47 @@
   // `#set-annot-color`'s — the first is the running default, the other two are what the
   // user sees for the split second before JS writes them. `npm run test:defaults` fails
   // if they drift.
-  const DEFAULT_ANNOT_COLOR = "#d32f2f";
+  //
+  // #e90000 = RGB(233, 0, 0) since v0.2.73 (was #d32f2f): a purer red, the one review
+  // stamps are usually printed in. The ✗ stamp's own slot below moved with it.
+  const DEFAULT_ANNOT_COLOR = "#e90000";
   const ANNOT_COLOR_KEY = "nabu-annot-color";
   const HEX6 = /^#[0-9a-fA-F]{6}$/;
+
+  // ---- default pen width (Cài đặt → Nét mặc định) ---------------------------
+  //
+  // Same shape as the colour above, for the ONE shared `ed.penWidth` every stroked kind
+  // draws with (draw, box, ellipse, cloud, cloudpen, poly, arrow, dim, ✓, ✗). 1 pt since
+  // v0.2.73 (was a hard-coded 2 that reset on every launch): 1 pt is the conventional
+  // markup weight on a drawing sheet, and 2 pt buried the fine CAD lines being marked.
+  //
+  // This is the default for NEW objects only. The `a.width || 2` fallbacks in the
+  // renderers and the bake are a DIFFERENT thing — the width an object saved without
+  // one had always been drawn at — and must stay 2, or files already written would
+  // change weight on reopen.
+  //
+  // TWO literals have to agree: this constant and `#ed-penwidth`'s markup value (the
+  // Settings number input is written by JS on open). PEN_WIDTH_MIN/MAX mirror the
+  // inputs' min/max. `npm run test:defaults` checks all of it.
+  const DEFAULT_PEN_WIDTH = 1;
+  const PEN_WIDTH_KEY = "nabu-annot-penwidth";
+  const PEN_WIDTH_MIN = 1;
+  const PEN_WIDTH_MAX = 24;
+
+  // Whole points in [MIN, MAX], or null. Integers only because both number inputs step
+  // by 1 — a stored 1.5 would be a value neither input can show.
+  function normPenWidth(v) {
+    const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? +v : NaN;
+    return Number.isInteger(n) && n >= PEN_WIDTH_MIN && n <= PEN_WIDTH_MAX ? n : null;
+  }
+  function savedPenWidth() {
+    try {
+      const n = normPenWidth(localStorage.getItem(PEN_WIDTH_KEY));
+      return n == null ? DEFAULT_PEN_WIDTH : n;
+    } catch (_) {
+      return DEFAULT_PEN_WIDTH; // unreadable storage must not cost the drawing tools
+    }
+  }
 
   // Validated on the way OUT of storage, which a human may have edited and which an
   // older/newer build may have written: junk falls back to the default rather than
@@ -269,7 +307,7 @@
     // tick meaningless until the user recoloured it by hand. Same "Màu" control —
     // it just shows whichever default belongs to the current tool (colorSlotFor).
     checkColor: "#2e7d32", // ✓ — green
-    crossColor: "#d32f2f", // ✗ — red
+    crossColor: "#e90000", // ✗ — red (same red as DEFAULT_ANNOT_COLOR)
     fontSize: 16, // points
     font: "sans", // text-box font family key (see FONT_STACKS)
     bold: false,
@@ -290,7 +328,9 @@
     // (openTextEditor) — the angle shows up the moment the box is committed, which is
     // also when it can be selected and re-turned.
     textRot: 0,
-    penWidth: 2,
+    // Seeded from Cài đặt → Nét mặc định; the edit bar's Nét box changes it for this
+    // session only (same split as `color` above).
+    penWidth: savedPenWidth(),
     arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
@@ -4400,6 +4440,10 @@
     // laying down yellow.
     const cpick = $("ed-color");
     if (cpick) cpick.value = ed[colorSlotFor(tool)];
+    // And the Nét box: selecting an object shows THAT object's width (syncControls), so
+    // switching tool has to bring back the width the NEXT stroke will get.
+    const wpick = $("ed-penwidth");
+    if (wpick) wpick.value = String(ed.penWidth);
     // Same reason as the colour picker above: switching to the Hộp văn bản tool must
     // show the angle the NEXT box will get, not whatever the last SELECTED box had.
     const rpick = $("ed-textrot");
@@ -4444,6 +4488,25 @@
     const cpick = $("ed-color");
     if (cpick) cpick.value = ed[colorSlotFor(ed.tool)];
     return ed.color;
+  }
+
+  // Cài đặt → Nét mặc định. Same contract as setDefaultColor: applies to this session at
+  // once, never restyles objects already drawn, and returns the width actually in force
+  // so the Settings input settles on the truth when handed junk.
+  function setDefaultPenWidth(v) {
+    const n = normPenWidth(typeof v === "number" ? v : String(v == null ? "" : v));
+    if (n == null) return ed.penWidth;
+    ed.penWidth = n;
+    try {
+      localStorage.setItem(PEN_WIDTH_KEY, String(n));
+    } catch (_) {
+      /* holds for this session, just won't be remembered */
+    }
+    // Only when nothing is selected: with a selection the Nét box is showing THAT
+    // object's width, and overwriting it would misreport the object.
+    const wpick = $("ed-penwidth");
+    if (wpick && ed.sel == null) wpick.value = String(n);
+    return ed.penWidth;
   }
 
   // The one writer for #ed-hint. Deliberately NOT a place for instructions — those
@@ -5038,7 +5101,7 @@
   });
 
   $("ed-penwidth").oninput = (e) => {
-    ed.penWidth = Math.max(1, +e.target.value || 2);
+    ed.penWidth = Math.max(1, +e.target.value || DEFAULT_PEN_WIDTH);
     // Applies to the whole selection, same reasoning as the colour picker above.
     const targets = selAnnots().filter((a) =>
       ["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind)
@@ -5389,5 +5452,8 @@
     // app.js never grows a second copy of the storage key or the hex validation.
     getDefaultColor: () => ed.color,
     setDefaultColor,
+    // Cài đặt → Nét mặc định — same single-owner rule as the colour.
+    getDefaultPenWidth: () => ed.penWidth,
+    setDefaultPenWidth,
   };
 })();

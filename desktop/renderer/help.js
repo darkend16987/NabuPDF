@@ -469,8 +469,8 @@
         },
         {
           note: T(
-            "**Màu mặc định là ĐỎ.** Hộp văn bản, mũi tên, mây, chữ nhật, tròn, bút vẽ, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới** — đổi ở **Cài đặt → Màu chú thích mặc định**. Bốn thứ giữ màu riêng vì màu của chúng có nghĩa: dấu ✓ xanh (đúng), dấu ✗ đỏ (sai), **Tô sáng** vàng, **Màu che** đen. Còn ô **Màu** trên thanh công cụ chỉ ảnh hưởng vật thể đang chọn và những vật thể vẽ tiếp trong phiên này, **không** ghi vào Cài đặt.",
-            "**The default colour is RED.** Text boxes, arrows, clouds, rectangles, ellipses, freehand, notes and dimensions all take it for **new** objects — change it under **Cài đặt → Màu chú thích mặc định** (Settings). Four things keep their own colour because their colour carries meaning: ✓ green (correct), ✗ red (wrong), **Tô sáng** highlighter yellow, **Màu che** black. The **Màu** picker on the toolbar only affects the selected object and what you draw next in this session — it does **not** write the setting."
+            "**Màu mặc định là ĐỎ** (RGB 233, 0, 0). Hộp văn bản, mũi tên, mây, chữ nhật, tròn, hình tự do, bút vẽ, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới** — đổi ở **Cài đặt → Màu chú thích mặc định**. Bốn thứ giữ màu riêng vì màu của chúng có nghĩa: dấu ✓ xanh (đúng), dấu ✗ đỏ (sai), **Tô sáng** vàng, **Màu che** đen. **Nét mặc định là 1 pt** cho mọi công cụ có ô **Nét** (bút vẽ, chữ nhật, tròn, mây, hình tự do, mũi tên, đo, ✓ ✗) — đổi ở **Cài đặt → Nét mặc định**. Còn ô **Màu** và ô **Nét** trên thanh công cụ chỉ ảnh hưởng vật thể đang chọn và những vật thể vẽ tiếp trong phiên này, **không** ghi vào Cài đặt. Vật thể đã vẽ không bao giờ tự đổi theo Cài đặt.",
+            "**The default colour is RED** (RGB 233, 0, 0). Text boxes, arrows, clouds, rectangles, ellipses, free shapes, freehand, notes and dimensions all take it for **new** objects — change it under **Cài đặt → Màu chú thích mặc định** (Settings). Four things keep their own colour because their colour carries meaning: ✓ green (correct), ✗ red (wrong), **Tô sáng** highlighter yellow, **Màu che** black. **The default line width is 1 pt** for every tool with a **Nét** box (freehand, rectangle, ellipse, cloud, free shape, arrow, dimension, ✓ ✗) — change it under **Cài đặt → Nét mặc định**. The toolbar's **Màu** and **Nét** boxes only affect the selected object and what you draw next in this session — they do **not** write the setting. Objects already drawn never change when the setting does."
           ),
         },
 
@@ -545,6 +545,10 @@
               "✅ **PDFs with real text** (exported from Word / Excel, printed to PDF): click **Sửa nội dung** → clickable outlines appear around each text run → click one to edit it → **Áp dụng** → **Lưu**. The old text is genuinely removed and the new text takes its place."
             ),
             T(
+              "✅ **Di chuyển chữ** (từ v0.2.73): **giữ chuột kéo** một ô chữ sang chỗ mới — chữ đã sửa hay chưa sửa đều kéo được. **Bấm** (không kéo) vẫn là mở ô để sửa như cũ. Trong lúc chưa Áp dụng, chỗ cũ hiện **khung sọc đỏ nét đứt** (chữ ở đó sẽ bị xoá), chỗ mới hiện **bản xem trước** của chữ. Kéo về sát chỗ cũ thì ô **tự bắt về** như chưa di chuyển. Mỗi lần kéo **một ô**, trong cùng trang, không kéo ra ngoài mép trang được. Bấm **Áp dụng** thì chữ cũ bị xoá thật ở chỗ cũ và vẽ lại ở chỗ mới — `Ctrl+Z` để hoàn tác.",
+              "✅ **Moving text** (from v0.2.73): **drag** a text run to a new spot — edited or untouched runs alike. A **click** (no drag) still opens the run for editing. Until you press Áp dụng, the old spot shows a **dashed red hatched box** (the text there will be removed) and the new spot shows a **preview** of the text. Drop it close to where it was and it **snaps back** as if never moved. One run per drag, within the same page, and never past the page edge. **Áp dụng** removes the old text for real and redraws it at the new spot — `Ctrl+Z` undoes it."
+            ),
+            T(
               "❌ **PDF scan** (ảnh chụp / scan giấy): không có ký tự nào để sửa. App sẽ báo và bạn nên dùng **OCR văn bản** hoặc **Bóc tách** thay thế.",
               "❌ **Scanned PDFs** (photographed / scanned paper): there are no characters to edit. The app says so; use **OCR văn bản** or **Bóc tách** instead."
             ),
@@ -576,8 +580,8 @@
         },
         {
           note: T(
-            "**Giới hạn đã biết:** sửa trong phạm vi **từng đoạn**, app không tự dàn lại dòng cả khối. Chữ mới dài hơn ô cũ sẽ **tự co nhỏ** cho vừa.",
-            "**Known limits:** edits are **per text run**; the app does not reflow a whole paragraph. Text longer than the original run **shrinks to fit**."
+            "**Giới hạn đã biết:** sửa và di chuyển trong phạm vi **từng đoạn** (một dòng có chữ đậm xen chữ thường là nhiều đoạn — kéo từng đoạn), app không tự dàn lại dòng cả khối. Chữ đã di chuyển được **vẽ lại**, nên nếu máy không có font gốc thì nó dùng font thay thế gần nhất, giống như khi sửa chữ. Chữ mới dài hơn ô cũ sẽ **tự co nhỏ** cho vừa.",
+            "**Known limits:** edits and moves are **per text run** (a line mixing bold and regular is several runs — drag each); the app does not reflow a whole paragraph. A moved run is **redrawn**, so if this machine lacks the original font it uses the closest substitute, exactly as an edit does. Text longer than the original run **shrinks to fit**."
           ),
         },
 

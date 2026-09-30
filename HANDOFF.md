@@ -4,7 +4,31 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-26 · v0.2.72 đã phát hành (dưới đây) · v0.2.71 là bản trước đó_
+_Cập nhật: 2026-09-30 · v0.2.73 đã phát hành (dưới đây) · v0.2.72 là bản trước đó_
+
+> **v0.2.73 — di chuyển chữ trong Sửa nội dung, màu `#e90000` và nét mặc định 1 pt** (phát hành 2026-09-30).
+>
+> 1. **Di chuyển chữ** (`text-edit.js` + `/edit-text`): kéo ô span → edit mang `offset: [dx, dy]` (pt,
+>    **không gian hiển thị** = `bbox_view`). Sidecar vẫn redact ở `bbox` **gốc**, vẽ lại ở
+>    `origin + offset`; nền và gạch chân đi theo. Quy đổi sang không gian chưa xoay bằng
+>    `_view_offset_to_page` (hiệu hai điểm qua `page.derotation_matrix` — là **vector**, phần tịnh tiến
+>    của ma trận phải triệt tiêu). Không có `offset` ⇒ output y hệt cũ, nên Tìm & Thay thế không đổi.
+>    Renderer: ngưỡng kéo 4 px (dưới ngưỡng vẫn là click mở ô sửa), bắt về chỗ cũ trong 5 px (xoá edit
+>    nếu chỉ có move — `isPristine`), kẹp trong trang, khung ma sọc đỏ ở chỗ cũ + xem trước bằng DOM
+>    (chỉ cho span đã di chuyển, bỏ qua chữ dựng dọc), span lỗi font phải OCR trước mới kéo được.
+>    Trong lúc kéo chỉ đổi `left/top` của một phần tử; `renderBoxes()` chạy **một lần** khi thả.
+> 2. **Màu mặc định `#d32f2f` → `#e90000`** (RGB 233,0,0), **dấu ✗ đổi theo**. Máy đã lưu màu ở Cài đặt
+>    (`nabu-annot-color`) giữ màu đó.
+> 3. **Nét mặc định 2 → 1 pt**, thành **Cài đặt → Nét mặc định** (`nabu-annot-penwidth`, số nguyên 1–24,
+>    `savedPenWidth`/`setDefaultPenWidth` trong editor.js — một chủ sở hữu như màu). Một giá trị dùng
+>    chung cho mọi công cụ có ô Nét. ⚠️ Các fallback `a.width || 2` (file cũ không có width) **cố ý giữ 2**
+>    — test:defaults canh.
+>
+> **Lưới:** `test_edit_text_move.py` mới (49, có ca GUARD: phá phép quy đổi ⇒ 7 ca đỏ), `test:defaults`
+> 132 → 158. Nghiệm thu GUI CDP trên app thật **33/33** ở zoom 100% và 160%. **Sidecar build lại** (đổi
+> `api.py`). Tài liệu: help.js, HUONG-DAN-SU-DUNG.md, README, site (khối "Mới", thẻ tính năng, lịch sử).
+> ⚠️ Lần chạy probe đầu tiên, cú bấm **Sửa nội dung** đầu tiên không vào chế độ sửa (không tái hiện ở 3
+> lần sau, probe lúc đó chưa ghi toast nên không rõ nguyên nhân — nhánh `enter()` không bị sửa ở bản này).
 
 > **v0.2.72 — thay trang, copy ảnh sang file khác, chữ ký lưu sẵn** (phát hành 2026-09-26).
 > Chi tiết + số đo: [docs/RESEARCH-2026-09-26-replace-pages-image-clip-signatures.md](docs/RESEARCH-2026-09-26-replace-pages-image-clip-signatures.md).

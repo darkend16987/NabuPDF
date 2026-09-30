@@ -168,55 +168,49 @@
       <div class="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-orange-50/60 p-7 shadow-card md:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Mới</span>
-          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.72</span> · 26/09/2026</span>
+          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.73</span> · 30/09/2026</span>
           <a href="/lich-su-phien-ban.html" class="ml-auto text-sm font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">Xem toàn bộ lịch sử →</a>
         </div>
 
-        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Chữ ký lưu sẵn, thay trang như PDF24 — và ảnh copy được sang file khác</h2>
+        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Kéo chữ gốc sang chỗ khác — và nét chú thích mảnh, đỏ rõ hơn</h2>
 
         <div class="mt-6 grid gap-6 md:grid-cols-2">
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2.5 0 3-9 4.5-9S9 15 10.5 15 12 9 13.5 9 15 13 17 13"/><path d="M3 21h18"/><path d="M17 13c1.5 0 2-2 3-2"/></svg>
-              Chữ ký lưu sẵn: chuột phải là ký
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg>
+              Di chuyển chữ trong Sửa nội dung
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Ai phải ký hàng chục bộ hồ sơ đều biết cảnh đi tìm lại file ảnh chữ ký mỗi lần. Nay bạn
-              thiết lập <b>một lần</b> ở <b>Cài đặt → Chữ ký của tôi</b>, rồi về sau chỉ cần <b>chuột phải lên
-              trang → Chèn chữ ký</b>: chữ ký nằm ngay giữa chỗ bạn bấm, kéo để chỉnh, bấm <b>Xong</b> là xong.
-              App <b>nhớ cỡ</b> bạn dùng lần trước, nên lần sau ra đúng cỡ quen tay.
+              Dòng chữ nằm lệch, đè lên khung bảng, hay cần nhường chỗ cho con dấu? Trong <b>Sửa nội dung</b>,
+              nay chỉ cần <b>giữ chuột kéo</b> ô chữ sang chỗ mới — chữ đã sửa hay chưa sửa đều kéo được. Bấm
+              (không kéo) vẫn mở ô để sửa như trước.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Chữ ký chụp hay scan trên giấy? Bật <b>Xoá nền trắng</b> là nền giấy biến thành trong suốt mà
-              mép nét vẫn mềm, cùng <b>Cắt sát nét ký</b> để khung ôm gọn — không còn hộp trắng đè lên chữ
-              hợp đồng. Kho chữ ký chỉ nằm trên máy bạn và được <b>mã hoá bằng tài khoản Windows</b>: chép
-              file sang máy khác cũng không mở được.
+              Trước khi ghi, chỗ cũ hiện <b>khung sọc đỏ</b> (chữ ở đó sẽ bị xoá), chỗ mới hiện <b>bản xem
+              trước</b> của chữ; kéo về sát chỗ cũ là ô tự bắt về. Bấm <b>Áp dụng</b> thì chữ cũ bị <b>xoá thật</b>
+              và vẽ lại ở chỗ mới — kể cả trên bản vẽ CAD xoay ngang. Một <code>Ctrl+Z</code> là về như cũ.
             </p>
           </div>
 
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h11l-3-3"/><path d="M20 16H9l3 3"/></svg>
-              Thay trang bằng trang của file khác
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21l7-7"/><path d="M14 4l6 6-9 9H5v-6z"/></svg>
+              Màu và nét mặc định mới cho chú thích
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Hợp đồng đã ghép xong mới phát hiện trang 7 là bản cũ? Trước đây phải xoá trang rồi chèn lại
-              đúng chỗ. Nay chỉ cần <b>chuột phải trang 7 → Thay trang này bằng PDF khác…</b>, chọn file, rồi
-              lấy <b>tất cả</b> trang của nó hoặc chỉ vài trang như <code>2-3</code>. Dòng tóm tắt cho biết trước
-              tài liệu sẽ còn bao nhiêu trang, và một <code>Ctrl+Z</code> là về nguyên bản. Chọn một dải trang
-              liền nhau thì thay được cả dải một lần.
+              Chú thích mới nay vẽ bằng <b>đỏ tươi RGB 233, 0, 0</b> — cả dấu ✗ — và <b>nét 1 pt</b> thay vì 2 pt,
+              nên khoanh mây, khung, mũi tên hay nét đo trên bản vẽ không còn che mất các đường mảnh bên dưới.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              <b>Và một lỗi được sửa:</b> ảnh — nhất là ảnh vừa dán từ ảnh chụp màn hình — trước đây
-              <b>không copy được sang file khác</b>, và tệ hơn, nếu clipboard Windows còn giữ ảnh chụp đó thì
-              <code>Ctrl+V</code> dán lại ảnh chụp gốc ở cỡ mặc định thay vì bản bạn vừa chỉnh. Nay ảnh sang được
-              tab hay cửa sổ khác đúng cỡ, đúng chỗ, và <b>lần copy gần nhất luôn thắng</b>.
+              Thích nét dày hơn? <b>Cài đặt</b> có thêm dòng <b>Nét mặc định</b>, nằm ngay dưới <b>Màu chú thích mặc
+              định</b>, và app <b>nhớ</b> lựa chọn đó qua các lần mở. Chú thích đã vẽ và file đã lưu <b>không</b> bị đổi
+              màu hay đổi nét.
             </p>
           </div>
         </div>
 
         <p class="mt-6 text-sm text-ink-muted">
-          <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã có mục cho cả ba, tiếng Việt và tiếng Anh.
+          <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã có mục cho cả hai, tiếng Việt và tiếng Anh.
           App tự cập nhật — thường bạn không cần tải lại bằng tay.
         </p>
       </div>

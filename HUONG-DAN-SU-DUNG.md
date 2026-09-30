@@ -196,6 +196,18 @@ sau dùng OCR sẽ tải lại.
 > **Chọn font khi sửa:** ô **Font** có **"Giữ nguyên (font gốc)"** (mặc định — giữ đúng font của đoạn
 > đang sửa) và nhóm **"Font máy"** liệt kê font cài trên máy. Chọn font máy → chữ sửa dùng đúng font đó.
 
+> ↔️ **Di chuyển chữ (từ v0.2.73):** trong **Sửa chữ**, **giữ chuột kéo** một ô chữ sang chỗ mới —
+> chữ đã sửa hay chưa sửa đều kéo được. **Bấm** (không kéo) vẫn là mở ô để sửa như cũ.
+> - Trước khi **Áp dụng**: chỗ cũ hiện **khung sọc đỏ nét đứt** (chữ ở đó sẽ bị xoá), chỗ mới hiện
+>   **bản xem trước** của chữ. Kéo về **sát chỗ cũ** thì ô tự bắt về như chưa di chuyển.
+> - Bấm **Áp dụng**: chữ cũ bị **xoá thật** ở chỗ cũ và vẽ lại ở chỗ mới — đúng hướng cả trên bản vẽ
+>   xoay ngang. `Ctrl+Z` để hoàn tác.
+> - Mỗi lần kéo **một ô**, trong **cùng trang**, không kéo ra ngoài mép trang được. Một dòng có chữ đậm
+>   xen chữ thường là **nhiều ô** — kéo từng ô.
+> - Chữ bị lỗi font (ô viền vàng nét đứt) phải **bấm vào để OCR lấy lại chữ đúng** trước rồi mới kéo được.
+> - Chữ đã di chuyển được **vẽ lại**, nên máy không có font gốc thì dùng font thay thế gần nhất — giống
+>   như khi sửa chữ.
+
 Giới hạn đã biết: sửa trong phạm vi từng đoạn (không tự dàn lại dòng); chữ dài hơn ô cũ sẽ tự co nhỏ.
 
 > **Bản vẽ nằm ngang (CAD / hồ sơ thầu):** từ v0.2.62, chữ sửa lại — và chữ thay thế của
@@ -318,11 +330,15 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   **Nét vẽ tay không có** — điểm của nó là vết chuột chứ không phải góc ai đặt ra, và chúng được thưa
 >   hoá khi lưu nên đỉnh vừa kéo chưa chắc sống sót qua một vòng lưu.
 
-> **Màu mặc định của chú thích là ĐỎ (từ v0.2.60):** hộp văn bản, mũi tên, khoanh mây, chữ nhật, tròn,
-> vẽ tay, ghi chú và đoạn đo đều lấy màu này cho vật thể **mới**. Đổi ở **Cài đặt → Màu chú thích mặc
-> định** — app nhớ lựa chọn cho các lần sau.
+> **Màu mặc định của chú thích là ĐỎ (từ v0.2.60; từ v0.2.73 là đỏ tươi RGB 233, 0, 0 = `#e90000`):**
+> hộp văn bản, mũi tên, khoanh mây, chữ nhật, tròn, hình tự do, vẽ tay, ghi chú và đoạn đo đều lấy màu
+> này cho vật thể **mới**. Đổi ở **Cài đặt → Màu chú thích mặc định** — app nhớ lựa chọn cho các lần sau
+> (máy nào đã tự chọn màu từ trước thì vẫn giữ màu đã chọn).
 > - Trước v0.2.60 màu này là **vàng**, mà chữ vàng trên giấy trắng gần như không đọc được — đó là lý do
 >   đổi sang đỏ.
+> - **Nét mặc định là 1 pt (từ v0.2.73, trước là 2)** cho mọi công cụ có ô **Nét**: vẽ tay, chữ nhật,
+>   tròn, mây, hình tự do, mũi tên, đo, dấu ✓ ✗. Đổi ở **Cài đặt → Nét mặc định** (1–24) — app nhớ cho
+>   các lần sau. Ô **Nét** trên thanh chú thích chỉ đổi cho phiên đang làm, **không** ghi vào Cài đặt.
 > - **Bốn thứ giữ màu riêng** vì màu của chúng có nghĩa: dấu **✓ xanh** (đúng), dấu **✗ đỏ** (sai),
 >   **Tô sáng vàng** (bút highlight), **Màu che đen**. Đổi màu mặc định **không** đụng tới chúng.
 > - Đổi màu ở Cài đặt chỉ áp cho vật thể **vẽ tiếp sau đó** — **vật thể đã vẽ không tự đổi màu**. Muốn

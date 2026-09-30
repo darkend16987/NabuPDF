@@ -2321,6 +2321,39 @@ class TextEdit(BaseModel):
     # /text-find report it. None = draw left-to-right, which is what this endpoint
     # did before BI-66 — so an older renderer keeps its exact old behaviour.
     dir: list[float] | None = None
+    # Move the REDRAW by [dx, dy] points, in DISPLAYED (rotation-applied) page space —
+    # the space the renderer's overlay and its drag live in (`bbox_view`). The
+    # redaction stays on `bbox`: the old glyphs are removed where they were, the new
+    # ones land at origin + offset (v0.2.73, "di chuyển chữ"). None / [0, 0] = draw in
+    # place, i.e. exactly the pre-v0.2.73 output — so /text-find's replace path and an
+    # older renderer are unaffected.
+    offset: list[float] | None = None
+
+
+def _view_offset_to_page(page, offset) -> tuple[float, float]:
+    """A displacement in DISPLAYED page space → the same displacement in the UNROTATED
+    space insert_text / draw_rect work in.
+
+    It is a VECTOR, not a point: map both ends through `derotation_matrix` and subtract,
+    so the matrix's translation part cancels (on a /Rotate 90 page derotation maps
+    (0, 0) to (0, H), and mapping the bare vector would add that H). On an unrotated
+    page the matrix is the identity and this returns the input unchanged. Anything that
+    is not two finite numbers is treated as "no move" rather than raising: a bad offset
+    must not cost the user the text edit that came with it."""
+    import fitz  # PyMuPDF — same lazy import as the endpoints
+
+    if not offset or len(offset) != 2:
+        return 0.0, 0.0
+    try:
+        vx, vy = float(offset[0]), float(offset[1])
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if not (math.isfinite(vx) and math.isfinite(vy)) or (vx == 0 and vy == 0):
+        return 0.0, 0.0
+    dm = page.derotation_matrix
+    p1 = fitz.Point(vx, vy) * dm
+    p0 = fitz.Point(0, 0) * dm
+    return p1.x - p0.x, p1.y - p0.y
 
 
 class EditTextRequest(BaseModel):
@@ -2499,11 +2532,18 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 # insert_textbox for a single span — no box-fit failure if the new text
                 # is a bit longer (it flows right, just like the original line did).
                 ox, oy = e.origin if e.origin else (x0, y1)
+                # Di chuyển chữ: shift the baseline, and with it everything drawn from
+                # it (text, underline) plus the background box below. The redaction
+                # above already ran on the ORIGINAL bbox. The metric corrections below
+                # read the bbox's SIZE only, which a move does not change.
+                mdx, mdy = _view_offset_to_page(page, e.offset)
+                ox, oy = ox + mdx, oy + mdy
 
                 # Background highlight (drawn before the text so the glyphs sit on top).
                 if e.bg is not None:
                     try:
-                        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=None, fill=_norm_color(e.bg))
+                        page.draw_rect(fitz.Rect(x0 + mdx, y0 + mdy, x1 + mdx, y1 + mdy),
+                                       color=None, fill=_norm_color(e.bg))
                     except Exception as be:
                         logger.debug("draw_rect (bg) error: %s", be)
 

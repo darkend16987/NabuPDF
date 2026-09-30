@@ -1322,7 +1322,13 @@ _Ghi 2026-08-13._
   `colorSlotFor()`, `setDefaultColor()`, khối `ed`; `renderer/app.js` `#set-annot-color`;
   `index.html` `#ed-color` + `#set-annot-color`.
 - Mặc định dùng chung đổi **vàng `#ffd54a` → đỏ `#d32f2f`** ở v0.2.60 vì hộp văn bản / mũi
-  tên màu vàng trên giấy trắng gần như vô hình.
+  tên màu vàng trên giấy trắng gần như vô hình; **→ `#e90000`** (RGB 233,0,0) ở v0.2.73, `crossColor`
+  đổi theo (✗ vẫn là ô riêng, chỉ trùng giá trị).
+- **Nét mặc định (v0.2.73):** `DEFAULT_PEN_WIDTH = 1`, `savedPenWidth()` / `normPenWidth()` /
+  `setDefaultPenWidth()`, key `nabu-annot-penwidth`, `#set-pen-width` + `#ed-penwidth`. Một giá trị
+  `ed.penWidth` dùng chung cho mọi kind có nét. **Các fallback `a.width || 2` KHÔNG phải mặc định** —
+  chúng là độ dày một vật thể lưu **không kèm width** vẫn luôn được vẽ, tức thuộc về **định dạng file**;
+  đổi chúng thành 1 là làm file đã lưu mỏng nét đi khi mở lại. test:defaults đếm và canh.
 - **BỐN kind giữ ô màu riêng vì màu của chúng là NGHĨA, không phải sở thích:**
   `check` xanh (= đúng), `cross` đỏ (= sai), `highlight` vàng highlighter
   (`mix-blend-mode: multiply` 0.4 ⇒ đỏ thành vệt hồng), `redact` đen. Gộp chúng vào một
@@ -2379,6 +2385,27 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
 - **Vỡ khi:** kho ghi ra dạng đọc được · mở app bằng tài khoản khác xoá mất kho · chữ ký lệch
   khỏi chỗ bấm · ảnh chèn bằng công cụ Ảnh đổi cỡ/vị trí so với trước.
 
+### BI-92 · Di chuyển chữ: redact ở `bbox` GỐC, vẽ ở `origin + offset`, offset là VECTOR trong không gian hiển thị
+_Ghi 2026-09-30 (v0.2.73)._
+- `api.py` `TextEdit.offset`, `_view_offset_to_page`, `/edit-text` (dời `ox, oy` + khung nền) ·
+  `renderer/text-edit.js` `startDrag` / `commitMove` / `isPristine` / `renderBoxes` (ghost + preview) /
+  `stage()` (giữ `offset` khi gõ lại).
+- **Offset đi theo không gian HIỂN THỊ** (chỗ chuột và `bbox_view` sống), sidecar tự quy đổi. Quy đổi
+  bằng **hiệu hai điểm** qua `derotation_matrix`, không nhân thẳng vector: trên trang `/Rotate 90`
+  ma trận đưa (0,0) tới (0,H), nhân thẳng là cộng thêm H.
+- **Redaction không đi theo** — xoá ở chỗ cũ là cả ý nghĩa của "di chuyển". Đổi `bbox` theo offset ở
+  renderer thay vì gửi `offset` là **xoá luôn chữ đang nằm ở chỗ mới**.
+- Không `offset` / `[0,0]` ⇒ output **pixel y hệt** trước (test D1–D3) — Tìm & Thay thế dùng chung
+  `/edit-text` và không gửi offset.
+- Renderer: dưới 4 px là **click** (mở ô sửa như cũ) · kéo xong nuốt đúng **một** click (cờ xoá ở
+  `pointerdown` kế, không bao giờ nuốt click của cử chỉ sau) · nghe trên `window` và tìm lại phần tử
+  theo `data-id` vì blur của ô đang mở dựng lại mọi box · trong lúc kéo chỉ đổi `left/top`, dựng lại
+  **một lần** khi thả · span `suspect` chưa OCR **không** kéo được (vẽ lại rác bằng font đọc được).
+- **Vỡ khi:** chữ trên bản vẽ xoay chạy ngược hướng kéo · chữ cũ còn ở chỗ cũ · bấm một ô không mở ô
+  sửa nữa · kéo về chỗ cũ vẫn để lại một edit vẽ lại tại chỗ · Tìm & Thay thế đổi output.
+- Kiểm: `.venv\Scripts\python test_edit_text_move.py` (có ca canh gác R3 + phá quy đổi ⇒ 7 đỏ) và
+  probe CDP kéo thật ở zoom ≠ 100% (px ÷ scale).
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2522,7 +2549,8 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
    để dựng lại đúng lỗi "chữ tự quay 90°" và đòi nó phải SAI, nên lưới này **không thể**
    xanh một cách vô nghĩa. `run_tests.py` đã tự gom, mục này để nhớ khi chỉ chạy lẻ.)
 2l. `cd desktop ; npm run test:defaults` → phải `N pass, 0 fail`
-   (màu chú thích mặc định — BI-61. Giữ **ba** literal `#d32f2f` bằng nhau, chặn việc gộp
+   (màu + nét chú thích mặc định — BI-61. Giữ **ba** literal `#e90000` bằng nhau, hai literal nét
+   `1` + min/max bằng nhau, canh fallback `a.width || 2`, chặn việc gộp
    4 màu có nghĩa `✓/✗/tô sáng/che`, và canh gác 2 fallback `#ffd54a` của
    `deserializeManaged` — đổi chúng là làm **file đã lưu** đổi màu khi mở lại).
 2m. `cd desktop ; npm run test:combine` → phải `N pass, 0 fail`

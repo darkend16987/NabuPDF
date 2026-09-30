@@ -156,8 +156,8 @@ check(
   DEFAULT_ANNOT_COLOR
 );
 check(
-  "DEFAULT_ANNOT_COLOR is RED, not the old yellow #ffd54a",
-  DEFAULT_ANNOT_COLOR === "#d32f2f",
+  "DEFAULT_ANNOT_COLOR is RGB(233,0,0) = #e90000 (v0.2.73; was #d32f2f, before that yellow)",
+  DEFAULT_ANNOT_COLOR === "#e90000",
   DEFAULT_ANNOT_COLOR
 );
 check(
@@ -184,7 +184,7 @@ check("3-digit hex → default", savedAnnotColorWith(storeWith("#fff")) === DEFA
 check("8-digit hex → default", savedAnnotColorWith(storeWith("#ffddaa80")) === DEFAULT_ANNOT_COLOR);
 check("non-hex digit → default", savedAnnotColorWith(storeWith("#12345g")) === DEFAULT_ANNOT_COLOR);
 check("missing # → default", savedAnnotColorWith(storeWith("d32f2f")) === DEFAULT_ANNOT_COLOR);
-check("whitespace padding → default", savedAnnotColorWith(storeWith(" #d32f2f ")) === DEFAULT_ANNOT_COLOR);
+check("whitespace padding → default", savedAnnotColorWith(storeWith(" #e90000 ")) === DEFAULT_ANNOT_COLOR);
 check("CSS injection attempt → default", savedAnnotColorWith(storeWith("#fff;} body{display:none")) === DEFAULT_ANNOT_COLOR);
 check(
   "storage that THROWS → default, not an exception (locked-down profile)",
@@ -235,6 +235,15 @@ check(
 check(
   "ed.highlightColor is still the highlighter yellow",
   /^\s*highlightColor: "#ffd54a"/m.test(edBlock)
+);
+check(
+  "ed.crossColor (✗ = sai) is the same red as the shared default",
+  new RegExp('^\\s*crossColor: "' + DEFAULT_ANNOT_COLOR + '"', "m").test(edBlock),
+  "the ✗ stamp moved to #e90000 together with DEFAULT_ANNOT_COLOR"
+);
+check(
+  "ed.checkColor (✓ = đúng) is still green",
+  /^\s*checkColor: "#2e7d32"/m.test(edBlock)
 );
 
 // ---- 4a. the FILL slots (v0.2.64) -----------------------------------------
@@ -789,6 +798,86 @@ check(
   !deserialize.includes("DEFAULT_ANNOT_COLOR"),
   "an already-saved file must reopen with the colours it was saved with"
 );
+
+// ---- 6. default pen width (Cài đặt → Nét mặc định, v0.2.73) ---------------
+
+group("default pen width: literals, validation, wiring");
+{
+  const DEFAULT_PEN_WIDTH = evalExpr(cutConst(EDITOR_SRC, "DEFAULT_PEN_WIDTH"));
+  const PEN_WIDTH_KEY = evalExpr(cutConst(EDITOR_SRC, "PEN_WIDTH_KEY"));
+  const PEN_WIDTH_MIN = evalExpr(cutConst(EDITOR_SRC, "PEN_WIDTH_MIN"));
+  const PEN_WIDTH_MAX = evalExpr(cutConst(EDITOR_SRC, "PEN_WIDTH_MAX"));
+  // eslint-disable-next-line no-new-func
+  const normPenWidth = new Function(
+    "PEN_WIDTH_MIN",
+    "PEN_WIDTH_MAX",
+    cutFunction(EDITOR_SRC, "normPenWidth") + "; return normPenWidth;"
+  )(PEN_WIDTH_MIN, PEN_WIDTH_MAX);
+  // Same "inject every free name" rule as savedAnnotColorWith above.
+  const savedPenWidthWith = (storage) =>
+    // eslint-disable-next-line no-new-func
+    new Function(
+      "localStorage",
+      "normPenWidth",
+      "DEFAULT_PEN_WIDTH",
+      "PEN_WIDTH_KEY",
+      cutFunction(EDITOR_SRC, "savedPenWidth") + "; return savedPenWidth;"
+    )(storage, normPenWidth, DEFAULT_PEN_WIDTH, PEN_WIDTH_KEY)();
+  const penStore = (v) => ({
+    getItem(k) {
+      if (k !== PEN_WIDTH_KEY) throw new Error(`read the wrong key: ${k}`);
+      return v;
+    },
+  });
+
+  check("DEFAULT_PEN_WIDTH is 1 (was a hard-coded 2)", DEFAULT_PEN_WIDTH === 1, DEFAULT_PEN_WIDTH);
+  check("storage key is namespaced", PEN_WIDTH_KEY === "nabu-annot-penwidth", PEN_WIDTH_KEY);
+  check("#ed-penwidth value= matches DEFAULT_PEN_WIDTH", +inputValue("ed-penwidth") === DEFAULT_PEN_WIDTH, inputValue("ed-penwidth"));
+  check("#set-pen-width value= matches DEFAULT_PEN_WIDTH", +inputValue("set-pen-width") === DEFAULT_PEN_WIDTH, inputValue("set-pen-width"));
+  const attr = (id, a) => {
+    const tag = new RegExp('<input[^>]*id="' + id + '"[^>]*>', "i").exec(INDEX_SRC)[0];
+    const m = new RegExp(a + '="([^"]*)"', "i").exec(tag);
+    return m ? +m[1] : NaN;
+  };
+  for (const id of ["ed-penwidth", "set-pen-width"]) {
+    check(`#${id} min/max = PEN_WIDTH_MIN/MAX`, attr(id, "min") === PEN_WIDTH_MIN && attr(id, "max") === PEN_WIDTH_MAX,
+      `${attr(id, "min")}..${attr(id, "max")}`);
+  }
+
+  check("stored '3' → 3", savedPenWidthWith(penStore("3")) === 3);
+  check("absent key → default", savedPenWidthWith(penStore(null)) === DEFAULT_PEN_WIDTH);
+  check("'0' → default (below min)", savedPenWidthWith(penStore("0")) === DEFAULT_PEN_WIDTH);
+  check("'25' → default (above max)", savedPenWidthWith(penStore("25")) === DEFAULT_PEN_WIDTH);
+  check("'1.5' → default (inputs step by 1)", savedPenWidthWith(penStore("1.5")) === DEFAULT_PEN_WIDTH);
+  check("'-2' → default", savedPenWidthWith(penStore("-2")) === DEFAULT_PEN_WIDTH);
+  check("'abc' → default", savedPenWidthWith(penStore("abc")) === DEFAULT_PEN_WIDTH);
+  check("'' → default", savedPenWidthWith(penStore("")) === DEFAULT_PEN_WIDTH);
+  check("storage that THROWS → default", savedPenWidthWith(throwingStore) === DEFAULT_PEN_WIDTH);
+  check("normPenWidth(24) = 24 (max is inclusive)", normPenWidth(24) === 24);
+  check("normPenWidth(NaN) = null", normPenWidth(NaN) === null);
+
+  check(
+    "ed.penWidth is seeded from the stored preference",
+    /^\s*penWidth: savedPenWidth\(\),/m.test(edBlock),
+    "ed.penWidth must call savedPenWidth() or the Settings row does nothing on restart"
+  );
+  // Every creation path takes ed.penWidth, never a literal — that is what makes the
+  // Settings value reach all ten stroked kinds.
+  check("no creation path hard-codes `width: 2`", !/width: 2[,\s}]/.test(EDITOR_SRC));
+  const penRefs = (EDITOR_SRC.match(/width: ed\.penWidth/g) || []).length;
+  check("the six creation paths all read ed.penWidth", penRefs >= 6, `found ${penRefs}`);
+  // The legacy fallback is a property of the FILE FORMAT (an object saved without a
+  // width was always drawn at 2) — it must not follow the new default.
+  const legacy = (EDITOR_SRC.match(/a\.width \|\| 2(?!\d)/g) || []).length;
+  check("the `a.width || 2` legacy fallbacks were NOT retargeted", legacy >= 10, `found ${legacy}`);
+  check("Editor exposes get/setDefaultPenWidth for app.js",
+    /getDefaultPenWidth:/.test(EDITOR_SRC) && /^\s*setDefaultPenWidth,$/m.test(EDITOR_SRC));
+  const APP_SRC = fs.readFileSync(path.join(ROOT, "renderer", "app.js"), "utf8");
+  check("app.js wires #set-pen-width to setDefaultPenWidth",
+    /\$\("set-pen-width"\)\.onchange/.test(APP_SRC) && /setDefaultPenWidth\(/.test(APP_SRC));
+  const I18N_SRC = fs.readFileSync(path.join(ROOT, "renderer", "i18n.js"), "utf8");
+  check('"Nét mặc định" is translatable', I18N_SRC.includes('"Nét mặc định":'));
+}
 
 // ---- summary ---------------------------------------------------------------
 

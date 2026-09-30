@@ -31,6 +31,7 @@
     lastSpanId: null, // last span clicked (target for toolbar control changes)
     _ta: null, // the open <textarea> element (for the OCR-this-box button)
     _sp: null, // the span object currently open
+    _dragged: false, // the last press on a span box was a drag → swallow its click
   };
 
   // ---- formatting controls (text colour / bg / font / size / B I U) --------
@@ -80,26 +81,151 @@
   function targetSpanId() {
     return te.editing != null ? te.editing : te.lastSpanId;
   }
+  // The edit a span starts from: its own text and style, unchanged.
+  function seedEdit(sp) {
+    return {
+      page: te.page,
+      bbox: sp.bbox,
+      origin: sp.origin,
+      new_text: sp.text,
+      size: Math.round(sp.size * 10) / 10,
+      color: packedToHex(sp.color),
+      bg: null,
+      bold: flagsBold(sp.flags),
+      italic: flagsItalic(sp.flags),
+      underline: false,
+      font: "__keep__", // keep the span's original font unless changed
+    };
+  }
   // Ensure a staged edit exists for a span (seeded from its current text/style).
   function ensureEdit(spId) {
     const sp = te.spans.find((s) => s.id === spId);
     if (!sp) return null;
-    if (!te.edits[spId]) {
-      te.edits[spId] = {
-        page: te.page,
-        bbox: sp.bbox,
-        origin: sp.origin,
-        new_text: sp.text,
-        size: Math.round(sp.size * 10) / 10,
-        color: packedToHex(sp.color),
-        bg: null,
-        bold: flagsBold(sp.flags),
-        italic: flagsItalic(sp.flags),
-        underline: false,
-        font: "__keep__", // keep the span's original font unless changed
-      };
-    }
+    if (!te.edits[spId]) te.edits[spId] = seedEdit(sp);
     return te.edits[spId];
+  }
+
+  // ---- di chuyển chữ (v0.2.73) -----------------------------------------------
+  //
+  // A staged edit may carry `offset: [dx, dy]` — points, in the DISPLAYED space the
+  // boxes are drawn in (bbox_view). The sidecar keeps the redaction on the original
+  // bbox and redraws at origin + offset, converting for /Rotate itself (api.py
+  // _view_offset_to_page). Absent = in place, which is every edit before this existed.
+  //
+  // Screen px, not points, for both thresholds: they are about the hand, not the page,
+  // and must feel the same at 25% and 400%.
+  const DRAG_START_PX = 4; // below this a press is a click → open the editor
+  const SNAP_HOME_PX = 5; // dropped this close to where it was → "not moved"
+
+  function offsetOf(id) {
+    const ed = te.edits[id];
+    return ed && ed.offset ? ed.offset : [0, 0];
+  }
+  function isMoved(off) {
+    return !!off && (Math.abs(off[0]) > 0.01 || Math.abs(off[1]) > 0.01);
+  }
+  // Is `ed` nothing but the span as it already is (ignoring any offset)? Compared
+  // against seedEdit field by field, so dragging a span home again drops an edit that
+  // only the move created — instead of leaving one that redraws the text in place for
+  // no reason (a redraw can substitute the font; a no-op must not risk that).
+  function isPristine(sp, ed) {
+    const seed = seedEdit(sp);
+    return ["new_text", "size", "color", "bg", "bold", "italic", "underline", "font"].every(
+      (k) => ed[k] === seed[k]
+    );
+  }
+
+  // Press on a span box. A press that does not travel DRAG_START_PX stays a click and
+  // the box's click handler opens the editor exactly as before; one that does becomes
+  // a drag. Listens on WINDOW and re-finds the box by id on every move, because
+  // committing an open editor (its blur) rebuilds every box — the element pressed may
+  // no longer be in the DOM a few pixels later. Moves only the one element's left/top
+  // while dragging; the full rebuild happens once, on release.
+  function startDrag(e, sp) {
+    if (e.button !== 0) return;
+    te._dragged = false; // a fresh gesture — never let a stale flag eat this click
+    const s = state.scale;
+    const [x0, y0, x1, y1] = sp.bbox_view || sp.bbox;
+    const base = offsetOf(sp.id).slice();
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let dragging = false;
+    let cur = base;
+
+    const boxEl = () => document.querySelector(`#viewer .tedit-layer .span-box[data-id="${sp.id}"]`);
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("span-dragging");
+    };
+    const onMove = (ev) => {
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      if (!dragging) {
+        if (Math.hypot(dx, dy) < DRAG_START_PX) return;
+        // Garbled legacy-font text: moving it would redraw the garbage in a readable
+        // face. The click path OCRs it first — make the user go through that.
+        if (sp.suspect && !te.edits[sp.id]) {
+          cleanup();
+          toast("Chữ lỗi font — bấm vào ô để OCR lấy lại chữ đúng rồi mới di chuyển.", "bad");
+          return;
+        }
+        dragging = true;
+        const open = document.querySelector(".span-input");
+        if (open) open.blur(); // stage whatever was being typed first
+        const sel = window.getSelection && window.getSelection();
+        if (sel) sel.removeAllRanges();
+        document.body.classList.add("span-dragging");
+      }
+      ev.preventDefault();
+      const layer = layerForPage(te.page);
+      const W = layer ? layer.clientWidth / s : Infinity;
+      const H = layer ? layer.clientHeight / s : Infinity;
+      // Keep the whole box on the page: text dropped past the edge would be written
+      // into the file where nobody can see or select it again.
+      let ox = Math.max(-x0, Math.min(base[0] + dx / s, W - x1));
+      let oy = Math.max(-y0, Math.min(base[1] + dy / s, H - y1));
+      if (Math.hypot(ox, oy) * s < SNAP_HOME_PX) ox = oy = 0;
+      cur = [ox, oy];
+      const el = boxEl();
+      if (el) {
+        el.classList.add("dragging");
+        el.style.left = (x0 + ox) * s + "px";
+        el.style.top = (y0 + oy) * s + "px";
+      }
+    };
+    const onUp = () => {
+      cleanup();
+      if (!dragging) return;
+      te._dragged = true; // the click that may follow this release is not a click
+      commitMove(sp, cur);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  function commitMove(sp, off) {
+    if (isMoved(off)) {
+      const ed = ensureEdit(sp.id);
+      if (ed) ed.offset = [off[0], off[1]];
+    } else if (te.edits[sp.id]) {
+      delete te.edits[sp.id].offset;
+      if (isPristine(sp, te.edits[sp.id])) delete te.edits[sp.id];
+    }
+    te.lastSpanId = sp.id;
+    renderBoxes();
+    updateHint();
+  }
+
+  // Rough CSS family for the preview. The real redraw resolves fonts on the sidecar;
+  // this only has to look like the same KIND of letter while the box is in flight.
+  function previewFamily(sp, ed) {
+    const f = String(ed.font === "__keep__" ? sp.font || "" : ed.font).toLowerCase();
+    if (/times|tiro|serif|roman|cambria|georgia/.test(f)) return '"Times New Roman", serif';
+    if (/cour|mono|consol/.test(f)) return '"Courier New", monospace';
+    return 'Arial, "Segoe UI", sans-serif';
   }
   // A toolbar formatting control changed → apply it to the target span's edit.
   function onControlChange() {
@@ -176,20 +302,64 @@
       // as the pdf.js canvas — so rotated CAD/Revit pages line up. Falls back to the
       // raw bbox for older sidecars that don't send it.
       const [x0, y0, x1, y1] = sp.bbox_view || sp.bbox;
+      const ed = te.edits[sp.id];
+      const off = offsetOf(sp.id);
+      const moved = isMoved(off);
+      const bw = Math.max(4, x1 - x0) * s;
+      const bh = Math.max(6, y1 - y0) * s;
+      // Where it WAS: the canvas still paints the original glyphs there until Áp dụng,
+      // so mark the spot as "goes away" rather than leave two copies looking equal.
+      if (moved) {
+        const ghost = document.createElement("div");
+        ghost.className = "span-ghost";
+        ghost.style.left = x0 * s + "px";
+        ghost.style.top = y0 * s + "px";
+        ghost.style.width = bw + "px";
+        ghost.style.height = bh + "px";
+        layer.appendChild(ghost);
+      }
       const box = document.createElement("div");
       // `suspect` = legacy/broken font whose text get_text mis-decoded; clicking it
       // auto-OCRs the region to recover the real Vietnamese.
       box.className =
-        "span-box" + (te.edits[sp.id] ? " edited" : sp.suspect ? " suspect" : "");
-      box.style.left = x0 * s + "px";
-      box.style.top = y0 * s + "px";
-      box.style.width = Math.max(4, x1 - x0) * s + "px";
-      box.style.height = Math.max(6, y1 - y0) * s + "px";
+        "span-box" + (ed ? " edited" : sp.suspect ? " suspect" : "") + (moved ? " moved" : "");
+      box.style.left = (x0 + off[0]) * s + "px";
+      box.style.top = (y0 + off[1]) * s + "px";
+      box.style.width = bw + "px";
+      box.style.height = bh + "px";
       box.title = sp.suspect
         ? "Chữ lỗi font — bấm để tự OCR lấy lại chữ đúng"
-        : "Bấm để sửa: " + sp.text;
+        : "Bấm để sửa · kéo để di chuyển: " + sp.text;
       box.dataset.id = String(sp.id);
-      box.addEventListener("click", () => beginEdit(sp, box));
+      // Preview of what Áp dụng will write at the new place — plain DOM text, one node
+      // per MOVED span only, so it costs nothing on a page of hundreds of spans. Skipped
+      // for text that runs vertically on screen (a box taller than wide holding more
+      // than one character): a horizontal preview there would be more wrong than none.
+      if (moved && ed && ed.new_text && ed.new_text.trim()) {
+        const vertical = y1 - y0 > (x1 - x0) * 1.2 && ed.new_text.trim().length > 1;
+        if (!vertical) {
+          const pv = document.createElement("span");
+          pv.className = "span-preview";
+          pv.textContent = ed.new_text;
+          pv.style.fontSize = Math.max(4, ed.size * s) + "px";
+          pv.style.lineHeight = bh + "px";
+          pv.style.color = ed.color;
+          pv.style.fontFamily = previewFamily(sp, ed);
+          if (ed.bold) pv.style.fontWeight = "700";
+          if (ed.italic) pv.style.fontStyle = "italic";
+          if (ed.underline) pv.style.textDecoration = "underline";
+          if (ed.bg) pv.style.background = ed.bg;
+          box.appendChild(pv);
+        }
+      }
+      box.addEventListener("pointerdown", (e) => startDrag(e, sp));
+      box.addEventListener("click", () => {
+        if (te._dragged) {
+          te._dragged = false;
+          return;
+        }
+        beginEdit(sp, box);
+      });
       layer.appendChild(box);
     }
   }
@@ -241,6 +411,9 @@
     const stage = () => {
       const val = ta.value;
       const st = readControls();
+      // A move staged earlier survives retyping/restyling the same span.
+      const off = offsetOf(sp.id);
+      const moved = isMoved(off);
       const styleChanged =
         st.bold !== flagsBold(sp.flags) ||
         st.italic !== flagsItalic(sp.flags) ||
@@ -249,7 +422,7 @@
         st.font !== "__keep__" ||
         Math.abs(st.size - sp.size) > 0.01 ||
         st.color.toLowerCase() !== packedToHex(sp.color).toLowerCase();
-      if (val !== sp.text || styleChanged) {
+      if (val !== sp.text || styleChanged || moved) {
         te.edits[sp.id] = {
           page: te.page,
           bbox: sp.bbox,
@@ -263,6 +436,7 @@
           underline: st.underline,
           font: st.font,
         };
+        if (moved) te.edits[sp.id].offset = [off[0], off[1]];
         return true;
       }
       delete te.edits[sp.id];

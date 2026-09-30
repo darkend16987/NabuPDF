@@ -4433,6 +4433,10 @@ async function openSettings() {
   if (annotColor && window.Editor && window.Editor.getDefaultColor) {
     annotColor.value = window.Editor.getDefaultColor();
   }
+  const penWidth = $("set-pen-width");
+  if (penWidth && window.Editor && window.Editor.getDefaultPenWidth) {
+    penWidth.value = String(window.Editor.getDefaultPenWidth());
+  }
   // "Reopen last session" lives in main (it has to be readable before any
   // renderer exists), so read it back rather than assuming a default.
   const restoreBox = $("set-restore-session");
@@ -5217,6 +5221,15 @@ if ($("set-annot-color")) {
   $("set-annot-color").onchange = (e) => {
     if (!window.Editor || !window.Editor.setDefaultColor) return;
     e.target.value = window.Editor.setDefaultColor(e.target.value);
+  };
+}
+// Default pen width — same single-owner arrangement as the colour above. `onchange`
+// (commit on Enter / blur / spinner step), and the input settles on what was stored, so
+// typing 0 or 30 snaps back instead of showing a width nothing will draw with.
+if ($("set-pen-width")) {
+  $("set-pen-width").onchange = (e) => {
+    if (!window.Editor || !window.Editor.setDefaultPenWidth) return;
+    e.target.value = String(window.Editor.setDefaultPenWidth(e.target.value));
   };
 }
 // "Mở file mới trong" — persisted by main, which is also the side that acts on
