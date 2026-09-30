@@ -114,6 +114,10 @@
     if (typeof polyPath === "function") return polyPath(pts, closed);
     return require("./annot-geom.js").polyPath(pts, closed);
   }
+  function _symbolStrokes(kind, x, y, w, h) {
+    if (typeof symbolStrokes === "function") return symbolStrokes(kind, x, y, w, h);
+    return require("./annot-geom.js").symbolStrokes(kind, x, y, w, h);
+  }
 
   // ---- the private keys ----------------------------------------------------
 
@@ -128,14 +132,20 @@
   // /QuadPoints, so Acrobat and Foxit list it in their comment panes as the highlight it
   // is. Its /AP is still ours (see addManagedAnnot), because a viewer that synthesises
   // one from QuadPoints is allowed to pick its own blend and we would rather it did not.
-  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw", "poly", "texthl"]);
+  //
+  // `check` / `cross` (dấu ✓ / ✗) joined at v0.2.73. Until then they flattened to pixels
+  // on Áp dụng, so a tick could be copied only BEFORE applying — after it, or in a file
+  // reopened later, there was no object left to select, move, recolour or copy. They are
+  // plain members of the vector half: box geometry in /NabuData, the /AP built from the
+  // same symbolStrokes() the overlay and the flattened writer use (BI-42).
+  const MANAGED_KINDS = new Set(["text", "note", "image", "arrow", "box", "ellipse", "cloud", "cloudpen", "draw", "poly", "texthl", "check", "cross"]);
   // The vector half of the family, as one name: five kinds that share ONE branch in
   // addManagedAnnot and ONE branch in deserializeManaged (shapeAppearance splits them
   // three ways internally — box/ellipse, cloud/cloudpen, draw — but no caller cares
   // which, and that is the point of having the predicate).
   // Named because "is this kind vector?" is asked in three files, and an inline `||`
   // chain in each is how those three drift apart (same argument as RESIZABLE_KINDS).
-  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "draw", "poly"]);
+  const VECTOR_KINDS = new Set(["box", "ellipse", "cloud", "cloudpen", "draw", "poly", "check", "cross"]);
   function isVectorKind(k) { return VECTOR_KINDS.has(k); }
   const NABU_KIND = PDFName.of("NabuKind");
   const NABU_DATA = PDFName.of("NabuData");
@@ -360,6 +370,37 @@
       const ops = drawSvgPath(g.d, opts);
       ops.splice(1, 0, setLineJoin(LineJoinStyle.Round));
       return out(ops, wPt, hPt, g.minX - lw, g.minY - lw);
+    }
+
+    // -- dấu ✓ / ✗: the symbol's strokes as one open path, y-DOWN, local 0-origin ---
+    //
+    // THE SAME symbolStrokes() call the overlay <svg> and drawOneAnnot make (BI-42), at a
+    // 0-origin instead of (a.x, a.y), so the three pictures cannot disagree about where
+    // the ink goes. Round caps + round joins for the reason spelled out on `draw` above:
+    // the flattened writer draws each segment with LineCapStyle.Round, and only round
+    // ends make the two paint the same ink.
+    //
+    // The pen width is floored at 1 here, not 0.1 like `lw`: drawOneAnnot's symbol branch
+    // floors at 1, and an /AP thinner than the pixels a re-bake would flatten to is a
+    // round-trip that changes the picture.
+    if (a.kind === "check" || a.kind === "cross") {
+      const sw = Math.max(1, +a.width || 2);
+      const W = Math.max(1, +a.w || 0);
+      const H = Math.max(1, +a.h || 0);
+      const lines = _symbolStrokes(a.kind, 0, 0, W, H);
+      if (!lines.length) return null; // unknown symbol — caller flattens (= nothing)
+      const d = lines
+        .map((line) => line.map((p, k) => (k ? "L" : "M") + p.x + " " + p.y).join(" "))
+        .join(" ");
+      const wPt = W + 2 * sw;
+      const hPt = H + 2 * sw;
+      const ops = drawSvgPath(d, Object.assign({}, common, {
+        borderWidth: sw, x: sw, y: hPt - sw, borderLineCap: LineCapStyle.Round,
+      }));
+      ops.splice(1, 0, setLineJoin(LineJoinStyle.Round));
+      const res = out(ops, wPt, hPt, a.x - sw, a.y - sw);
+      res.pad = sw;
+      return res;
     }
 
     // -- revision clouds: ONE SVG path, y-DOWN, local 0-origin -----------------

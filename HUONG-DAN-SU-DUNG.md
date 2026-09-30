@@ -356,9 +356,10 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - **Copy sang file khác (từ v0.2.69):** đánh dấu một lần cho vừa cỡ, vừa màu, rồi **Ctrl+C** /
 >   **Ctrl+V** sang trang khác, **tab khác** hoặc **file PDF khác** — y như hộp văn bản. Tiện khi phải
 >   tick cùng một ô trên hàng chục bộ hồ sơ.
-> - Lưu ý: sau khi bấm **Xong**, dấu ✓/✗ được **dán chết** vào trang (như vẽ tay và khoanh vùng) — không
->   sửa lại được như hộp văn bản, ghi chú hay ảnh, và cũng **không copy được nữa**. Vậy nên **copy khi
->   còn đang trong Chú thích**, trước khi bấm Xong; clipboard sống sót qua lần bấm Xong đó.
+> - **Từ v0.2.73, dấu ✓/✗ là đối tượng sống:** bấm **Xong** / **Lưu** rồi mở lại file → bấm **Chú thích**
+>   là chúng lại chọn được — kéo, đổi cỡ, đổi màu / nét, `Delete`, và **Ctrl+C / Ctrl+V** (kể cả sang
+>   file khác). Trước v0.2.73 chúng bị **dán chết** vào trang khi bấm Xong nên chỉ copy được lúc còn
+>   trong Chú thích; file lưu bằng bản cũ vẫn giữ dấu dán chết đó (không tự "sống lại").
 
 > **Chọn nhiều mục & sao chép sang trang khác (từ v0.2.52):** dưới công cụ **Chọn**:
 > - **Giữ Ctrl bấm** để thêm/bớt mục vào vùng chọn (bấm lại lần nữa là bỏ mục đó ra). Chọn nhiều
@@ -386,10 +387,10 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   bám vào chữ hoặc nội dung của chính file đó) — copy một nhóm có lẫn chúng thì app báo rõ bao nhiêu
 >   mục ở lại.
 > - **Clipboard không mất khi bấm "Áp dụng"**: sao chép → Áp dụng → vẫn dán được. Lưu ý ngược lại:
->   sau khi Áp dụng thì **tô sáng, ✓/✗, ô che và đoạn đo đã dán chết** thành hình trên trang nên
+>   sau khi Áp dụng thì **tô sáng theo vùng, ô che và đoạn đo đã dán chết** thành hình trên trang nên
 >   **không chọn lại được để copy** — hãy **copy trước khi Áp dụng**. Hộp văn bản, ghi chú, mũi tên,
->   ảnh, **chữ nhật, elip, khoanh mây và nét vẽ tay** (từ v0.2.61/v0.2.63) thì vẫn là đối tượng sống
->   nên copy được cả sau khi Lưu và mở lại.
+>   ảnh, **chữ nhật, elip, khoanh mây, nét vẽ tay** (từ v0.2.61/v0.2.63) và **dấu ✓/✗** (từ v0.2.73) thì
+>   vẫn là đối tượng sống nên copy được cả sau khi Lưu và mở lại.
 > - Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì Ctrl+V vẫn là **dán ảnh vào
 >   trang** như trước — hai đường không lẫn nhau.
 

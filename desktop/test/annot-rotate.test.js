@@ -356,6 +356,13 @@ const VECTOR_SHAPES = [
   // what the thinning does to it. Mixing the two would make a failure here ambiguous.
   { name: "draw", a: { id: 15, kind: "draw", color: "#0000ff", width: 3,
       pts: [{ x: 30, y: 40 }, { x: 90, y: 120 }, { x: 150, y: 70 }] } },
+  // Dấu ✓ / ✗ (v0.2.73). Like `draw`, the /AP is ONE drawSvgPath while the flattened
+  // writer is N drawLine segments, and both come from symbolStrokes — so this is the
+  // grid that says a tick lands in the same place either way. A non-square box, because
+  // a swapped w/h is the error a symbol's fractions would hide on a square one; the ✗
+  // is two separate strokes (two `M`s in one path), which is the case `draw` never has.
+  { name: "check", a: { id: 21, kind: "check", x: 70, y: 100, w: 36, h: 22, color: "#2e7d32", width: 2 } },
+  { name: "cross", a: { id: 22, kind: "cross", x: 70, y: 100, w: 36, h: 22, color: "#e90000", width: 3 } },
   // A single straight stroke: its bounding box is one point tall in the degenerate
   // direction, and a /BBox with a zero side CLIPS THE WHOLE PATH. The stroke padding is
   // what saves it, so this case is the one that fails if that padding is ever removed.

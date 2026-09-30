@@ -6,7 +6,7 @@
 
 _Cập nhật: 2026-09-30 · v0.2.73 đã phát hành (dưới đây) · v0.2.72 là bản trước đó_
 
-> **v0.2.73 — di chuyển chữ trong Sửa nội dung, màu `#e90000` và nét mặc định 1 pt** (phát hành 2026-09-30).
+> **v0.2.73 — di chuyển chữ trong Sửa nội dung, ✓/✗ sống qua lần lưu, màu `#e90000` và nét mặc định 1 pt** (phát hành 2026-09-30).
 >
 > 1. **Di chuyển chữ** (`text-edit.js` + `/edit-text`): kéo ô span → edit mang `offset: [dx, dy]` (pt,
 >    **không gian hiển thị** = `bbox_view`). Sidecar vẫn redact ở `bbox` **gốc**, vẽ lại ở
@@ -23,9 +23,19 @@ _Cập nhật: 2026-09-30 · v0.2.73 đã phát hành (dưới đây) · v0.2.72
 >    `savedPenWidth`/`setDefaultPenWidth` trong editor.js — một chủ sở hữu như màu). Một giá trị dùng
 >    chung cho mọi công cụ có ô Nét. ⚠️ Các fallback `a.width || 2` (file cũ không có width) **cố ý giữ 2**
 >    — test:defaults canh.
+> 4. **Dấu ✓ / ✗ thành kind managed** (yêu cầu "copy–paste dấu v và x"). Copy–dán ✓/✗ **đã có từ
+>    v0.2.69** nhưng chỉ **trước** Áp dụng: bake flatten chúng thành pixel (BI-42) nên sau Xong / mở lại
+>    file không còn vật thể để chọn. Nay `check`/`cross` ∈ `MANAGED_KINDS` + `VECTOR_KINDS`;
+>    `shapeAppearance` có nhánh dựng `/AP` từ **chính** `symbolStrokes()` (overlay + flatten dùng chung),
+>    `/NabuData` = hộp + màu + nét (nhánh `else` sẵn có của serialize/deserialize). `SHARE_EXTRA` thành
+>    rỗng (✓/✗ qua tab vì đã managed). File lưu bằng bản cũ: dấu vẫn dán chết (không có `/NabuData`).
+>    Bản cũ mở file mới: không nhận kind lạ ⇒ chỉ hiện stamp như chú thích thường.
 >
 > **Lưới:** `test_edit_text_move.py` mới (49, có ca GUARD: phá phép quy đổi ⇒ 7 ca đỏ), `test:defaults`
-> 132 → 158. Nghiệm thu GUI CDP trên app thật **33/33** ở zoom 100% và 160%. **Sidecar build lại** (đổi
+> 132 → 158, `test:rotate` 816 → 916 (✓/✗ ở 4 góc xoay × 2 khổ; đảo w/h ⇒ đỏ), `test:managed` 230 → 249.
+> Nghiệm thu GUI CDP trên app thật: di chuyển chữ **33/33** ở zoom 100% và 160%; ✓/✗ **12/12** (Áp dụng →
+> vẫn là vật thể → chọn → Copy → Dán → Xong → file có 2 ✓ + 1 ✗ managed → vào lại đủ 3, ✗ giữ `#e90000`).
+> Sidecar đóng gói kiểm qua HTTP: `/edit-text` có `offset` dời đúng (sai số 0). **Sidecar build lại** (đổi
 > `api.py`). Tài liệu: help.js, HUONG-DAN-SU-DUNG.md, README, site (khối "Mới", thẻ tính năng, lịch sử).
 > ⚠️ Lần chạy probe đầu tiên, cú bấm **Sửa nội dung** đầu tiên không vào chế độ sửa (không tái hiện ở 3
 > lần sau, probe lúc đó chưa ghi toast nên không rõ nguyên nhân — nhánh `enter()` không bị sửa ở bản này).

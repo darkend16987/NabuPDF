@@ -55,7 +55,11 @@
   //            closed shape, with its points thinned by annot-geom's simplifyStroke on the
   //            way into /NabuData — a freehand stroke collects a point per mousemove, which
   //            no other kind does.
-  // Still flattened, deliberately: highlight, redact, measure, ✓/✗. Not an oversight —
+  //  - check / cross (dấu ✓ / ✗, v0.2.73) → the same vector branch: shapeAppearance()
+  //            builds the /AP from annot-geom's symbolStrokes(), the function the overlay
+  //            and drawOneAnnot already share (BI-42); /NabuData is the box + colour +
+  //            width. Before this a tick could only be copied BEFORE Áp dụng.
+  // Still flattened, deliberately: highlight, redact, measure. Not an oversight —
   // each would need its own appearance branch, and shipping them one class at a time is
   // what keeps test:rotate's guard cases meaningful. `redact` will never join them: it
   // exists to destroy the content underneath, and a re-editable redaction is not one.
@@ -1429,11 +1433,11 @@
   //
   // WHAT IT CANNOT DO, so nobody goes looking for the bug: only kinds that
   // round-trip (MANAGED_KINDS) come back as live objects after a save. As of
-  // v0.2.63 that is text / note / image / arrow / box / ellipse / cloud / cloudpen
-  // / draw; ✓/✗, highlight, underline, strike-through and dimension lines are still
-  // FLATTENED TO PIXELS when baked (BI-42), so once applied there is no object left
-  // to select and copy. Copy those BEFORE applying — the clip outlives the bake,
-  // which is what makes that sequence work.
+  // v0.2.73 that is text / note / image / arrow / box / ellipse / cloud / cloudpen
+  // / draw / poly / texthl / ✓ / ✗; the area highlight, redaction and dimension
+  // lines are still FLATTENED TO PIXELS when baked, so once applied there is no
+  // object left to select and copy. Copy those BEFORE applying — the clip outlives
+  // the bake, which is what makes that sequence work.
   // { items: [<annot minus id>], page: <source page>, dropped: {page: n},
   //   id?, heavy? }  — `id`/`heavy` only on a clip ADOPTED from another tab whose
   //   images still have to be fetched (hydrateClip).
@@ -1456,21 +1460,17 @@
   // the copy gesture. Local copy/paste is never capped.
   const SHARE_IMAGE_CAP = 48 * 1024 * 1024;
 
-  // …and kinds that cross even though they are NOT managed (v0.2.69).
+  // …and kinds that cross even though they are NOT managed. Empty since v0.2.73.
   //
-  // ✓ and ✗ flatten to pixels when applied (BI-42), so they never come back as
-  // objects after a save — that is unchanged, and it is why "sửa lại dấu tích đã
-  // áp dụng" is still not a thing. But BEFORE the bake they are ordinary live
-  // annotations: selectable, resizable, copyable. Tying "may this cross a tab
-  // boundary" to "does this survive a save" conflated two different questions, and
-  // the ✓ is where the difference shows: a user ticking the same box across twenty
-  // contracts wants the mark they already sized and coloured, not a fresh one each
-  // time. Nothing new can go wrong in the destination — a pasted ✓ is exactly the
-  // annotation the ✓ tool would have made there.
-  //
-  // The payload objection that kept `image` out does not apply: a ✓ is x/y/w/h,
-  // a colour and a stroke width — a few dozen bytes of JSON.
-  const SHARE_EXTRA = new Set(["check", "cross"]);
+  // ✓ and ✗ were the whole list from v0.2.69: they flattened to pixels when applied,
+  // but a user ticking the same box across twenty contracts wanted the mark they had
+  // already sized and coloured, so "may this cross a tab boundary" was answered apart
+  // from "does this survive a save". v0.2.73 made them managed (managed-codec.js —
+  // they now come back as objects after Áp dụng and after reopening the file), which
+  // answers both questions the same way and leaves nothing here. The set stays, empty,
+  // as the one place a future non-round-tripping kind would be let across — the same
+  // arrangement as SHARE_EXCLUDED above; `test:clip` pins both.
+  const SHARE_EXTRA = new Set();
   const isShareableKind = (k) => (isManagedKind(k) || SHARE_EXTRA.has(k)) && !SHARE_EXCLUDED.has(k);
 
   // What to call an object in a message to the user. Names match the tool buttons,

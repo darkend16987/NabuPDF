@@ -780,11 +780,15 @@ chỉ tên hàm.
   nhưng **dùng chung ô "Màu"**. `colorSlotFor()` là chỗ duy nhất quyết định ghi vào đâu, và
   nó ưu tiên **kind của mục đang chọn** hơn công cụ hiện tại — nếu không, dưới công cụ Chọn
   việc đổi màu một dấu ✗ sẽ âm thầm ghi đè màu chung của bút tô sáng/vẽ tay.
-- Hai loại này **flatten** khi bake (như vẽ tay / tô sáng), **không** round-trip — chúng
-  không nằm trong `MANAGED_KINDS`. Muốn sửa lại sau khi Lưu là **tính năng khác** (xem
-  BI-37/38 để biết cái giá; chữ nhật, elip và **khoanh mây** đã đi con đường đó ở BI-64).
+- ~~Hai loại này **flatten** khi bake~~ — **từ v0.2.73 chúng round-trip** (`MANAGED_KINDS` +
+  `VECTOR_KINDS`, đi đúng con đường chữ nhật / elip / mây đã đi ở BI-64). `/AP` dựng trong
+  `shapeAppearance` từ **chính** `symbolStrokes()` ở gốc 0 — tức `symbolStrokes` nay có **ba**
+  người đọc (overlay, flatten, `/AP`), không được viết lại hình ✓ riêng cho bất kỳ ai. Nét trong
+  `/AP` sàn ở **1** (như nhánh flatten), không phải 0.1 như `lw` của các shape khác. Nhánh flatten
+  vẫn còn: trang `/Rotate` lệch 90° (`apRotatable` false) và chế độ redact vẫn đi qua nó.
+  `test:rotate` §6/§7 so mực `/AP` với mực flatten ở 4 góc × 2 khổ.
 - **Vỡ khi:** giữ Shift mà nét vẫn ngoằn ngoèo (hoặc đứng im) · dấu ✓ trên màn hình một
-  nơi, trong PDF đã lưu một nẻo · đổi màu ✗ xong bút tô sáng cũng đổi màu theo · đóng dấu
+  nơi, trong PDF đã lưu một nẻo · ✓/✗ bấm Xong xong không chọn / copy lại được · đổi màu ✗ xong bút tô sáng cũng đổi màu theo · đóng dấu
   sát mép trang rồi không kéo tay nắm được nữa.
 - Lưới: `npm run test:cloud`. Nửa DOM + nửa bake vẫn phải probe — xem §1.
 

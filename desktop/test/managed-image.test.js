@@ -456,7 +456,19 @@ function readManaged(doc) {
       "fill" in serializeManaged(boxAnnot({ fill: "none" })), false);
 
     // -- write → save → read back -----------------------------------------
-    for (const [label, mk] of [["box", boxAnnot], ["ellipse", ovalAnnot]]) {
+    // Dấu ✓ / ✗ joined the vector family at v0.2.73 — same box payload, same padded
+    // /BBox, same anchor rule, so the same loop. Before this they flattened on Áp dụng
+    // and could not be selected or copied again.
+    const tickAnnot = (over) =>
+      Object.assign({ id: 9, kind: "check", x: 40, y: 60, w: 120, h: 90,
+                      color: "#2e7d32", width: 2 }, over);
+    const crossAnnot = (over) =>
+      Object.assign({ id: 10, kind: "cross", x: 40, y: 60, w: 120, h: 90,
+                      color: "#e90000", width: 3 }, over);
+    check("serializeManaged(check) is the box payload (no fill key)",
+      Object.keys(serializeManaged(tickAnnot())).sort(),
+      ["color", "h", "k", "w", "width", "x", "y"]);
+    for (const [label, mk] of [["box", boxAnnot], ["ellipse", ovalAnnot], ["check", tickAnnot], ["cross", crossAnnot]]) {
       const d = await PDFDocument.create();
       const pg = d.addPage([A4.width, A4.height]);
       check(`${label}: goes in as a real annotation`,
@@ -818,7 +830,7 @@ function readManaged(doc) {
   check("MANAGED_KINDS is the set that round-trips, and isManagedKind reads it",
     [[...MC.MANAGED_KINDS].sort(), MC.isManagedKind("image"), MC.isManagedKind("box"),
      MC.isManagedKind("ellipse"), MC.isManagedKind("cloud"), MC.isManagedKind("highlight")],
-    [["arrow", "box", "cloud", "cloudpen", "draw", "ellipse", "image", "note", "poly", "text", "texthl"],
+    [["arrow", "box", "check", "cloud", "cloudpen", "cross", "draw", "ellipse", "image", "note", "poly", "text", "texthl"],
      true, true, true, true, false]);
   // VECTOR_KINDS is the SUBSET whose /AP is a path instead of a PNG. It must stay a
   // strict subset: a kind outside MANAGED_KINDS would never reach shapeAppearance at all.
@@ -826,7 +838,7 @@ function readManaged(doc) {
     [[...MC.VECTOR_KINDS].sort(),
      [...MC.VECTOR_KINDS].every((k) => MC.MANAGED_KINDS.has(k)),
      MC.isVectorKind("cloudpen"), MC.isVectorKind("text"), MC.isVectorKind("image")],
-    [["box", "cloud", "cloudpen", "draw", "ellipse", "poly"], true, true, false, false]);
+    [["box", "check", "cloud", "cloudpen", "cross", "draw", "ellipse", "poly"], true, true, false, false]);
   // Guard: the module resolves pdf-lib and wire.js/annot-text.js itself (window.PDFLib +
   // bare names in the browser, require() here). If either shim regressed, these two would
   // throw rather than return — and managedSrcDataUrl is the image round-trip's only

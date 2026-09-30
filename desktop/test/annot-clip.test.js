@@ -156,9 +156,11 @@ check("over the cap: ALL images stay (never an arbitrary subset), the box crosse
 // the bake changes, so BI-42 is untouched.
 for (const k of ["check", "cross"]) {
   check(`${k} crosses tabs (v0.2.69)`, isShareableKind(k) === true);
-  check(`${k} is still NOT a managed kind (bake is unchanged)`, MANAGED_KINDS.has(k) === false);
+  // v0.2.73: they now round-trip, so they cross BECAUSE they are managed — the reason
+  // SHARE_EXTRA existed is gone, and the set is empty (asserted below).
+  check(`${k} is a managed kind since v0.2.73 (copyable after Áp dụng too)`, MANAGED_KINDS.has(k) === true);
 }
-check("SHARE_EXTRA is exactly {check, cross}", SHARE_EXTRA.size === 2 && SHARE_EXTRA.has("check") && SHARE_EXTRA.has("cross"), [
+check("SHARE_EXTRA is empty since v0.2.73 (✓/✗ cross as managed kinds)", SHARE_EXTRA.size === 0, [
   ...SHARE_EXTRA,
 ].join(","));
 
