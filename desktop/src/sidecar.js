@@ -107,9 +107,13 @@ function waitForHealth(port, timeoutMs = 180000, intervalMs = 600) {
 // fetch error. The only cure the user has is restarting the app, and nothing on
 // screen suggests that. A big compress or a several-hundred-page index is exactly the
 // kind of job that can end in an OOM kill, so this path is reachable.
-async function startSidecar(token, onExit) {
+//
+// `opts` is a TEST SEAM, not a user-facing option: `healthTimeoutMs` shortens the 180 s
+// ceiling and `spawnSpec` ({ command, args, cwd }) replaces the real sidecar with a stand-in
+// that never answers /health (test/sidecar-health-timeout.test.js).
+async function startSidecar(token, onExit, opts = {}) {
   const port = await findFreePort();
-  const { command, args, cwd } = sidecarCommand(port);
+  const { command, args, cwd } = opts.spawnSpec || sidecarCommand(port);
 
   // Pass the per-launch token via env so the sidecar can reject any request that
   // doesn't carry it (other local processes / browser pages on 127.0.0.1).
@@ -129,7 +133,18 @@ async function startSidecar(token, onExit) {
     if (!handle.stopping && typeof onExit === "function") onExit(code, handle);
   });
 
-  await waitForHealth(port);
+  try {
+    await waitForHealth(port, opts.healthTimeoutMs);
+  } catch (err) {
+    // The caller only ever sees a rejection — `handle` is never returned — so nothing
+    // else holds the child. Left alone it kept running after the app quit (an orphan
+    // sidecar.exe locking resources/sidecar → EBUSY on the next rebuild, plus whatever
+    // memory it had loaded). Kill the whole tree, and via stopSidecar so `stopping` is
+    // set: the exit that follows is ours and must not be painted as a crash on top of
+    // the timeout message main.js is about to show.
+    stopSidecar(handle);
+    throw err;
+  }
   return handle;
 }
 
@@ -137,6 +152,9 @@ function stopSidecar(sidecar) {
   if (sidecar) sidecar.stopping = true; // this exit is ours; don't report it as a crash
   const child = sidecar && sidecar.child;
   if (!child || child.killed) return;
+  // Already gone: nothing to stop, and `taskkill /pid` on a dead child's number could hit
+  // an unrelated process that has since been handed the same PID (Windows reuses them).
+  if (child.exitCode !== null || child.signalCode !== null) return;
   // On Windows a plain SIGTERM to the launcher can orphan the real server
   // process (PyInstaller onedir spawns a child) → a stray sidecar.exe keeps the
   // resources/sidecar files locked (EBUSY on the next rebuild). taskkill /T kills
