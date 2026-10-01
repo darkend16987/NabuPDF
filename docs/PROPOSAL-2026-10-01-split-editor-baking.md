@@ -1,4 +1,6 @@
-# Đề xuất: tách khối "baking" ra khỏi `editor.js` (có số đo — CHƯA thi công)
+# Đề xuất: tách khối "baking" ra khỏi `editor.js` (có số đo)
+
+> **TRẠNG THÁI: ĐÃ THI CÔNG theo phương án A (commit `23dbca2`).** Kết quả, bằng chứng và những gì chưa kiểm: `docs/REVIEW-2026-10-01-perf-harness.md` §7 "Đợt E". Phần dưới là bản đề xuất gốc, giữ nguyên để đối chiếu; số dòng trong đó là của thời điểm đo.
 
 Ngày đo: 2026-10-01, `editor.js` = 5 459 dòng. Số dòng dưới đây là **tại thời điểm đo** (dùng để định vị, không phải hợp đồng — file sẽ trôi). Nguồn: §6.3 của `docs/REVIEW-2026-10-01-perf-harness.md`; luật tách lấy từ `docs/REGRESSION-GUARD.md` §1 ("chỉ tách code đã ship và đã test tay; chứng minh byte-identical; không gộp với đổi hành vi").
 
