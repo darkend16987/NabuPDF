@@ -157,18 +157,21 @@ async function main() {
   // fold is silent corruption - so the output is pinned byte-for-byte against the one-string
   // reference at sizes straddling the first, second and third fold.
   const F = W.B64_FLUSH_PARTS;
+  // An independent encoder (Node's), and fast enough for 30+ MB: the slow loop-built reference
+  // above is the same thing for small inputs but takes seconds here.
+  const refFast = (u8) => Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength).toString("base64");
   check("fold size is a sane bound (16 MB of text at most, more than one chunk)", F > 1 && F * 65536 <= 20 * 1024 * 1024, true);
   for (const n of [C * (F - 1), C * F, C * F + 1, C * (F + 1) + 7, C * (2 * F) + 3, C * (3 * F - 1) + 5]) {
     const u8 = bytes(n, 7);
     const got = await body(W.pdfJsonBody(u8, { a: 1 }));
-    check(`fold seams: ${n} bytes (${(n / C).toFixed(2)} chunks) match the reference`, got.pdf_b64 === refB64(u8) && got.a === 1, true);
+    check(`fold seams: ${n} bytes (${(n / C).toFixed(2)} chunks) match the reference`, got.pdf_b64 === refFast(u8) && got.a === 1, true);
   }
   {
     const two = bytes(C * (F + 3) + 1, 8), one = bytes(1000, 9);
     const got = await body(W.pdfJsonBody({ pdf_a_b64: two, pdf_b_b64: one }, { mode: "text" }));
-    check("two documents, the first crossing a fold: both intact and in order", [got.pdf_a_b64 === refB64(two), got.pdf_b_b64 === refB64(one), got.mode], [true, true, "text"]);
+    check("two documents, the first crossing a fold: both intact and in order", [got.pdf_a_b64 === refFast(two), got.pdf_b_b64 === refFast(one), got.mode], [true, true, "text"]);
     const arr = await body(W.binArrayJsonBody("images", [one, two, one], { page_size: "fit" }));
-    check("array of images across a fold: all intact, in order", [arr.images.length, arr.images[0] === refB64(one), arr.images[1] === refB64(two), arr.images[2] === refB64(one), arr.page_size], [3, true, true, true, "fit"]);
+    check("array of images across a fold: all intact, in order", [arr.images.length, arr.images[0] === refFast(one), arr.images[1] === refFast(two), arr.images[2] === refFast(one), arr.page_size], [3, true, true, true, "fit"]);
   }
   {
     const parts = [];
