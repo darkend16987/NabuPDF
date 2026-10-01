@@ -958,7 +958,13 @@ async function renderPageCanvas(i) {
     // The scale these pixels (and the layers below) were built at. commitScale
     // compares it against state.scale to know which pages are still stretched, and
     // applyScaleToDom scales the note/find layers relative to it.
-    m.paintScale = state.scale;
+    //
+    // It is the scale of the viewport we actually RASTERISED with (`vp`, captured
+    // before the await) - NOT state.scale as it is now. A zoom that lands while this
+    // render is in flight changes state.scale, and stamping the new value on a bitmap
+    // drawn at the old one made commitScale believe the page was already crisp: it
+    // stayed blurry for good (docs/REVIEW-2026-10-01 R1, BI-36 again).
+    m.paintScale = vp.scale;
     await addTextLayer(i, m);  // selectable/​highlightable text for text-based pages
     if (!editing) await addNoteMarkers(i, m); // surface baked sticky-note comments (readable in-app)
     if (search.matches.length) drawSearchLayer(i); // repaint find highlights on (re)render
@@ -976,6 +982,11 @@ async function renderPageCanvas(i) {
     // If the page scrolled far away while we were rasterising (fast fling), the
     // keepObserver's free event was skipped mid-render — reclaim the bitmap now.
     if (m.wrap.dataset.rendered === "1" && pageFarFromViewport(m.wrap)) freePageCanvas(i);
+    // The user zoomed while this render was in flight: what we just drew is at the old
+    // scale (and says so in paintScale). commitScale cannot have fixed it - it skips
+    // pages that are mid-render - so ask for another pass; it is debounced, so a zoom
+    // gesture that is still going on does not make every page chase it.
+    else if (m.wrap.dataset.rendered === "1" && m.vp && m.vp.scale !== vp.scale) scheduleScaleCommit();
   }
 }
 
@@ -3149,6 +3160,11 @@ async function commitScale() {
         const m = metas[i];
         if (!m || !m.wrap || m.wrap.dataset.rendered !== "1") continue;
         if (m.paintScale === state.scale) continue; // already crisp at this scale
+        // Mid-render: leave it alone. renderPageCanvas would refuse (m.rendering) and the
+        // "0" set below would then stick - bitmap present, flag saying there is none, so
+        // freePageCanvas never releases it and nothing repaints it (R1). The render in
+        // flight asks for another pass when it lands (see its finally).
+        if (m.rendering) continue;
         m.wrap.dataset.rendered = "0";
         await renderPageCanvas(i); // reads the m.vp applyScaleToDom just set
       }
