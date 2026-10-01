@@ -4137,7 +4137,13 @@
       // boxes / notes stay editable and their baked copies stay hidden.
       if (ed.active && !ed._exiting) {
         ed._importedManaged = await importManaged(); // re-read: the count must track the FILE
-        if (window.repaintRenderedPages) await window.repaintRenderedPages();
+        // No repaintRenderedPages() here (R8, docs/REVIEW-2026-10-01). It used to follow, and
+        // re-rasterised every page on screen a SECOND time - the changed ones had just been
+        // repainted by rerenderChanged, the unchanged ones were already right. The reason it
+        // existed (hide the baked copy of the annots the overlay now owns again) is met by
+        // rerenderChanged itself: renderPageCanvas paints with annotations DISABLED whenever
+        // Editor.active, and Editor.active is still true here. importManaged only READS the
+        // file; it changes nothing a page shows.
         syncOverlays();
       }
       toast("Đã áp dụng chỉnh sửa.", "good");
