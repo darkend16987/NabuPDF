@@ -233,9 +233,13 @@
     if (!m || m.canvas || m.rendering) return;
     const mine = st.token;
     m.rendering = true;
+    // The viewport THIS render is for. zoomTo replaces m.vp with a new object, so after the
+    // await `m.vp !== vp` is exactly "the user zoomed while we were rasterising".
+    const vp = m.vp;
+    let stale = false;
     try {
-      const cw = m.vp.width;
-      const ch = m.vp.height;
+      const cw = vp.width;
+      const ch = vp.height;
       // BI-78. Shared with index.html — never a local copy of these numbers.
       const rd = window.RasterCap.viewRasterDpr(cw, ch, window.devicePixelRatio || 1);
       const off = document.createElement("canvas");
@@ -243,19 +247,32 @@
       off.height = Math.max(1, Math.floor(ch * rd));
       await m.page.render({
         canvasContext: off.getContext("2d", { alpha: false }),
-        viewport: m.vp,
+        viewport: vp,
         transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
         // Same value app.js uses outside edit mode: baked annotations (/AP vectors,
         // BI-64) MUST show, or the pane silently hides what the user just saved.
         annotationMode: pdfjsLib.AnnotationMode.ENABLE,
       }).promise;
       if (mine !== st.token || m.canvas) return; // document swapped mid-render
+      if (m.vp !== vp) {
+        // Zoomed while this was in flight: these pixels are for the OLD scale. Attaching
+        // them would stretch a soft bitmap over the new box and set m.canvas, which is what
+        // renderPage's own guard (and zoomTo's repaint, refused while `rendering`) treats as
+        // "painted" - so the page stayed blurry until the next zoom (R9, the same shape as
+        // R1 in the main viewer). Drop it and paint again at the current scale.
+        off.width = 0;
+        off.height = 0;
+        stale = true;
+        return;
+      }
       m.wrap.appendChild(off);
       m.canvas = off;
     } catch (_) {
       // One bad page must not take the pane down; it stays blank and the rest works.
     } finally {
       m.rendering = false;
+      // (`stale` is only set after the document-token check above, so no re-check here.)
+      if (stale && nearViewport(m.wrap)) renderPage(i);
     }
   }
 
