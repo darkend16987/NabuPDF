@@ -42,6 +42,13 @@ const search = {
   query: "",
   docItems: null,
   docToken: null,
+  // The index build in flight, `{ pdf, promise }`. Without it every keystroke that
+  // arrived before the first build finished started ANOTHER full-document
+  // getTextContent pass (R6).
+  indexJob: null,
+  // Bumped by every runSearch/closeFind; a search that finds it changed after an await
+  // has been superseded and must not write its results over the newer one's.
+  seq: 0,
   matches: [],
   current: -1,
 };
@@ -1230,37 +1237,62 @@ function foldText(s) {
 // Build (once per loaded document) each page's text runs with the geometry needed
 // to draw highlight boxes: pdf.js text items carry `transform` (baseline origin in
 // unscaled PDF space) and `width` (advance, unscaled), which we project per zoom.
-async function ensureSearchIndex() {
-  if (search.docItems && search.docToken === state.pdf) return search.docItems;
-  const docItems = [];
-  for (let i = 0; i < state.numPages; i++) {
-    const page =
-      (state.pageMetas && state.pageMetas[i] && state.pageMetas[i].page) ||
-      (await state.pdf.getPage(i + 1));
-    let tc;
+//
+// Concurrent callers share ONE build (`search.indexJob`), and the result is stamped with
+// the document it was built FROM, captured up front. It used to be stamped with
+// `state.pdf` read after the loop: replace the document mid-build and the old document's
+// text was published under the NEW document's token, so every search on it then hit the
+// wrong text until something else invalidated the cache. A build whose document is gone
+// is abandoned and resolves to `null` — callers treat that as "nothing to search".
+function ensureSearchIndex() {
+  const pdf = state.pdf;
+  if (!pdf) return Promise.resolve([]); // nothing open: nothing to index (and nothing to cache)
+  if (search.docItems && search.docToken === pdf) return Promise.resolve(search.docItems);
+  if (search.indexJob && search.indexJob.pdf === pdf) return search.indexJob.promise;
+  const job = { pdf, promise: null };
+  job.promise = (async () => {
     try {
-      tc = await page.getTextContent();
-    } catch (_) {
-      tc = { items: [] };
+      const docItems = [];
+      for (let i = 0; i < pdf.numPages; i++) {
+        if (state.pdf !== pdf) return null; // the document was replaced under us
+        const page =
+          (state.pageMetas && state.pageMetas[i] && state.pageMetas[i].page) ||
+          (await pdf.getPage(i + 1));
+        let tc;
+        try {
+          tc = await page.getTextContent();
+        } catch (_) {
+          tc = { items: [] };
+        }
+        const items = [];
+        for (const it of tc.items || []) {
+          if (typeof it.str !== "string" || !it.str) continue;
+          items.push({ folded: foldText(it.str), transform: it.transform, width: it.width });
+        }
+        docItems.push(items);
+      }
+      if (state.pdf !== pdf) return null;
+      search.docItems = docItems;
+      search.docToken = pdf;
+      return docItems;
+    } finally {
+      if (search.indexJob === job) search.indexJob = null;
     }
-    const items = [];
-    for (const it of tc.items || []) {
-      if (typeof it.str !== "string" || !it.str) continue;
-      items.push({ folded: foldText(it.str), transform: it.transform, width: it.width });
-    }
-    docItems.push(items);
-  }
-  search.docItems = docItems;
-  search.docToken = state.pdf;
-  return docItems;
+  })();
+  search.indexJob = job;
+  return job.promise;
 }
 
 async function runSearch(q) {
+  const seq = ++search.seq;
   search.query = q || "";
   const matches = [];
   const fq = foldText((q || "").trim());
   if (fq) {
     const docItems = await ensureSearchIndex();
+    // Superseded while the index was building (the user kept typing, or pressed Escape),
+    // or the document went away: the newer call owns the result, so write nothing.
+    if (seq !== search.seq || !docItems) return;
     for (let i = 0; i < docItems.length; i++) {
       for (const it of docItems[i]) {
         const hay = it.folded;
@@ -1290,6 +1322,7 @@ async function runSearch(q) {
   }
   updateFindCount();
   if (search.current >= 0) await gotoMatch(0);
+  if (seq !== search.seq) return; // gotoMatch awaits a page render; don't repaint over a newer search
   $("find-input").classList.toggle("no-hit", !!fq && !matches.length);
 }
 
@@ -1370,6 +1403,7 @@ function closeFind() {
     inp.classList.remove("no-hit");
     inp.blur();
   }
+  search.seq++; // cancel a search still waiting on the index — Escape must stay cleared
   search.matches = [];
   search.current = -1;
   search.query = "";
