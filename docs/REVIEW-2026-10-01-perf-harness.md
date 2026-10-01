@@ -239,3 +239,27 @@ Tăng trưởng (dòng cộng ròng theo `numstat`, từ 2026-06): `editor.js` *
 - **`web/`, `site/`, `supabase/`**: không thuộc ứng dụng desktop, chỉ xem về vệ sinh repo.
 - **Độ phủ test theo dòng**: không có công cụ coverage; 24% / 54% là *tỉ lệ dòng nằm trong file có `module.exports`*, **không phải** coverage thật.
 - ESM có còn bị chặn không (rào cản 1): chưa thử lại.
+
+---
+
+## 7. Trạng thái thi công (cập nhật cuối ngày 2026-10-01)
+
+Quyết định của chủ dự án: Đợt 0 và Đợt A theo thứ tự đã đề xuất, mỗi việc một commit; chấp nhận đánh đổi `garbage=2` (+~1,5% dung lượng); G1/G2/G3/G5 làm cùng Đợt 0; **G6 giữ nguyên** (không bỏ theo dõi `.claude/settings.local.json`); đề xuất tách `baking` viết trước rồi mới quyết.
+
+**Đợt 0 — XONG** (lưới trước & sau: JS 24/24 → **27/27**, Python 16/16; Python từ ~155 s → **~55 s**):
+
+| Việc | Commit | Kết quả |
+|---|---|---|
+| Memo này | `964654e` | |
+| H1 `npm test` + cổng `/deploy` | `f6e7471` | 24 bộ JS vào cổng phát hành; file đỏ giả → exit 1 |
+| H4 `_ink()` bằng numpy | `f902d9b` | 38,9 s → 0,45 s/lần, kết quả **giống hệt** (4 fixture × zoom 2 / 3,7 / 8); file test 78 s → 3,5 s |
+| G1 `test:scope` | `9e22d2a` | 33 ca, **đột biến trên file thật** (đảo wire/app, thêm `const toast`, file mồ côi, destructure `PDFDocument` lần nữa) đều đỏ đúng chỗ |
+| G2 `test:ipc` | `759e21a` | 14 ca; 64 ⇄ 64 kênh; đột biến (typo kênh, handler mồ côi, thêm `file:write-pdf` vào pane chỉ-đọc, send gián tiếp mới) đều đỏ |
+| G3 `test:bytes` | `d7bad7a` | 14 ca; khoá 17 chỗ ghi + **kiểm thật** luật BI-3 (pushUndo trước khi ghi) cho 13 writer; đột biến đều đỏ |
+| **Lỗi phát hiện thêm: cổng sidecar-tươi** | `9b7da20` | `check-sidecar-fresh.js` coi `test_*.py` là đầu vào sidecar ⇒ commit H4 làm `npm run build` đòi build lại ~30 phút vô lý. Đã loại trừ `test_*.py`, `run_tests.py`; kiểm 5 tình huống (sửa `api.py` / `src/pdf/util.py` vẫn đỏ) |
+| H5 sửa 2 chỗ tài liệu cũ | `1844635` | con trỏ memory không tồn tại; "renderer không có test" |
+| H2/G5 `CLAUDE.md` | `2acb1c8` | 75 dòng, không dùng số dòng |
+
+Lưu ý nhỏ: sau Đợt 0, `HANDOFF.md` chưa được thêm mục (mục này thuộc về `/deploy` khi có bản phát hành).
+
+**Còn lại:** Đợt A (S3, S2-timeout, M4, M7, R3, R6, R7, S7, S8) — chưa bắt đầu; Đợt B–D theo §5; Đợt E gồm tách `baking` — đề xuất có số đo ở `docs/PROPOSAL-2026-10-01-split-editor-baking.md`, **chưa quyết GO**.
