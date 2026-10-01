@@ -389,6 +389,77 @@ const reload = async (doc) => PDFDocument.load(await doc.save());
       [V.looksLikeVaultFile(null), V.looksLikeVaultFile(new Uint8Array(0))], [false, false]);
   }
   {
+    // The scan is Boyer–Moore–Horspool (R7). A skip-table search has a classic way to be
+    // wrong that no "does it find our own file" case would show — an off-by-one in the
+    // table, a window that stops one byte early, a missed match that straddles a skip. So
+    // it is checked against the obvious reference (Buffer#includes) over every position,
+    // every near-miss, and a lot of noise. It must never disagree, in EITHER direction:
+    // a false negative hides the badge; a false positive costs a wasted parse.
+    const MARK = "/NabuVaultBlob";
+    const M = Buffer.from(MARK, "latin1");
+    const ref = (u8) => Buffer.from(u8.buffer, u8.byteOffset, u8.length).includes(M);
+    let seed = 0x1234abcd;
+    const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const noise = (n, alphabet) => {
+      const b = new Uint8Array(n);
+      for (let i = 0; i < n; i++) b[i] = alphabet ? alphabet[(rnd() * alphabet.length) | 0] : (rnd() * 256) | 0;
+      return b;
+    };
+    let disagreements = 0;
+    let trials = 0;
+    const agree = (u8) => {
+      trials++;
+      if (V.looksLikeVaultFile(u8) !== ref(u8)) disagreements++;
+    };
+
+    // marker at EVERY offset of a short buffer, including flush against both ends
+    for (let len = M.length; len <= M.length + 40; len++) {
+      for (let at = 0; at + M.length <= len; at++) {
+        const b = noise(len);
+        M.copy(b, at);
+        agree(b);
+        if (!V.looksLikeVaultFile(b)) disagreements++; // and it really is found
+      }
+    }
+    // every near miss: one byte wrong at each position, and a truncated marker at the very end
+    for (let flip = 0; flip < M.length; flip++) {
+      const b = noise(80, [0x2f, 0x4e, 0x61, 0x62, 0x75, 0x56, 0x6c, 0x74, 0x42, 0x6f]); // marker's own letters
+      M.copy(b, 30);
+      b[30 + flip] ^= 0x01;
+      agree(b);
+    }
+    for (let cut = 1; cut < M.length; cut++) {
+      const b = noise(64);
+      M.copy(b, 64 - cut, 0, cut);
+      agree(b);
+    }
+    // overlapping / repeated prefixes ("/NabuVault/NabuVaultBlob"), and the marker's own alphabet as noise
+    agree(new Uint8Array(Buffer.from("/NabuVault/NabuVaultBlob", "latin1")));
+    agree(new Uint8Array(Buffer.from("/NabuVaultBlo/NabuVaultBlo/NabuVaultBlo", "latin1")));
+    for (let t = 0; t < 400; t++) {
+      const b = noise(20 + ((rnd() * 200) | 0), [0x2f, 0x4e, 0x61, 0x62, 0x75, 0x56, 0x6c, 0x74, 0x42, 0x6f]);
+      if (rnd() < 0.5) M.copy(b, (rnd() * (b.length - M.length)) | 0);
+      agree(b);
+    }
+    // plain binary noise, a few sizes, with and without a planted marker
+    for (let t = 0; t < 300; t++) {
+      const b = noise(((rnd() * 4000) | 0) + M.length);
+      if (rnd() < 0.5) M.copy(b, (rnd() * (b.length - M.length + 1)) | 0);
+      agree(b);
+    }
+    // a view into the middle of a larger buffer (byteOffset != 0) must be judged on its OWN range
+    const host = noise(200);
+    M.copy(host, 100);
+    check("subarray covering the marker: found", V.looksLikeVaultFile(host.subarray(90, 130)), true);
+    check("subarray that ends one byte short of the marker: not found",
+      V.looksLikeVaultFile(host.subarray(0, 100 + M.length - 1)) === ref(host.subarray(0, 100 + M.length - 1)), true);
+    check("subarray starting after the marker: judged on its own range",
+      V.looksLikeVaultFile(host.subarray(100 + M.length)) === ref(host.subarray(100 + M.length)), true);
+    check("a Node Buffer works as well as a Uint8Array", V.looksLikeVaultFile(Buffer.concat([Buffer.from("xx"), M, Buffer.from("yy")])), true);
+    check("shorter than the marker: false, no throw", [V.looksLikeVaultFile(new Uint8Array(3)), V.looksLikeVaultFile(new Uint8Array(M.length - 1))], [false, false]);
+    check(`looksLikeVaultFile agrees with Buffer#includes on ${trials} generated inputs`, disagreements, 0);
+  }
+  {
     // Freeing the ciphertext on unhide. pdf-lib writes back every object it parsed, so
     // an unlinked-but-undeleted blob would ride along forever — BI-38 at page scale.
     const doc = await makeDoc(3);

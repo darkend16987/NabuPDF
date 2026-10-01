@@ -225,15 +225,30 @@
   // Deliberately one-sided. A false POSITIVE costs one parse that finds nothing. A false
   // negative would only mean no badge — never a lost page, because unhide reads the page
   // dict directly and never consults this.
+  //
+  // Boyer–Moore–Horspool, not a first-byte filter: this runs over the WHOLE document on
+  // every render, and the old loop looked at every byte (128 MB: ~300 ms; BMH: ~45 ms,
+  // docs/REVIEW-2026-10-01 R7). Horspool and not `indexOf` on a rare byte: measured, that
+  // one is as fast on ordinary data but takes 2.4 s on a file that is mostly the pivot
+  // byte, while BMH has no such case. The marker is pure ASCII, so bytes compare directly.
   const MARKER = "/NabuVaultBlob";
+  const MARKER_BYTES = Array.from(MARKER, (c) => c.charCodeAt(0));
+  const MARKER_SKIP = (() => {
+    const m = MARKER_BYTES.length;
+    const t = new Int32Array(256).fill(m);
+    for (let i = 0; i < m - 1; i++) t[MARKER_BYTES[i]] = m - 1 - i;
+    return t;
+  })();
   function looksLikeVaultFile(bytes) {
     if (!bytes || !bytes.length) return false;
-    const first = MARKER.charCodeAt(0);
-    for (let i = 0; i + MARKER.length <= bytes.length; i++) {
-      if (bytes[i] !== first) continue;
-      let k = 1;
-      while (k < MARKER.length && bytes[i + k] === MARKER.charCodeAt(k)) k++;
-      if (k === MARKER.length) return true;
+    const n = bytes.length;
+    const m = MARKER_BYTES.length;
+    let i = 0;
+    while (i <= n - m) {
+      let k = m - 1;
+      while (k >= 0 && bytes[i + k] === MARKER_BYTES[k]) k--;
+      if (k < 0) return true;
+      i += MARKER_SKIP[bytes[i + m - 1]];
     }
     return false;
   }
