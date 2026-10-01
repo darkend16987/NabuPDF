@@ -35,6 +35,10 @@
     changeIdx: -1,
     wrapsA: [], // per-page slot elements
     wrapsB: [],
+    // pdf.js RenderTasks still running for each pane's slots, so a rebuild (zoom) can cancel
+    // them instead of letting them paint into slots that are no longer in the document.
+    tasksA: new Set(),
+    tasksB: new Set(),
     obsA: null, // render band: paints a slot as it nears the pane
     obsB: null,
     keepA: null, // keep band (wider): releases a slot's bitmap once it drifts past
@@ -60,6 +64,8 @@
     cmp.changeIdx = -1;
     cmp.wrapsA = [];
     cmp.wrapsB = [];
+    cancelPaneRenders("a");
+    cancelPaneRenders("b");
     cmp.sel = null;
     cmp.owner = null;
   }
@@ -435,6 +441,11 @@
     if (prevObs) { try { prevObs.disconnect(); } catch (_) {} }
     const prevKeep = side === "a" ? cmp.keepA : cmp.keepB;
     if (prevKeep) { try { prevKeep.disconnect(); } catch (_) {} }
+    // Zoom rebuilds the whole pane: the slots below are about to be thrown away, and any
+    // render still running on one of them would otherwise carry on painting a detached
+    // canvas - at the OLD scale, competing in the pdf.js worker with the renders of the new
+    // slots the user is waiting for (R5, docs/REVIEW-2026-10-01).
+    cancelPaneRenders(side);
     host.innerHTML = "";
     const wraps = [];
     // NOTE: no `obs.unobserve(w)` here any more. It used to mean "rendered once, never
@@ -477,6 +488,14 @@
     }
     if (side === "a") { cmp.wrapsA = wraps; cmp.obsA = obs; cmp.keepA = keepObs; }
     else { cmp.wrapsB = wraps; cmp.obsB = obs; cmp.keepB = keepObs; }
+  }
+
+  function cancelPaneRenders(side) {
+    const tasks = side === "a" ? cmp.tasksA : cmp.tasksB;
+    for (const t of [...tasks]) {
+      try { t.cancel(); } catch (_) {}
+    }
+    tasks.clear();
   }
 
   // Release a slot's bitmap when it drifts out of the keep band. Only the pixels go:
@@ -539,16 +558,21 @@
     slot.innerHTML = "";
     slot.appendChild(label);
     slot.appendChild(pageDiv);
+    const tasks = side === "a" ? cmp.tasksA : cmp.tasksB;
+    let task = null;
     try {
-      await page.render({
+      task = page.render({
         canvasContext: canvas.getContext("2d"),
         viewport: vp,
         transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
-      }).promise;
+      });
+      tasks.add(task);
+      await task.promise;
     } catch (_) {
-      slot.dataset.rendered = "0"; // let it retry on the next intersection
+      slot.dataset.rendered = "0"; // let it retry on the next intersection (also: cancelled by a rebuild)
       return;
     } finally {
+      if (task) tasks.delete(task);
       slot.dataset.rendering = "0";
       // If the slot drifted out of the keep band while we were painting, its free event
       // already came and went (see the note where `rendering` is set). Reclaim it now —
@@ -800,9 +824,9 @@
 
   // Render one page onto a canvas. `tint` (a CSS colour) recolours the ink and
   // leaves the background transparent, so stacked layers reveal each other.
-  async function ovRenderPage(pdf, i, canvas, tint) {
+  async function ovRenderPage(pdf, i, canvas, tint, scale) {
     const page = await pdf.getPage(i + 1);
-    const vp = page.getViewport({ scale: ov.scale });
+    const vp = page.getViewport({ scale });
     const dpr = window.devicePixelRatio || 1;
     // Cap the bitmap (BI-78) — and this is the sharpest instance of it in the whole app:
     // "Chồng lớp bản vẽ" exists FOR A0/A1 CAD sheets, and it stacks TWO of these canvases
@@ -854,13 +878,52 @@
     ctx.putImageData(im, 0, 0);
   }
 
-  async function renderOverlay() {
+  // ONE overlay raster at a time (R4, docs/REVIEW-2026-10-01). Every zoom step, Ctrl+wheel
+  // notch, tint toggle and pair change calls renderOverlay(); they used to run side by side.
+  // Two passes then drew onto the SAME two canvases at once: ovRenderPage resizes the canvas
+  // (which wipes it) under the other pass's render, pdf.js refuses a second render() on a
+  // canvas that already has one and rejects - unhandled, nobody catches it - and because each
+  // pass read ov.scale again after its own awaits, the base layer could end up at one scale
+  // and the top layer at another. Each step also paid a full getImageData of both layers
+  // (128 MB at the 400% ceiling) for a raster that was about to be overwritten.
+  // Now: while a pass runs, further requests only set a flag and share its promise; when the
+  // pass ends the loop goes round once more with the LATEST scale/tint, so a burst of N steps
+  // costs the pass in flight plus one, never N.
+  let ovJob = null;
+  let ovAgain = false;
+  function renderOverlay() {
+    if (ovJob) {
+      ovAgain = true;
+      return ovJob;
+    }
+    ovJob = (async () => {
+      try {
+        do {
+          ovAgain = false;
+          await renderOverlayPass();
+        } while (ovAgain);
+      } finally {
+        ovJob = null;
+      }
+    })();
+    return ovJob;
+  }
+
+  async function renderOverlayPass() {
     const p = ov.pairs[ov.idx];
+    if (!p) return; // the overlay was closed since this was asked for
+    // One snapshot per pass, so both layers are drawn at the same scale and tint even if
+    // the user keeps zooming; whatever changes meanwhile is the next pass's business.
+    const scale = ov.scale;
     const tint = el("overlay-tint").checked;
     const base = el("overlay-base");
     const top = el("overlay-top");
-    const da = await ovRenderPage(cmp.pdfA, p.a, base, tint ? "#e01010" : null);
-    const db = await ovRenderPage(cmp.pdfB, p.b, top, tint ? "#1060e0" : null);
+    const pdfA = cmp.pdfA;
+    const pdfB = cmp.pdfB;
+    const da = await ovRenderPage(pdfA, p.a, base, tint ? "#e01010" : null, scale);
+    if (ov.pairs[ov.idx] !== p) return;
+    const db = await ovRenderPage(pdfB, p.b, top, tint ? "#1060e0" : null, scale);
+    if (ov.pairs[ov.idx] !== p) return;
     const stack = el("overlay-stack");
     stack.style.width = Math.max(da.w, db.w) + "px";
     stack.style.height = Math.max(da.h, db.h) + "px";
