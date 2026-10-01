@@ -1440,7 +1440,7 @@ async function rerenderChanged(changed) {
       // to — this is what stops a watermark-all (changed=null) from rasterising
       // every page of a large document at once.
       if (wasRendered) await renderPageCanvas(i);
-      await refreshThumb(i);
+      refreshThumb(i); // marks + queues; NOT awaited — see refreshThumb
     }
     if (window.Editor) window.Editor.syncOverlays();
     if (window.TextEdit) window.TextEdit.syncOverlays();
@@ -1466,12 +1466,22 @@ async function repaintRenderedPages() {
 }
 window.repaintRenderedPages = repaintRenderedPages;
 
-// Repaint a single thumbnail in place (used by the targeted re-render above).
-async function refreshThumb(i) {
+// Mark a thumbnail stale after the targeted re-render above, and hand its repaint to the
+// thumbnail queue. It used to be `await renderThumbCanvas(i)` for EVERY changed page, in
+// sequence, while the "Đang cập nhật trang…" overlay held the UI: a watermark or bake over
+// all 86 sheets of an A1 set was ~160 ms x 86 = 15–80 s behind a modal (R3), and it drew
+// thumbnails nobody had scrolled to (a thumbnail costs about a full page render — see the
+// note above thumbQueue).
+//   - A thumbnail that was never drawn has nothing stale. It is still waiting on the
+//     sidebar observer / queue, which will draw it from the NEW document (renderThumbCanvas
+//     reads state.pdf when it runs) once it nears the viewport.
+//   - One that WAS drawn is flagged stale and queued, so it repaints in idle slices after
+//     the overlay is gone instead of inside it.
+function refreshThumb(i) {
   const div = $("thumbs").querySelector(`.thumb[data-index="${i}"]`);
-  if (!div) return;
-  div.dataset.rendered = "0"; // force a repaint of the (possibly stale) thumbnail
-  await renderThumbCanvas(i);
+  if (!div || div.dataset.rendered !== "1") return;
+  div.dataset.rendered = "0"; // stale: renderThumbCanvas's guard would skip it otherwise
+  thumbQueue.queue(i);
 }
 
 // Index of the page currently occupying the top of the viewport — the topmost
