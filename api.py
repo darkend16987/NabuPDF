@@ -473,6 +473,18 @@ class ExportResponse(BaseModel):
     error: str | None = None
 
 
+
+# ZIP entries that hold an already-compressed image are STORED, not deflated: deflate
+# cannot shrink a JPEG/PNG (sizes come out equal) but costs real CPU on the event loop
+# (a 12 MP JPEG: 2.12 s vs 0.18 s, docs/REVIEW-2026-10-01 S8). Anything else - raw
+# bitmaps, TIFF, and the PDF parts /split writes - still deflates.
+_ALREADY_COMPRESSED_EXT = frozenset({"jpg", "jpeg", "png", "jp2", "jpx", "j2k", "webp", "gif"})
+
+
+def _zip_method(ext: str) -> int:
+    return zipfile.ZIP_STORED if ext.lower().lstrip(".") in _ALREADY_COMPRESSED_EXT else zipfile.ZIP_DEFLATED
+
+
 _EXPORT_SUFFIX = {"excel": ".xlsx", "csv": ".csv", "json": ".json"}
 _EXPORT_MIME = {
     "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1241,7 +1253,7 @@ async def extract_images(req: ExtractImagesRequest):
                         continue
                     ext = info.get("ext", "png")
                     count += 1
-                    zf.writestr(f"p{pno + 1:03d}_img{count:03d}.{ext}", info["image"])
+                    zf.writestr(f"p{pno + 1:03d}_img{count:03d}.{ext}", info["image"], compress_type=_zip_method(ext))
         pages = doc.page_count
     except Exception as e:
         logger.exception("Extract-images error")
@@ -1475,7 +1487,7 @@ async def pdf_to_images(req: PdfToImagesRequest):
                 else:
                     data = pix.tobytes("png")
                 count += 1
-                zf.writestr(f"page_{pno + 1:03d}.{ext}", data)
+                zf.writestr(f"page_{pno + 1:03d}.{ext}", data, compress_type=_zip_method(ext))
     except Exception as e:
         logger.exception("Pdf-to-images error")
         doc.close()
