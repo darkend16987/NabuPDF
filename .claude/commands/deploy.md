@@ -44,11 +44,14 @@ of the current `desktop/package.json` version.
 ## 2. Sidecar freshness
 
 The bundled Python sidecar (`dist/sidecar/`) must match the source, or OTA ships a
-stale binary (see [memory] sidecar-stale-build-guard).
+stale binary. The rule lives in code, not in memory:
+[desktop/scripts/check-sidecar-fresh.js](desktop/scripts/check-sidecar-fresh.js)
+(`SIDECAR_INPUTS`).
 
 - If `dist/sidecar/sidecar.exe` or `dist/sidecar/SIDECAR_BUILD.json` is missing → rebuild.
 - Else compare: any tracked `*.py` / `sidecar.spec` changed since the marker commit,
-  OR any uncommitted `*.py` / `sidecar.spec` edits → rebuild.
+  OR any uncommitted `*.py` / `sidecar.spec` edits → rebuild. Root-level `test_*.py`
+  and `run_tests.py` do **not** count (nothing in the bundle imports them).
   (This is exactly what [desktop/scripts/check-sidecar-fresh.js](desktop/scripts/check-sidecar-fresh.js)
   enforces during `prebuild`; you can dry-run that logic with `git diff --name-only <marker-commit> HEAD -- "*.py" sidecar.spec` and `git status --porcelain -- "*.py" sidecar.spec`.)
 - **Rebuild** (only if needed): `cd desktop ; npm run build:sidecar`

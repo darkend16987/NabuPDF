@@ -35,9 +35,17 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/build/installer.nsh` | ~20 | Khoá registry của verb. Không chạy lúc dev, **chỉ** chạy lúc cài ⇒ sai thì không ai biết cho tới khi có người cài thật. Ba thứ dễ sai: thiếu `MultiSelectModel=Player` (chọn >15 file là mục menu mất), thiếu **BOM UTF-8** (nhãn tiếng Việt thành mojibake), thiếu `customUnInstall` (gỡ app xong còn mục menu chết). Có ca đối chiếu với JS trong `test:combine` → xem BI-62. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
-> Renderer gần như **không có** test tự động. Ngoại lệ là **năm** file được **cố ý tách
-> ra cho DOM-free**: `page-range.js`, `pan.js` (nửa trên), `wire.js`, và từ v0.2.48
-> `annot-text.js` + `annot-geom.js`. Tiêu chí chọn tách không phải “file to” mà là
+> *(Cập nhật 2026-10-01 — đo lại: `npm test` nay chạy 27 bộ; nhưng chỉ ~24% số dòng
+> renderer nằm trong file `require()` được từ node, ~76% còn lại chỉ có test cắt hàm /
+> ghim mã nguồn và probe. Ba bộ canh **cấu trúc** mới, không đổi hành vi:
+> `test:scope` (trùng tên toàn cục + thứ tự nạp `<script>`, BI-14), `test:ipc` (preload ⇄
+> `ipcMain`, bề mặt pane chỉ-đọc BI-55), `test:bytes` (mọi chỗ ghi `state.bytes` phải
+> `pushUndo()` trước, BI-3). Xem `docs/REVIEW-2026-10-01-perf-harness.md` §6.)*
+>
+> Renderer gần như **không có** test chạy trực tiếp lên `app.js`/`editor.js`. Ngoại lệ là
+> các file được **cố ý tách ra cho DOM-free** — đợt đầu là **năm** file: `page-range.js`,
+> `pan.js` (nửa trên), `wire.js`, và từ v0.2.48 `annot-text.js` + `annot-geom.js` (sau đó
+> thêm `managed-codec`, `page-vault`, `raster-cap`, `thumb-queue`, `sig-image`). Tiêu chí chọn tách không phải “file to” mà là
 > **“sai ở đây có im lặng không”** — mất trang, giành nhầm chuột, payload hỏng, chữ/mây
 > lệch chỗ trong file đã lưu. Phần renderer còn lại (`app.js`, `editor.js`,
 > `text-edit.js`) đụng DOM/canvas/pdf.js ở mọi dòng nên chỉ có tài liệu này + test tay
