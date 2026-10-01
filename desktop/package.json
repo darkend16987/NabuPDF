@@ -38,6 +38,7 @@
     "test:combine": "node test/shell-combine.test.js",
     "test:help": "node test/help-content.test.js",
     "test:find": "node test/find-replace.test.js",
+    "test:scope": "node test/global-scope.test.js",
     "test:sidecar": "node test/sidecar-lifecycle.test.js",
     "test:confirm": "node test/confirm-dialog.test.js",
     "checksums": "node scripts/checksums.js",
