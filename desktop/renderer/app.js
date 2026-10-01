@@ -221,6 +221,33 @@ function pushUndo() {
   // recovery snapshot (see autosave below).
   markDirty();
 }
+// The ONE entry point for a NEW edit that replaces the document (G4, docs/REVIEW-2026-10-01).
+// The write protocol - pushUndo() BEFORE the bytes move (BI-3), then the bytes, then the
+// selection, then the render - used to live only in each writer's head (`test:bytes` lists
+// them). Existing writers are NOT migrated: each is a change on the user's data path and
+// moves, one commit + probe at a time, only when something else already touches it.
+//
+// `bytes` is the FINISHED document, so everything that can throw (load, edit, save) has
+// already happened and nothing can fail between the undo step and the write. The old
+// shape - pushUndo(); try { load; edit; save } - leaves a phantom undo step on a failure.
+//
+//   select      indices to select ([] clears); undefined leaves the selection alone
+//   lastClicked likewise
+//   render      false when the caller repaints itself (the annotation editor does)
+//
+// NOT for a write that must not be undoable (hiding a page: BI-74 drops the history and
+// rewrites the recovery slot - see hidePagesWithPassword) or for one that replaces the
+// whole timeline (loadBytes, restoreSnapshot). Those stay explicit and are the "exempt"
+// entries of `test:bytes`.
+async function commitBytes(bytes, { select, lastClicked, render = true } = {}) {
+  if (!state.bytes) throw new Error("commitBytes: no document is open");
+  if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error("commitBytes: bytes must be a non-empty Uint8Array");
+  pushUndo();
+  state.bytes = bytes;
+  if (select !== undefined) state.selected = new Set(select);
+  if (lastClicked !== undefined) state.lastClicked = lastClicked;
+  if (render) await renderAll();
+}
 async function restoreSnapshot(s) {
   state.bytes = s.bytes;
   state.name = s.name;
@@ -260,7 +287,7 @@ function updateUndoRedo() {
 // typo'd or missing export would have surfaced as a TypeError inside a try/catch
 // (the edit silently not applying) instead of a skipped call. BI-14 in
 // docs/REGRESSION-GUARD.md is about exactly this class of silent break.
-window.DocHistory = { pushUndo };
+window.DocHistory = { pushUndo, commitBytes };
 
 // ---- unsaved-changes tracking + crash recovery ---------------------------
 //

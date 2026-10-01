@@ -179,6 +179,7 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - `app.js:148-158`. Gói chung: snapshot + xoá redo + `updateUndoRedo` + `markDirty`.
 - Bỏ qua → mất undo **và** mất cờ dirty (→ đóng file không hỏi, mất dữ liệu).
 - **Vỡ khi:** sửa xong mà tiêu đề không có chấm ●, hoặc Ctrl+Z không quay lại được.
+- **Code MỚI dùng `commitBytes(bytes, {select, lastClicked, render})`** (`app.js`, sau `pushUndo`; từ file khác: `window.DocHistory.commitBytes`). Nó nhận bytes **đã xong**, nên không có gì ném lỗi được giữa bước undo và bước ghi (kiểu cũ `pushUndo(); try { load; sửa; save }` để lại một bước undo "ma" khi lỗi). **Không** dùng cho ghi không-hoàn-tác-được (ẩn trang, BI-74) hay thay cả timeline (`loadBytes`, `restoreSnapshot`) — các chỗ đó là mục `exempt` của `test:bytes`. 13 chỗ ghi tay cũ là *legacy*: chuyển dần từng chỗ (mỗi chỗ một commit + probe) khi có việc khác đụng tới, không chuyển hàng loạt. `test:bytes` bắt chỗ ghi mới và chỉ về `commitBytes`.
 
 ### BI-4 · Không tính năng nào được đọc **pixel** canvas của viewer
 - Virtualization (`freePageCanvas` `app.js:739-745`) xoá bitmap trang trôi xa, chỉ giữ
@@ -2434,7 +2435,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 |---|---|---|
 | `toast()` | `app.js:58` | cả 6 module, ~172 chỗ |
 | `sidecarFetch()` | `app.js:49` | 4 module (~28 chỗ) — điểm duy nhất gắn token `X-Sidecar-Token` |
-| `pushUndo()` | `app.js:148` | 3 module, 10 chỗ — xem BI-3. Phơi ra ngoài bằng **`window.DocHistory`**, **không** phải `window.History` (tên đó là constructor của DOM → guard `if (window.History)` không bao giờ sai được) |
+| `pushUndo()` / `commitBytes()` | `app.js` | 3 module, 10 chỗ — xem BI-3 (`commitBytes` là đường chuẩn cho code mới, chưa có chỗ gọi nào ngoài test). Phơi ra ngoài bằng **`window.DocHistory`** (`{ pushUndo, commitBytes }`), **không** phải `window.History` (tên đó là constructor của DOM → guard `if (window.History)` không bao giờ sai được) |
 | `pdfJsonBody()` | **`wire.js`** | 3 module, 16 chỗ, **gọi bằng tên trần** — xem BI-24 + §2 |
 | `renderAll()` | `app.js:486` | 13 chỗ |
 | `rerenderChanged()` | `app.js:1138` | **chỉ** module khác gọi — xem BI-14 |

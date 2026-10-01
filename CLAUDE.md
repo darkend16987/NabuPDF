@@ -33,7 +33,7 @@ Bộ test JS **không** chạy được `app.js`/`editor.js` (DOM). Chúng hoặ
 Ba bộ canh *cấu trúc* (không đổi hành vi, đừng làm chúng im đi):
 - `test:scope` — không file nào khai trùng tên toàn cục; thứ tự `<script>` đúng luật (BI-14). Thêm script có phụ thuộc lúc nạp ⇒ thêm luật vào test.
 - `test:ipc` — kênh `preload ⇄ ipcMain` khớp nhau; pane chỉ-đọc không mọc kênh ghi (BI-55).
-- `test:bytes` — mọi chỗ ghi `state.bytes =` phải `pushUndo()` **trước** (BI-3). Chỗ ghi mới ⇒ test đỏ kèm luật phải theo.
+- `test:bytes` — mọi chỗ ghi `state.bytes =` phải `pushUndo()` **trước** (BI-3). Chỗ ghi mới ⇒ test đỏ kèm luật phải theo. **Code mới: gọi `commitBytes(bytes, opts)`** (`window.DocHistory.commitBytes` từ file khác), đừng tự ghi `state.bytes`.
 
 ## Kiến trúc cần nhớ
 
