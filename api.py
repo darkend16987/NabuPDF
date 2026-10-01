@@ -1301,6 +1301,41 @@ class PdfBytesResponse(BaseModel):
     error: str | None = None
 
 
+# A JPEG is embedded AS IS. Re-encoding every image to PNG (the old behaviour) turned a
+# 2.2 MB phone photo into a 34 MB page and ~7 s of CPU on the event loop; a "100 phone
+# photos" batch would have produced a multi-GB PDF (docs/REVIEW-2026-10-01 S5).
+# Measured per class against the old decode->PNG path, MuPDF render at 72 dpi:
+#   JPEG / MPO, RGB or L  10x smaller, 40x faster; pixels differ by ~0.5/255 on average
+#                         (MuPDF's JPEG decoder vs Pillow's - chroma upsampling at hard
+#                         edges), no colour shift. EXIF orientation and ICC profile are
+#                         ignored by BOTH paths, so what the page shows does not change.
+#   CMYK JPEG             renders differently (mean 18/255)   -> old path
+#   PNG                   identical pixels but NO size gain, and PNG variants (16-bit,
+#                         alpha -> mean 63/255) are not worth the risk -> old path
+#   WebP / BMP / TIFF     WebP is refused by MuPDF            -> old path
+_RAW_EMBED_FORMATS = frozenset({"JPEG", "MPO"})  # MPO = the multi-picture JPEG many phones write
+
+
+def _pdf_image_stream(raw: bytes) -> tuple[bytes, int, int]:
+    """Bytes to hand to ``page.insert_image`` and the image's pixel size.
+
+    Raises whatever Pillow raises for an unreadable image (the route turns it into a 400).
+    """
+    pil = Image.open(io.BytesIO(raw))
+    if pil.format in _RAW_EMBED_FORMATS and pil.mode in ("RGB", "L"):
+        # Image.open only reads the header. Decode once so a truncated/corrupt file is
+        # refused exactly as the re-encode path refused it, instead of being embedded
+        # and shown half-grey (MuPDF accepts a cut-off JPEG without complaint).
+        pil.load()
+        return raw, pil.width, pil.height
+    # Normalise via Pillow so odd formats (BMP/TIFF/WebP) become a PDF-safe raster, and
+    # we get reliable pixel dimensions.
+    pil = pil.convert("RGB") if pil.mode not in ("RGB", "L") else pil
+    png = io.BytesIO()
+    pil.save(png, format="PNG")
+    return png.getvalue(), pil.width, pil.height
+
+
 @app.post("/images-to-pdf", response_model=PdfBytesResponse)
 async def images_to_pdf(req: ImagesToPdfRequest):
     """Combine images (JPG/PNG/…) into a single PDF, one image per page.
@@ -1324,14 +1359,7 @@ async def images_to_pdf(req: ImagesToPdfRequest):
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Ảnh thứ {i + 1} không hợp lệ (base64).")
             try:
-                # Normalise via Pillow so odd formats (BMP/TIFF/WebP) become a PDF-safe
-                # raster, and we get reliable pixel dimensions.
-                pil = Image.open(io.BytesIO(raw))
-                pil = pil.convert("RGB") if pil.mode not in ("RGB", "L") else pil
-                png = io.BytesIO()
-                pil.save(png, format="PNG")
-                img_bytes = png.getvalue()
-                iw, ih = pil.width, pil.height
+                img_bytes, iw, ih = _pdf_image_stream(raw)
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Không đọc được ảnh thứ {i + 1}: {e}")
 
