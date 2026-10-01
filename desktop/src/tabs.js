@@ -593,8 +593,17 @@ class TabbedWindow {
     deps.hardenNav(wc);
     deps.attachContextMenu(wc);
     bindTabKeys(wc);
-    wc.loadFile(path.join(deps.RENDERER, "index.html"));
-    if (openPath || combinePaths) {
+    // A PARKED tab (session restore: every tab but the one being looked at) does not load
+    // its renderer at all until it is first activated - see _wakeDeferred. Parking only
+    // the *file read* (what `deferred` used to mean) still started one full renderer
+    // process per parked tab: measured with a stored session of 8 tabs, 1180 MB / 15
+    // processes at launch against 514 MB / 8 for a single tab, i.e. ~93 MB for every tab
+    // nobody had looked at (M5, docs/REVIEW-2026-10-01). A WebContentsView that has never
+    // navigated owns no renderer process (8 views: 404 MB / 7 processes), and the view
+    // object itself exists, so everything below that touches `tab.view` stays valid.
+    const parked = !!deferred && !!openPath && !combinePaths;
+    if (!parked) wc.loadFile(path.join(deps.RENDERER, "index.html"));
+    if ((openPath || combinePaths) && !parked) {
       wc.once("did-finish-load", () => {
         // This tab is spoken for. Tell the renderer so it declines to host the
         // crash-recovery prompt — that belongs to a genuinely empty tab, and
@@ -648,7 +657,13 @@ class TabbedWindow {
     this.base.contentView.addChildView(next.view);
     this._layout();
     this._sendPresentation(next); // its chrome must match this window's mode
-    this._wakeDeferred(next);
+    // Not while the window is being closed: closing walks the tabs, and closing the active
+    // one activates its neighbour - waking a parked tab there loads a renderer for a tab
+    // that is about to be closed, and the "window:before-close" sent to it while it is
+    // still loading is lost, so the close waits for an answer that never comes. (A cancel can
+    // only come from a tab that was asked, and _requestClose activates exactly that one - a
+    // loaded tab - so no parked tab is ever left active by a cancelled close.)
+    if (!this._closing) this._wakeDeferred(next);
     try {
       next.view.webContents.focus();
     } catch (_) {
@@ -660,14 +675,28 @@ class TabbedWindow {
   // A restored tab parked by session restore reads its document the first time
   // it is looked at. Cleared before sending so a second activation can't load
   // the same file twice over whatever the user has since done to it.
+  //
+  // A parked tab has no renderer yet (createTab), so waking it means LOADING the page and
+  // then doing what createTab's did-finish-load handler does for an ordinary tab:
+  // `tab:reserved` (decline the crash-recovery prompt - this tab is spoken for) and the file.
+  // A "window:presentation" sent by activateTab before the load reached nobody, so it is
+  // repeated once the page is up.
   _wakeDeferred(tab) {
     if (!tab || !tab.pendingPath) return;
     const p = tab.pendingPath;
     tab.pendingPath = null;
     const wc = tab.view.webContents;
     try {
-      if (wc.isLoading()) wc.once("did-finish-load", () => deps.sendFileToView(wc, p));
-      else deps.sendFileToView(wc, p);
+      wc.once("did-finish-load", () => {
+        try {
+          wc.send("tab:reserved");
+        } catch (_) {
+          /* renderer gone */
+        }
+        deps.sendFileToView(wc, p);
+        if (this._presenting) this._sendPresentation(tab);
+      });
+      wc.loadFile(path.join(deps.RENDERER, "index.html"));
     } catch (_) {
       /* renderer gone — the tab is about to disappear anyway */
     }
@@ -687,6 +716,11 @@ class TabbedWindow {
   // resolves once it answers via window:force-close (proceed) or
   // window:close-cancelled (cancel). Re-entrant calls share one promise.
   _requestClose(tab) {
+    // A parked tab never loaded a renderer, so there is nothing to ask and nobody to
+    // answer: sending "window:before-close" to it would be lost and the close would wait
+    // forever (closing the window walks every tab). It holds no document, so no unsaved
+    // work either - and waking it just to close it would load a renderer for nothing.
+    if (tab.pendingPath) return Promise.resolve(true);
     const existing = this._pendingClose.get(tab.id);
     if (existing) {
       this.activateTab(tab.id);
@@ -698,12 +732,25 @@ class TabbedWindow {
     });
     this._pendingClose.set(tab.id, { promise, resolve });
     this.activateTab(tab.id); // surface the doc the prompt is about
+    const wc = tab.view.webContents;
+    const ask = () => {
+      try {
+        wc.send("window:before-close");
+      } catch (_) {
+        // Renderer is gone — nothing to lose, allow the close.
+        this._resolveClose(tab.id, true);
+      }
+    };
+    // A tab whose page is still loading (a parked tab just woken, a brand-new one) has no
+    // listener yet: the question would be lost and the close would wait forever.
+    let loading = false;
     try {
-      tab.view.webContents.send("window:before-close");
+      loading = !!wc.isLoading();
     } catch (_) {
-      // Renderer is gone — nothing to lose, allow the close.
-      this._resolveClose(tab.id, true);
+      /* treat as loaded */
     }
+    if (loading) wc.once("did-finish-load", ask);
+    else ask();
     return promise;
   }
 

@@ -82,6 +82,19 @@ ngay**; các tab còn lại hiện tên file và **nằm im tới khi được b
 Đây là điều kiện cần, không phải tối ưu thêm thắt: thiếu nó thì tính năng tiện lợi
 này biến thành cú sập lúc mở app.
 
+**Tab hoãn không nạp cả renderer (M5, 2026-10-01).** Bản đầu chỉ hoãn việc *đọc file*; mỗi
+tab hoãn vẫn nạp một renderer đầy đủ. Đo với phiên 8 tab: 1180 MB / 15 tiến trình, so với
+514 MB / 8 cho một tab (~93 MB cho mỗi tab chưa ai nhìn). Nay `createTab({ deferred: true })`
+tạo `WebContentsView` nhưng **không `loadFile`** (view chưa điều hướng không có tiến trình
+renderer); `_wakeDeferred` mới nạp trang, rồi làm đúng việc của một tab thường khi nạp xong
+(`tab:reserved`, gửi file, gửi lại trạng thái trình chiếu). Phiên 8 tab: 505 MB / 8 tiến trình.
+Hệ quả phải nhớ, vì "gửi tới renderer chưa nạp" là **mất im lặng**:
+- đóng tab hoãn (`_requestClose`) trả lời ngay, không hỏi `window:before-close`;
+- không đánh thức khi cửa sổ đang đóng (`_closing`): đóng tab active kích hoạt tab kế, và
+  đánh thức tab sắp bị đóng làm vòng đóng cửa sổ chờ mãi (probe thật: treo >20 s, nay 0,3 s);
+- `_requestClose` chờ `did-finish-load` nếu trang đang nạp.
+Test: `desktop/test/tabs-parked.test.js`.
+
 ### 3.4 Khởi động bằng cách bấm đúp một file
 
 **Không khôi phục phiên.** Bấm đúp một PDF thì mở đúng PDF đó. Kéo cả phiên cũ theo
