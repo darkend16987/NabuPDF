@@ -33,7 +33,11 @@ of the current `desktop/package.json` version.
 - Run the whole Python suite via the single runner (expect the closing summary,
   no traceback): `.venv\Scripts\python run_tests.py` → `N/N test files passed.`
   (Discovers every `test_*.py` at the repo root and runs each in a subprocess.)
-- Quick static check of the renderer (no test runner there):
+- Run the whole desktop JS suite via its single runner (same idea; every
+  `desktop/test/*.test.js`, one subprocess each, ~30 s):
+  `cd desktop; npm test` → `N/N test files passed.` Before this existed the gate
+  ran **none** of those suites, so a red one could ship.
+- Quick static check of the renderer:
   `node --check desktop/renderer/app.js`, `editor.js`, `text-edit.js`.
 - **Any failure → stop and report.** Do not continue.
 
