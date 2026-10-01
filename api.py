@@ -34,6 +34,8 @@ from src.ocr.engine import create_engine, BaseOCREngine
 from src.agents.gemini_agent import GeminiAgent, DEFAULT_CONTRACT_FIELDS
 from src.agents.field_templates import TEMPLATES
 from src.output.writer import JSONWriter, ExcelWriter, CSVWriter
+from src import offload
+from src.offload import call_llm, call_ocr, drive_async
 from src.utils.config import (
     GEMINI_MODEL,
     get_gemini_key,
@@ -140,6 +142,7 @@ async def lifespan(app: FastAPI):
     features. The engine now builds on the first OCR-dependent request instead.
     """
     yield
+    offload.shutdown()
     logger.info("Shutting down OCR server")
 
 
@@ -320,7 +323,9 @@ async def run_ocr(request: OCRRequest):
     if len(request.images) > 50:
         raise HTTPException(status_code=400, detail="Too many images (max 50)")
 
-    engine = _get_ocr()
+    # OCR (and the model load inside _get_ocr) runs on the OCR worker, not the event
+    # loop - see src/offload.py. 503 from _get_ocr propagates exactly as before.
+    engine = await call_ocr(_get_ocr)
 
     try:
         pages: list[OCRPageResult] = []
@@ -339,7 +344,7 @@ async def run_ocr(request: OCRRequest):
                 continue
 
             # Run OCR
-            text = engine.recognize(image)
+            text = await call_ocr(engine.recognize, image)
             pages.append(OCRPageResult(page_number=page_num, text=text))
             all_texts.append(f"=== Trang {page_num} ===\n{text}")
 
@@ -412,7 +417,7 @@ async def extract(req: ExtractRequest):
             raise HTTPException(status_code=400, detail="No images or ocr_texts provided")
         if len(req.images) > 50:
             raise HTTPException(status_code=400, detail="Too many images (max 50)")
-        engine = _get_ocr()
+        engine = await call_ocr(_get_ocr)
         for i, img_base64 in enumerate(req.images):
             pn = req.page_numbers[i] if req.page_numbers and i < len(req.page_numbers) else i + 1
             try:
@@ -425,7 +430,7 @@ async def extract(req: ExtractRequest):
             # client gets a JSON error body instead of an unhandled 500 ("Internal
             # Server Error" plaintext, which breaks res.json() in the renderer).
             try:
-                pages.append(OCRPageResult(page_number=pn, text=engine.recognize(img)))
+                pages.append(OCRPageResult(page_number=pn, text=await call_ocr(engine.recognize, img)))
             except Exception as e:
                 logger.exception("OCR failed on page %d", pn)
                 return ExtractResponse(success=False, error=f"OCR lỗi: {e}", pages=pages)
@@ -440,9 +445,13 @@ async def extract(req: ExtractRequest):
     except HTTPException as he:
         return ExtractResponse(success=False, error=he.detail, pages=pages, full_text=full_text)
 
+    def _extract_and_classify():
+        return agent.extract_fields(full_text, fields), agent.classify_document(full_text)
+
     try:
-        data = agent.extract_fields(full_text, fields)
-        classification = agent.classify_document(full_text)
+        # Two blocking Gemini calls: on the LLM worker so /health and other tabs keep
+        # answering while they run (S2).
+        data, classification = await call_llm(_extract_and_classify)
     except Exception as e:
         logger.exception("Extraction error")
         return ExtractResponse(success=False, error=str(e), pages=pages, full_text=full_text)
@@ -698,11 +707,13 @@ async def searchable(req: SearchableRequest):
             # blank/odd page is skipped instead of failing the entire request.
             try:
                 if engine is None:
-                    engine = _get_ocr()
+                    engine = await call_ocr(_get_ocr)
                 pix = page.get_pixmap(dpi=dpi, alpha=False)
                 image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 try:
-                    boxes = engine.recognize_boxes(image)
+                    # Only the recognition goes to the worker; fitz (render above, text
+                    # layer below) stays on the loop - it is not thread-safe.
+                    boxes = await call_ocr(engine.recognize_boxes, image)
                 except NotImplementedError:
                     doc.close()
                     raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")
@@ -2304,8 +2315,8 @@ async def ocr_span(req: OcrSpanRequest):
 
     try:
         image = Image.open(io.BytesIO(png)).convert("RGB")
-        engine = _get_ocr()
-        text = (engine.recognize(image) or "").strip()
+        engine = await call_ocr(_get_ocr)
+        text = ((await call_ocr(engine.recognize, image)) or "").strip()
         return OcrSpanResponse(success=True, text=text)
     except Exception as e:
         logger.exception("ocr-span recognize error")
@@ -2959,7 +2970,7 @@ async def translate_pdf(req: TranslateRequest):
                 items.append({"i": i, "t": masked})
                 stores.append(store)
 
-            translations = _translate_blocks(agent, items, target_name, source_name)
+            translations = await call_llm(_translate_blocks, agent, items, target_name, source_name)
             if not translations:
                 # Leave the whole page untouched on failure — and COUNT it. The page
                 # ships in the output looking exactly like the source, so a silent
@@ -3226,9 +3237,11 @@ async def compare(req: CompareRequest):
         raise HTTPException(status_code=400, detail="Dữ liệu PDF không hợp lệ")
 
     try:
-        from src.compare import compare_pdfs
+        from src.compare import compare_pdfs_steps
 
-        report = compare_pdfs(pdf_a, pdf_b, mode=req.mode, get_ocr=_get_ocr)
+        # The diff itself and every fitz call stay on the loop; only the OCR calls the
+        # generator yields run on the OCR worker (src/compare/comparator.py).
+        report = await drive_async(compare_pdfs_steps(pdf_a, pdf_b, mode=req.mode, get_ocr=_get_ocr))
         return CompareResponse(
             success=True,
             a_boxes=report.get("a_boxes", {}),

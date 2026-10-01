@@ -21,6 +21,8 @@ import io
 import logging
 from typing import Any, Callable
 
+from src.offload import drive_sync
+
 logger = logging.getLogger(__name__)
 
 # OCR render zoom; boxes are scaled back by this to land in PDF-point space.
@@ -49,22 +51,31 @@ def _text_words(page) -> list[dict[str, Any]]:
     return out
 
 
-def _ocr_words(page, get_ocr: Callable[[], Any]) -> list[dict[str, Any]]:
+# The word-gathering code below is written as GENERATORS (``*_steps``) that ``yield`` each
+# OCR call as a zero-argument job instead of making it. PyMuPDF work (rendering the page,
+# reading the text layer) stays in the generator, i.e. on whichever thread drives it —
+# the event loop for /compare — while the jobs, which never touch fitz, can be run on the
+# OCR worker (src/offload.py, REVIEW-2026-10-01 S1). ``compare_pdfs`` drives them inline,
+# so calling it directly behaves exactly as before.
+
+
+def _ocr_words_steps(page, get_ocr: Callable[[], Any]):
     """OCR a scanned page → words. Each word inherits its line's box (upright only)."""
     import fitz  # PyMuPDF
     from PIL import Image
 
-    engine = get_ocr()
+    engine = yield get_ocr  # may load the model: that is part of the stall
     pix = page.get_pixmap(matrix=fitz.Matrix(_OCR_ZOOM, _OCR_ZOOM))
     img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
     upright = int(page.rotation) == 0
 
     out: list[dict[str, Any]] = []
     try:
-        lines = engine.recognize_boxes(img)
+        lines = yield lambda: engine.recognize_boxes(img)
     except NotImplementedError:
         # Recognition-only engine: no layout — one box-less token per word.
-        for ln in engine.recognize(img).splitlines():
+        text = yield lambda: engine.recognize(img)
+        for ln in text.splitlines():
             for word in ln.split():
                 out.append({"t": word, "bbox": None})
         return out
@@ -79,27 +90,27 @@ def _ocr_words(page, get_ocr: Callable[[], Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _page_words(page, mode: str, get_ocr: Callable[[], Any] | None) -> list[dict[str, Any]]:
+def _page_words_steps(page, mode: str, get_ocr: Callable[[], Any] | None):
     has_text = bool((page.get_text("text") or "").strip())
     if mode == "ocr" or (mode == "auto" and not has_text):
         if get_ocr is None:
             return _text_words(page)
         try:
-            return _ocr_words(page, get_ocr)
+            return (yield from _ocr_words_steps(page, get_ocr))
         except Exception:
             logger.exception("OCR failed on a page; using text layer instead")
             return _text_words(page)
     return _text_words(page)
 
 
-def _doc_tokens(doc, mode: str, get_ocr: Callable[[], Any] | None) -> list[dict[str, Any]]:
+def _doc_tokens_steps(doc, mode: str, get_ocr: Callable[[], Any] | None):
     """Flatten a whole document into one word stream: ``[{t, page, bbox}]``."""
     tokens: list[dict[str, Any]] = []
     n = min(doc.page_count, _MAX_PAGES)
     for i in range(n):
         if len(tokens) >= _MAX_TOKENS:
             break
-        for w in _page_words(doc[i], mode, get_ocr):
+        for w in (yield from _page_words_steps(doc[i], mode, get_ocr)):
             tokens.append({"t": w["t"], "page": i, "bbox": w["bbox"]})
     return tokens
 
@@ -116,13 +127,16 @@ def _snippet(tokens: list[dict[str, Any]], limit: int = 60) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
-def compare_pdfs(
+def compare_pdfs_steps(
     pdf_a: bytes,
     pdf_b: bytes,
     mode: str = "auto",
     get_ocr: Callable[[], Any] | None = None,
-) -> dict[str, Any]:
-    """Compare two PDFs via whole-document word-stream diff.
+):
+    """Compare two PDFs via whole-document word-stream diff (generator form).
+
+    Yields each OCR call as a job (see the note above ``_ocr_words_steps``) and returns
+    the report; ``compare_pdfs`` is the plain synchronous entry point.
 
     Returns a JSON-serialisable report:
 
@@ -137,8 +151,8 @@ def compare_pdfs(
     doc_a = _open(pdf_a)
     doc_b = _open(pdf_b)
     try:
-        toks_a = _doc_tokens(doc_a, mode, get_ocr)
-        toks_b = _doc_tokens(doc_b, mode, get_ocr)
+        toks_a = yield from _doc_tokens_steps(doc_a, mode, get_ocr)
+        toks_b = yield from _doc_tokens_steps(doc_b, mode, get_ocr)
         words_a = [t["t"] for t in toks_a]
         words_b = [t["t"] for t in toks_b]
 
@@ -195,3 +209,13 @@ def compare_pdfs(
     finally:
         doc_a.close()
         doc_b.close()
+
+
+def compare_pdfs(
+    pdf_a: bytes,
+    pdf_b: bytes,
+    mode: str = "auto",
+    get_ocr: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    """Synchronous :func:`compare_pdfs_steps`: every OCR job runs inline, on this thread."""
+    return drive_sync(compare_pdfs_steps(pdf_a, pdf_b, mode=mode, get_ocr=get_ocr))

@@ -115,6 +115,8 @@ extra_hiddenimports = [
     # explicitly to be safe against a frozen-app ModuleNotFoundError.
     "src.compare",
     "src.compare.comparator",
+    # OCR/LLM worker pools (S1/S2) - imported statically by api.py; pinned like the others.
+    "src.offload",
     # PDF helper modules (Phase 4 refactor). api.py imports these statically so the
     # analysis already follows them; pinned here too to match the project's cautious
     # convention against stale/partial frozen builds.
