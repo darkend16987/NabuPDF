@@ -333,10 +333,19 @@ Lưu ý nhỏ: sau Đợt 0, `HANDOFF.md` chưa được thêm mục (mục này
 
 **Khi phát hành:** Đợt A, B, D(S4) **đổi `*.py`**, B còn đổi `sidecar.spec` ⇒ `/deploy` sẽ yêu cầu build lại sidecar (cổng "tươi" đã không còn đòi vì file test). Chưa bump version, chưa viết mục HANDOFF — việc của `/deploy`. Nên test tay trước khi phát hành, theo REGRESSION-GUARD §5: mở nhiều tab rồi đóng cửa sổ (M5), kéo thanh cuộn nhanh trên bản vẽ lớn (R2), zoom khi đang vẽ ở khung chia đôi (R9), so sánh/chồng lớp bản vẽ (R4/R5 — chưa probe thật), mở/lưu bằng hộp thoại native (M3 — chưa probe thật), và mọi loại chú thích → Áp dụng → Lưu → mở lại (Đợt E).
 
+**Đợt F — XONG sau khi chủ dự án test tay Đợt B–E không thấy lỗi** (JS **40/40**; Python không đổi):
+
+| Việc | Kết quả |
+|---|---|
+| `existsSync` argv (M3 nốt) | `pdfPathFromArgv` thành async, dùng `SafeFs.probe` (3 s). Probe **quá hạn vẫn trả đường dẫn** (người dùng đã yêu cầu file này; `sendFileToView` probe lại và để tab trống nếu thật sự không đọc được) — bỏ nó sẽ khiến "mở file trên ổ chậm" không làm gì và rơi sang khôi phục phiên cũ. `second-instance`: nhánh gộp-từ-Explorer vẫn hỏi trước và **đồng bộ** (thứ tự drip); nhánh mở file đi qua hàng đợi có thứ tự + `.catch`. **Cố ý KHÔNG đổi `combineBucket.exists`** (file do Explorer vừa liệt kê nên volume đang sống; `add()` đồng bộ là hợp đồng được test; đổi nó là viết lại test để lấy lợi ích ≈ 0). `test/argv-open.test.js` (18 ca, cắt hàm từ `main.js` đang ship), 6/7 đột biến bị bắt (đột biến còn lại — bỏ `async` — là SyntaxError nên vẫn đỏ). Electron thật: launch mở đúng file, second-instance mở file thứ hai sau ~540 ms, launch với file không tồn tại không mở tab. |
+| G4 `commitBytes` — **phương án (a)** | `commitBytes(bytes, {select, lastClicked, render})` ở `app.js`, phơi qua `window.DocHistory`. Nhận bytes **đã xong** ⇒ không có gì ném lỗi được giữa bước undo và bước ghi. **Chưa có chỗ gọi nào** (13 chỗ ghi tay là *legacy*, chuyển dần từng chỗ khi có việc khác đụng tới). `test:bytes` thêm: mục `app.js:commitBytes`, thông điệp "NEW writer" chỉ về `commitBytes`, 10 ca hành vi trên hàm cắt từ `app.js` (thứ tự undo→ghi→chọn→vẽ, từ chối đầu vào xấu **trước** khi tạo bước undo, `render:false`, xuất qua `DocHistory`); 9/9 đột biến bị bắt. Electron thật: `DocHistory = pushUndo,commitBytes`; một lần commit → 40 trang vẽ lại, dirty, nút hoàn tác bật. |
+| Bước 5 (`lift()` → `require()`) | **Không làm** (theo khuyến nghị; chủ dự án không chọn mục này — làm lại nếu muốn; đổi cách 5 bộ test hoạt động, mất thông báo "not found — renamed?" của `lift()`, không sửa lỗi nào). |
+| H3 harness trong repo | **Hoãn có chủ ý** (chủ dự án: "tạm thời chưa"). Xem "Ghi chú cho tương lai" ngay dưới. |
+
+**Ghi chú cho tương lai — H3 (harness đo + probe trong repo).** Đề xuất khi làm: thư mục `desktop/probe/` với phần dùng chung (khởi động Electron với `--user-data-dir` riêng, kết nối CDP, dọn tiến trình **theo PID**, không `taskkill /IM`) và 3–4 kịch bản: (1) bake so byte (chuột thật, `Date` đóng băng — đã có mẫu ở bước Đợt E), (2) đóng cửa sổ nhiều tab/tab hoãn (M5 — bản đầu của tôi từng treo 20 s ở đây), (3) cuộn nhanh trên bản vẽ lớn (R2), (4) `/health` khi OCR chạy (S1/S2). Cần `ws` trong `devDependencies` (không vào bản phát hành); **không** đưa vào `npm test` (chậm, chập chờn) mà là `npm run probe:*`. Chi phí bảo trì: phụ thuộc selector UI (`.tool[data-tool=…]`, `#ed-apply`…). Các probe dùng một lần của review này nằm ở scratchpad của phiên, không commit; mẫu để viết lại: `loop_probe`/`bakecmp`/`argv_probe` (CDP + `ws`, `Input.dispatchMouseEvent` cho cử chỉ, `Runtime.evaluate` cho trạng thái). Lý do hoãn: không cấp bách bằng hai mục kia; làm khi sắp có một đợt tối ưu/refactor lớn kế tiếp cần so trước/sau.
+
 **Còn lại / quyết định mở:**
 - **S6** không làm (xem Đợt D); chỉ làm lại nếu có phương án chứng minh được tính đúng.
-- `existsSync` khi phân tích argv lúc khởi động/`second-instance` (M3 chưa phủ).
-- Bước 5 của đề xuất tách (đổi `lift()` sang `require()` cho `editor-bake.js`) — chưa làm, cần quyết riêng.
-- H3 (harness đo hiệu năng trong repo) vẫn chưa có: các probe CDP dùng một lần nằm ở scratchpad, cần `ws`.
-- G4 (`commitBytes`) của Đợt E gốc (§5) chưa làm — không nằm trong lệnh "tách baking".
-
+- H3: hoãn, xem ghi chú ngay trên.
+- Chuyển dần 13 chỗ ghi tay sang `commitBytes` — chỉ khi có việc khác đụng tới từng chỗ (mỗi chỗ một commit + probe).
+- `combineBucket.exists` vẫn đồng bộ (cố ý, xem Đợt F).
