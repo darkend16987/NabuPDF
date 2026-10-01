@@ -63,7 +63,7 @@ const WRITERS = {
   "app.js:replaceSelectedWith": { n: 1, mode: "undoable" },
   "app.js:addBlankPageAt": { n: 1, mode: "undoable" },
   "app.js:runPageNumbers": { n: 1, mode: "undoable" },
-  "editor.js:bakePending": { n: 1, mode: "undoable" },
+  "editor-bake.js:bakePending": { n: 1, mode: "undoable" }, // moved verbatim out of editor.js
   "editor.js:applyForm": { n: 1, mode: "undoable" },
   "find-replace.js:applyEdits": { n: 1, mode: "undoable" },
   "text-edit.js:apply": { n: 1, mode: "undoable" },

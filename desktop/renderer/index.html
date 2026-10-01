@@ -1549,6 +1549,11 @@
          BEFORE editor.js / capture.js, so its capture-phase viewer listener is
          registered first. -->
     <script src="pan.js"></script>
+    <!-- editor-bake.js: the baking half of the editor (moved out of editor.js verbatim).
+         After pdf-lib (needs window.PDFLib at load), after annot-text.js / annot-geom.js /
+         managed-codec.js (bare names, resolved when called) and BEFORE editor.js, which calls
+         window.EditorBake.create(...) at load. It publishes ONE global and no bare names. -->
+    <script src="editor-bake.js"></script>
     <script src="editor.js"></script>
     <script src="text-edit.js"></script>
     <!-- AFTER app.js + wire.js: uses the bare globals state / sidecarFetch / pdfJsonBody /

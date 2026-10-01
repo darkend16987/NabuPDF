@@ -34,6 +34,8 @@ function check(name, actual, expected) {
 
 const R = path.join(__dirname, "..", "renderer");
 const EDITOR = fs.readFileSync(process.env.BAKE_EDITOR || path.join(R, "editor.js"), "utf8");
+// bakePending itself now lives in editor-bake.js (moved verbatim); enter/exit/discardExit stay in editor.js.
+const BAKE = fs.readFileSync(process.env.BAKE_BAKE || path.join(R, "editor-bake.js"), "utf8");
 const APP = fs.readFileSync(process.env.BAKE_APP || path.join(R, "app.js"), "utf8");
 
 function body(src, header) {
@@ -48,7 +50,7 @@ function body(src, header) {
   throw new Error("unbalanced braces after " + header);
 }
 
-const bake = body(EDITOR, "async function bakePending()");
+const bake = body(BAKE, "async function bakePending()");
 const exit = body(EDITOR, "async function exit()");
 const discard = body(EDITOR, "async function discardExit()");
 const enter = body(EDITOR, "async function enter()");

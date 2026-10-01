@@ -131,6 +131,13 @@ const INDEX_RULES = [
   ["annot-geom.js", "editor.js", "cloudPath / arcApex / resizeRect… by bare name"],
   ["annot-text.js", "managed-codec.js", "normTextStyle"],
   ["managed-codec.js", "editor.js", "editor.js calls its bare names"],
+  // editor-bake.js = the baking half of editor.js, moved out verbatim (docs/PROPOSAL-2026-10-01-split-editor-baking.md)
+  ["vendor/pdf-lib.min.js", "editor-bake.js", "needs window.PDFLib at load"],
+  ["annot-text.js", "editor-bake.js", "normTextStyle / layoutTextBox / textFont… by bare name"],
+  ["annot-geom.js", "editor-bake.js", "cloudPath / arrowLabelPos / symbolStrokes… by bare name"],
+  ["managed-codec.js", "editor-bake.js", "serializeManaged / pushPageAnnot / apMatrixFor… by bare name"],
+  ["app.js", "editor-bake.js", "state / toast / rerenderChanged / showOverlay… by bare name"],
+  ["editor-bake.js", "editor.js", "editor.js calls window.EditorBake.create(...) at load time"],
   ["page-range.js", "page-move.js", "PageRange.actionSet"],
   ["i18n.js", "help.js", "window.I18N"],
   // everything below uses app.js's bare globals ($, state, toast, sidecarFetch, …)

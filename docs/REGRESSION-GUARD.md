@@ -6,6 +6,16 @@ _Lập 2026-07-25. Mục đích: **sửa tính năng mới không được làm 
 các mục test được chỉ. Khi phát hiện một hợp đồng ngầm mới, **ghi thêm vào §3** —
 tài liệu này chỉ có giá trị nếu được cập nhật.
 
+> **Đổi tên file (2026-10-01).** Nửa "baking" của `editor.js` đã được chuyển **nguyên văn** sang
+> `desktop/renderer/editor-bake.js`: `renderTextPng`, `renderArrowPng`, `renderWatermarkPng`,
+> `rasterRedacted`, `deserializeManaged`, `addManagedAnnot`, `importManaged`, `drawAnnots`,
+> `drawOneAnnot`, `drawWatermark`, `bakeInPlace`, `bakeWithRedaction`, `rememberSignatureWidths`,
+> `bakePending`. Ở MỌI chỗ dưới đây ghi "`editor.js` + một trong các tên này" (kể cả các mục BI cũ
+> và phần kể lại lịch sử), đọc là `editor-bake.js`. Hành vi không đổi; giao diện giữa hai file
+> (10 tên đi vào, 2 đi ra) được ghim bởi `test/bake-split.test.js`, và
+> `node desktop/scripts/prove-bake-move.js --base <rev-trước-khi-tách>` chứng minh lại việc di
+> chuyển là byte-identical. `exit()`, `enter()`, `discardExit()` và `window.Editor` vẫn ở `editor.js`.
+
 ---
 
 ## 1. Bản đồ rủi ro: file nào dễ vỡ nhất
@@ -17,8 +27,8 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/renderer/annot-text.js` | ~230 | Bố cục chữ (`layoutTextBox`). Rủi ro **thấp** nhờ lưới `npm run test:text`, nhưng sai ở đây **im lặng**: hộp trên màn hình và PNG đem bake lệch nhau → chữ tràn/xuống dòng khác trong file đã lưu → xem BI-40. |
 | `desktop/renderer/managed-codec.js` | ~340 | Lớp object PDF riêng của chú thích sửa-lại-được. **Hậu quả cao nhất trong repo**: sai là **mất ảnh của người dùng** hoặc phình file âm thầm. Từ v0.2.58 chứa thêm số học đặt `/AP` trên trang xoay (`apMatrixFor`/`apRectFor`), từ v0.2.61 thêm `shapeAppearance` — appearance **vector** của chữ nhật/elip — cả hai đều thuần, nằm trong `test:managed` + `test:rotate`. Xem BI-37, BI-38, BI-14, BI-59, BI-64. |
 | `desktop/renderer/annot-geom.js` | ~420 | Đường mây revision + nhãn mũi tên + `resizeRect` + (v0.2.50) `strokeExtend` (luật Shift của vẽ tay) + `symbolStrokes` (hình ✓/✗) + (v0.2.52) `snapLineEnd` (kéo một đầu mũi tên) và `annotBounds`/`translateAnnot`/`unionBounds`/`fitShift` (số học của copy–paste vật thể). Rủi ro **thấp** nhờ `npm run test:cloud` + `test:geom`; sai ở đây làm mây/dấu lệch chỗ **trong PDF đã lưu** (trên màn hình vẫn đúng), hoặc dán một mục ra **ngoài mép giấy** nơi không tay nắm nào tóm lại được → xem BI-40, BI-42, BI-46. |
-| `desktop/renderer/editor.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang, bản vẽ A3) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
-| `desktop/renderer/editor.js` — ba nhánh `/AP` của `addManagedAnnot` | ~120 dòng | Cùng loại rủi ro im lặng như hàng trên, ở **đường annotation** thay vì đường dán cứng: viewer tự co giãn appearance cho khít `/Rect` (PDF §12.5.5) nên `/Rect` sai không làm con dấu lệch mà làm nó **méo**, và chỉ thấy trên trang xoay. `test:rotate` §5 đo lại đúng cùng một câu hỏi ("rơi vào đâu trên màn hình") bằng cách so với đường dán cứng đang ship, kèm **ca canh gác** → xem BI-59. |
+| `desktop/renderer/editor-bake.js` — khối bake (`drawOneAnnot`) | ~200 dòng | Bù xoay trang. Rủi ro **cao và im lặng**: overlay trên màn hình luôn đúng, chỉ **file đã lưu** sai, và **chỉ trên trang có `/Rotate`** — tức đúng loại tài liệu (scan nằm ngang, bản vẽ A3) mà người viết code không mở hằng ngày. Nay có lưới `npm run test:rotate` đi qua **mọi** kind → xem BI-45. |
+| `desktop/renderer/editor-bake.js` — ba nhánh `/AP` của `addManagedAnnot` | ~120 dòng | Cùng loại rủi ro im lặng như hàng trên, ở **đường annotation** thay vì đường dán cứng: viewer tự co giãn appearance cho khít `/Rect` (PDF §12.5.5) nên `/Rect` sai không làm con dấu lệch mà làm nó **méo**, và chỉ thấy trên trang xoay. `test:rotate` §5 đo lại đúng cùng một câu hỏi ("rơi vào đâu trên màn hình") bằng cách so với đường dán cứng đang ship, kèm **ca canh gác** → xem BI-59. |
 | `desktop/renderer/editor.js` — hộp gõ chữ nội tuyến (`openTextEditor`, `renderLayer`, `PALETTE_KEEP_SEL`) | ~90 dòng | Rủi ro **trung bình**, hậu quả **mất chữ người dùng đang gõ**, và mất **im lặng**: hộp gõ là con của annot layer, `renderLayer` xoá layer bằng `innerHTML = ""`, còn Chromium **không phát `blur`** khi xoá phần tử đang focus ⇒ `commit` không chạy, không annot, không bước undo, không lỗi. Chỉ có **assertion trên source** trong `npm run test:defaults` → xem BI-75. |
 | `desktop/src/main.js` + `src/tabs.js` | — | Tầng cửa sổ/tab — **hệ con mới nhất, ít va đập thực tế nhất** (ra mắt v0.2.41). Có lưới tự động `npm run test:tabs` cho phần logic thuần. |
 | `desktop/renderer/page-move.js` | ~330 | Chuyển trang giữa hai tài liệu đang mở. Rủi ro **trung bình** nhưng hậu quả **cao nhất về dữ liệu**: nhánh MOVE **xoá trang ở tài liệu nguồn**. Nửa số học có lưới `npm run test:pagedrop`; nửa cử chỉ **máy không test được** (Chromium bỏ qua input tổng hợp trong đường kéo–thả, `TABS-2B-DESIGN.md` §2.2) nên chỉ có test tay + assertion trên source trong cùng lưới đó → xem BI-55, BI-56, BI-57, BI-58. |
@@ -2535,7 +2545,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 2f. `cd desktop ; npm run test:managed` → phải `N pass, 0 fail`
    (vòng round-trip của ảnh chèn: ghi → đọc lại → bake lại không phình — BI-37, BI-38.
    Từ v0.2.49 phần lớn là `require("renderer/managed-codec.js")`; chỉ `deserializeManaged`,
-   `addManagedAnnot`, `edSnapshot`, `dataUrlToBytes` còn cắt-lúc-chạy vì không rời được `editor.js`).
+   `addManagedAnnot`, `edSnapshot`, `dataUrlToBytes` còn cắt-lúc-chạy vì không rời được khỏi IIFE của editor — nay `deserializeManaged`/`addManagedAnnot` nằm ở `editor-bake.js`, các loader đọc cả hai file).
 2g. `cd desktop ; npm run test:text` → phải `N pass, 0 fail`
    (bố cục chữ trong `renderer/annot-text.js` — BI-40).
 2h. `cd desktop ; npm run test:cloud` → phải `N pass, 0 fail`

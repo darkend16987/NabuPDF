@@ -81,7 +81,12 @@ function check(name, actual, expected) {
 
 // ---- lift the real implementation out of editor.js ------------------------
 
-const SRC = fs.readFileSync(path.join(__dirname, "..", "renderer", "editor.js"), "utf8");
+// The baking half of the editor moved to editor-bake.js (verbatim); the functions under test
+// are in either file, so search both - lift() asks for one name at a time and still fails loudly
+// if it is in neither.
+const SRC = ["editor.js", "editor-bake.js"]
+  .map((f) => fs.readFileSync(path.join(__dirname, "..", "renderer", f), "utf8"))
+  .join("\n");
 
 function fnSource(name) {
   let at = SRC.indexOf("function " + name + "(");

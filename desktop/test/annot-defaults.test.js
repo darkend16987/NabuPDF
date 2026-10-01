@@ -30,6 +30,8 @@ const path = require("path");
 
 const ROOT = path.join(__dirname, "..");
 const EDITOR_SRC = fs.readFileSync(path.join(ROOT, "renderer", "editor.js"), "utf8");
+// deserializeManaged lives in the baking half, moved out of editor.js verbatim.
+const BAKE_SRC = fs.readFileSync(path.join(ROOT, "renderer", "editor-bake.js"), "utf8");
 const INDEX_SRC = fs.readFileSync(path.join(ROOT, "renderer", "index.html"), "utf8");
 
 let pass = 0;
@@ -786,7 +788,7 @@ group("the background controls' labels are translatable");
 // colour when reopened. Asserted so a later "tidy up the yellow" sweep cannot do it.
 
 group("legacy import fallbacks stay yellow");
-const deserialize = cutFunction(EDITOR_SRC, "deserializeManaged");
+const deserialize = cutFunction(BAKE_SRC, "deserializeManaged");
 const fallbacks = (deserialize.match(/data\.color \|\| "#ffd54a"/g) || []).length;
 check(
   "deserializeManaged still falls back to #ffd54a in 3 places (arrow + note + texthl)",
