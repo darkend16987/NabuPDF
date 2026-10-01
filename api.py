@@ -58,6 +58,7 @@ from src.pdf.fonts import (
     _dejavu_variant,
     _family_index,
     _font_covers,
+    _font_object,
     _fresh_fontname,
     _list_local_font_families,
     _norm_fam,
@@ -2639,12 +2640,7 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 # so ordinary documents are untouched.
                 fobj = None
                 try:
-                    if fontbuffer:
-                        fobj = fitz.Font(fontbuffer=fontbuffer)
-                    elif fontfile:
-                        fobj = fitz.Font(fontfile=fontfile)
-                    else:
-                        fobj = fitz.Font(fontname=fontname)
+                    fobj = _font_object(fontfile=fontfile, fontname=fontname, fontbuffer=fontbuffer)
                 except Exception as fe:
                     logger.debug("metric probe: no font object: %s", fe)
 
@@ -2748,12 +2744,9 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 # Underline: a line just under the baseline, width = drawn-text width.
                 if e.underline:
                     try:
-                        if fontbuffer:
-                            tw = fitz.Font(fontbuffer=fontbuffer).text_length(txt, fontsize=size)
-                        elif fontfile:
-                            tw = fitz.Font(fontfile=fontfile).text_length(txt, fontsize=size)
-                        else:
-                            tw = fitz.Font(fontname=fontname).text_length(txt, fontsize=size)
+                        tw = _font_object(
+                            fontfile=fontfile, fontname=fontname, fontbuffer=fontbuffer
+                        ).text_length(txt, fontsize=size)
                     except Exception:
                         # No font object to measure with: fall back to the box the old
                         # text filled ALONG the line, not its width (BI-66).
@@ -3108,9 +3101,9 @@ async def translate_pdf(req: TranslateRequest):
                         fontname = "helv"
 
                 try:
-                    font_obj = fitz.Font(fontfile=fontfile) if fontfile else fitz.Font(fontname=fontname)
+                    font_obj = _font_object(fontfile=fontfile) if fontfile else _font_object(fontname=fontname)
                 except Exception:
-                    font_obj = fitz.Font(fontname="helv")
+                    font_obj = _font_object(fontname="helv")
 
                 # Typeset into `layout`, not the redacted bbox: inside a table
                 # that is the cell (room to grow, original alignment kept);

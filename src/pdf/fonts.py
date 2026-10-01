@@ -5,7 +5,10 @@ no dependency on api. api.py re-imports these names, so every call site there is
 unchanged. matplotlib/fitz/sys stay lazily imported inside the functions.
 """
 
+import hashlib
 import logging
+import os
+from collections import OrderedDict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -81,6 +84,53 @@ def _dejavu_variant(base_path: str, bold: bool, italic: bool) -> str | None:
     return str(cand) if cand.is_file() else None
 
 
+# fitz.Font objects, memoised. /edit-text builds one per edit (twice with underline) and
+# the cost is the font program being parsed again: 13-22% of a 200-edit batch, ~31% on
+# the 1600-edit "Thay tat ca" case (docs/REVIEW-2026-10-01 S7). Callers only READ a Font
+# (ascender / descender / text_length / has_glyph), so sharing one is safe.
+#   key  file   -> (path, mtime_ns, size)  a replaced font file is not served stale
+#        name   -> the Base-14 name
+#        buffer -> (length, blake2b)       a subset font lifted out of the document
+# Failures are never cached (the caller's `except Exception` still sees every one).
+# Bounded and LRU: a buffer-keyed Font keeps its font program alive. Not locked on
+# purpose - fitz is only driven from the event loop.
+_FONT_OBJ_CACHE: "OrderedDict[tuple, object]" = OrderedDict()
+_FONT_OBJ_CACHE_MAX = 16  # 0 disables caching (the equivalence test uses that)
+
+
+def _font_object(
+    *,
+    fontfile: str | None = None,
+    fontname: str | None = None,
+    fontbuffer: bytes | None = None,
+):
+    """`fitz.Font(...)` with the same precedence the call sites always used
+    (buffer > file > name), served from a small LRU cache."""
+    import fitz
+
+    if fontbuffer:
+        key = ("b", len(fontbuffer), hashlib.blake2b(fontbuffer, digest_size=16).digest())
+        make = lambda: fitz.Font(fontbuffer=fontbuffer)  # noqa: E731
+    elif fontfile:
+        st = os.stat(fontfile)  # missing file raises, exactly like fitz.Font would
+        key = ("f", str(fontfile), st.st_mtime_ns, st.st_size)
+        make = lambda: fitz.Font(fontfile=fontfile)  # noqa: E731
+    else:
+        key = ("n", fontname)
+        make = lambda: fitz.Font(fontname=fontname)  # noqa: E731
+
+    hit = _FONT_OBJ_CACHE.get(key)
+    if hit is not None:
+        _FONT_OBJ_CACHE.move_to_end(key)
+        return hit
+    font = make()
+    if _FONT_OBJ_CACHE_MAX > 0:
+        _FONT_OBJ_CACHE[key] = font
+        while len(_FONT_OBJ_CACHE) > _FONT_OBJ_CACHE_MAX:
+            _FONT_OBJ_CACHE.popitem(last=False)
+    return font
+
+
 def _font_covers(
     text: str,
     *,
@@ -97,13 +147,7 @@ def _font_covers(
     to the bundled DejaVu when any glyph is missing.
     """
     try:
-        import fitz
-        if fontbuffer:
-            f = fitz.Font(fontbuffer=fontbuffer)
-        elif fontfile:
-            f = fitz.Font(fontfile=fontfile)
-        else:
-            f = fitz.Font(fontname=fontname)
+        f = _font_object(fontfile=fontfile, fontname=fontname, fontbuffer=fontbuffer)
     except Exception:
         return False
     try:
