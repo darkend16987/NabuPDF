@@ -16,6 +16,7 @@ const { initAutoUpdate } = require("./updater");
 const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
 const Tabs = require("./tabs");
+const { asWritable } = require("./ipc-bytes");
 const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
@@ -915,7 +916,7 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
   });
   if (res.canceled || !res.filePath) return { saved: false };
   rememberDir("save-pdf", res.filePath);
-  await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
+  await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
 
@@ -925,7 +926,7 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
 ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
   try {
     if (!fp) return { saved: false };
-    await fs.promises.writeFile(fp, Buffer.from(data)); // async: never block main
+    await fs.promises.writeFile(fp, asWritable(data)); // async: never block main
     // A read-only pane showing this same file is now looking at the PREVIOUS save.
     // Refreshing here — at the one place bytes actually reach the disk — is what
     // makes "the pane shows the last save" a rule instead of a hope.
@@ -947,7 +948,7 @@ ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => 
   });
   if (res.canceled || !res.filePath) return { saved: false };
   rememberDir("save-file", res.filePath);
-  await fs.promises.writeFile(res.filePath, Buffer.from(data)); // async: never block main
+  await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
 
@@ -1817,7 +1818,7 @@ ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {})
     if (!id || !bytes) return { saved: false };
     const dir = path.join(recoveryDir(), id);
     await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(path.join(dir, "autosave.pdf"), Buffer.from(bytes));
+    await fs.promises.writeFile(path.join(dir, "autosave.pdf"), asWritable(bytes));
     const manifest = { docId: id, name: name || "document.pdf", srcPath: srcPath || null, savedAt: Date.now(), version: app.getVersion() };
     await fs.promises.writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
     return { saved: true };
