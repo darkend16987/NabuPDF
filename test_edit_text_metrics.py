@@ -25,6 +25,7 @@ import base64
 from pathlib import Path
 
 import fitz  # PyMuPDF
+import numpy as np
 
 from api import EditTextRequest, TextEdit, TextSpansRequest, edit_text, text_spans
 from src.pdf.fonts import _vietnamese_font
@@ -108,15 +109,17 @@ def _ink(pdf_b64: str, zoom=8.0):
     doc = fitz.open(stream=base64.b64decode(pdf_b64), filetype="pdf")
     try:
         pix = doc[0].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-        xs, ys = [], []
-        for y in range(pix.height):
-            for x in range(pix.width):
-                r, g, b = pix.pixel(x, y)[:3]
-                if r < 200 or g < 200 or b < 200:
-                    xs.append(x)
-                    ys.append(y)
-        assert xs, "nothing drawn"
-        return ((max(xs) - min(xs) + 1) / zoom, (max(ys) - min(ys) + 1) / zoom)
+        # One vectorised pass. The per-pixel `pix.pixel(x, y)` loop this replaced took
+        # ~50 s per call at zoom 8 (≈half the whole Python suite); same result, ~0.5 s.
+        # Rows may be padded (`stride` > width * n), so slice the padding off first.
+        rows = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.stride)
+        rgb = rows[:, : pix.width * pix.n].reshape(pix.height, pix.width, pix.n)[:, :, :3]
+        ys, xs = np.nonzero((rgb < 200).any(axis=2))
+        assert xs.size, "nothing drawn"
+        return (
+            (int(xs.max()) - int(xs.min()) + 1) / zoom,
+            (int(ys.max()) - int(ys.min()) + 1) / zoom,
+        )
     finally:
         doc.close()
 
