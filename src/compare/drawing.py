@@ -38,6 +38,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.pdf.util import WRITE_GARBAGE
+
 logger = logging.getLogger(__name__)
 
 # Long-side pixels for the fingerprint render (tiny, fast).
@@ -532,6 +534,6 @@ def annotate_pdf(pdf_bytes: bytes, boxes: dict[str, Any], style: str = "cloud") 
                 else:
                     annot.set_border(width=1.5)
                 annot.update()
-        return doc.tobytes(garbage=3, deflate=True)
+        return doc.tobytes(garbage=WRITE_GARBAGE, deflate=True)
     finally:
         doc.close()

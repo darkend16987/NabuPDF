@@ -13,6 +13,17 @@ from fastapi import HTTPException
 # ~200 MB of binary => ~280 MB of base64 text.
 _MAX_PDF_B64 = 280_000_000
 
+# `garbage=` level for every route that merely re-saves the user's document.
+#   1 drop unreferenced objects · 2 + compact the xref · 3 + merge duplicate objects
+#   4 + merge duplicate streams (only /compress asks for that — it is the point there).
+# 3 costs ~quadratic time in the object count: a 600-page file spent 5.2 s in tobytes at
+# 3 against 0.31 s at 2, and 46.9 s at 1200 pages (docs/REVIEW-2026-10-01 S3) — on EVERY
+# save, i.e. every "Áp dụng" in Sửa nội dung. The price of 2 is output ~1.5% larger,
+# which the owner accepted. Level >= 1 is NOT negotiable: it is what drops the
+# orphaned pre-edit objects after a redaction, so the removed text is gone from the
+# file and not merely unreferenced (BI-23). test_write_garbage.py pins both facts.
+WRITE_GARBAGE = 2
+
 
 def _decode_pdf_b64(pdf_b64: str) -> bytes:
     """Validate size + decode a base64 PDF payload, raising HTTPException on error."""

@@ -42,6 +42,7 @@ from src.utils.config import (
     set_gemini_model,
 )
 from src.pdf.util import (
+    WRITE_GARBAGE,
     _MAX_PDF_B64,
     _decode_pdf_b64,
     _fmt_page_label,
@@ -738,7 +739,7 @@ async def searchable(req: SearchableRequest):
                 logger.warning("Searchable: bỏ qua trang %d do lỗi: %s", page.number, e)
                 continue
 
-        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
         page_count = doc.page_count
     except HTTPException:
         raise
@@ -1092,7 +1093,7 @@ async def decrypt(req: DecryptRequest):
         if doc.needs_pass and not doc.authenticate(req.password or ""):
             raise HTTPException(status_code=401, detail="Sai mật khẩu")
         # Save an unencrypted copy (strip any user/owner password).
-        out_bytes = doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE, deflate=True, garbage=3)
+        out_bytes = doc.tobytes(encryption=fitz.PDF_ENCRYPT_NONE, deflate=True, garbage=WRITE_GARBAGE)
         pages = doc.page_count
     finally:
         doc.close()
@@ -1169,7 +1170,7 @@ async def encrypt(req: EncryptRequest):
             user_pw=user_pw,
             permissions=perm,
             deflate=True,
-            garbage=3,
+            garbage=WRITE_GARBAGE,
         )
         pages = doc.page_count
     except HTTPException:
@@ -1322,7 +1323,7 @@ async def images_to_pdf(req: ImagesToPdfRequest):
                 target = page.rect
             page.insert_image(target, stream=img_bytes)
 
-        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
         pages = doc.page_count
     except HTTPException:
         raise
@@ -1414,7 +1415,7 @@ async def add_page_numbers(req: PageNumberRequest):
             page.insert_text(pt, text, fontsize=fs, fontname="helv", color=col, rotate=page.rotation)
             stamped += 1
 
-        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
         pages = doc.page_count
     except HTTPException:
         raise
@@ -2778,7 +2779,7 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
             doc.subset_fonts()
         except Exception as se:
             logger.debug("subset_fonts (edit-text) skipped: %s", se)
-        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
         pages_changed = len(by_page)
     except HTTPException:
         raise
@@ -3151,7 +3152,7 @@ async def translate_pdf(req: TranslateRequest):
             doc.subset_fonts()
         except Exception as se:
             logger.debug("subset_fonts (translate) skipped: %s", se)
-        out_bytes = doc.tobytes(deflate=True, garbage=3)
+        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
     except HTTPException:
         raise
     except Exception as e:
