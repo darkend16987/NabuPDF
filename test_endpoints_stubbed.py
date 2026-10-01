@@ -170,6 +170,30 @@ def test_searchable_force_ocr_adds_layer():
     assert r.success and r.ocr_pages == 1 and r.words == 1
 
 
+def test_searchable_engine_without_boxes_is_503_not_a_crash():
+    # An engine that cannot place text (recognition-only) must give the 503 whose message
+    # says so. The handler used to close the document itself and then `finally` closed it
+    # again - PyMuPDF raises ValueError("document closed") on the second close, so the
+    # user saw an opaque 500 instead of the reason.
+    if not api._vietnamese_font():
+        print("SKIP test_searchable_engine_without_boxes_is_503_not_a_crash (no DejaVu on this box)")
+        return
+
+    class _NoBoxes:
+        def recognize(self, image):
+            return "text only"
+
+        def recognize_boxes(self, image):
+            raise NotImplementedError
+
+    with _ocr(_NoBoxes()):
+        try:
+            _run(api.searchable(api.SearchableRequest(pdf_b64=_text_pdf("short"), force_ocr=True)))
+            assert False, "expected HTTPException 503"
+        except HTTPException as e:
+            assert e.status_code == 503, e.status_code
+
+
 # --------------------------------------------------------------------------- #
 # pure read-only endpoints
 # --------------------------------------------------------------------------- #
@@ -207,6 +231,7 @@ if __name__ == "__main__":
         test_ocr_span_bad_bbox_400,
         test_searchable_skips_pages_with_real_text,
         test_searchable_force_ocr_adds_layer,
+        test_searchable_engine_without_boxes_is_503_not_a_crash,
         test_health_ok,
         test_get_config_shape_and_masking,
         test_list_templates_default_first,

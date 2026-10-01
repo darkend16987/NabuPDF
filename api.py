@@ -715,7 +715,8 @@ async def searchable(req: SearchableRequest):
                     # layer below) stays on the loop - it is not thread-safe.
                     boxes = await call_ocr(engine.recognize_boxes, image)
                 except NotImplementedError:
-                    doc.close()
+                    # No doc.close() here: the `finally` below closes it, and closing twice
+                    # raises ValueError("document closed") - turning this 503 into a 500.
                     raise HTTPException(status_code=503, detail="Engine OCR hiện tại không hỗ trợ định vị (cần Hybrid/Paddle).")
 
                 for text, (x0, y0, x1, y1) in boxes:
