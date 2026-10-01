@@ -40,6 +40,7 @@
     "test:find": "node test/find-replace.test.js",
     "test:scope": "node test/global-scope.test.js",
     "test:ipc": "node test/ipc-contract.test.js",
+    "test:bytes": "node test/state-bytes-writers.test.js",
     "test:sidecar": "node test/sidecar-lifecycle.test.js",
     "test:confirm": "node test/confirm-dialog.test.js",
     "checksums": "node scripts/checksums.js",
