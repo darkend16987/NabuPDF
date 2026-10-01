@@ -262,4 +262,24 @@ Quyết định của chủ dự án: Đợt 0 và Đợt A theo thứ tự đã
 
 Lưu ý nhỏ: sau Đợt 0, `HANDOFF.md` chưa được thêm mục (mục này thuộc về `/deploy` khi có bản phát hành).
 
-**Còn lại:** Đợt A (S3, S2-timeout, M4, M7, R3, R6, R7, S7, S8) — chưa bắt đầu; Đợt B–D theo §5; Đợt E gồm tách `baking` — đề xuất có số đo ở `docs/PROPOSAL-2026-10-01-split-editor-baking.md`, **chưa quyết GO**.
+**Đợt A — XONG** (cùng ngày; lưới cuối: JS **31/31**, Python **20/20**; mỗi mục một commit, mỗi test canh giữ đều qua đột biến trên file thật):
+
+| Mục | Commit | Số đo (trước → sau) | Ghi chú |
+|---|---|---|---|
+| S3 `garbage=3→2` | `95dda4c` | đánh số trang 600 trang 1,42 → **0,39 s**; sửa 1 span 1,02 → **0,15 s** | 8 chỗ gom về một hằng `WRITE_GARBAGE`; `/compress` giữ `garbage=4`. **Giá:** file lớn hơn +3,1–3,3% (tài liệu giả lập nhiều trang giống hệt), +0,6% (PDF thật `matplotlib.pdf`) — số memo (1,5%) nằm giữa; trần test 10%. Mức ≥1 là bắt buộc (BI-23). |
+| S2 timeout Gemini | `07cfdf9` | server giả im lặng: treo vô hạn → `ReadTimeout` sau **1,51 s** (timeout thử 1,5 s); mặc định **120 s** | Đơn vị SDK là **mili giây**. Chỉ là timeout — **chưa** đưa lời gọi ra khỏi event loop (Đợt B). |
+| S7 cache `fitz.Font` | `35e5f0d` | lô 200 chỗ sửa: dựng font 400 → **1** lần; 1,02 → **0,74 s** (có gạch chân) | 13–22% thời gian là dựng font. Đầu ra **giống hệt từng pixel** có/không cache. |
+| S8 ZIP STORED cho ảnh | `1216877` | JPEG 12 MP: 0,269 → **0,007 s**, zip +0,2% | `split` giữ deflate (PDF con). |
+| M4 bỏ `Buffer.from` thừa | `4068567` | 256 MB: bỏ 79 ms + 1 vùng nhớ 256 MB | `asWritable()`: view đi thẳng, kiểu khác vẫn qua `Buffer.from` — vì ~20 chỗ gọi chưa chắc đều gửi typed array. Probe thật: Uint8Array **và** ArrayBuffer qua IPC đều ghi đúng byte (sha256). |
+| M7 kill sidecar khi quá hạn | `619f15c` | child chết thật sau reject (test với tiến trình thật); `onExit` không bị gọi | Thêm guard: không `taskkill` child đã chết (PID có thể đã được cấp cho tiến trình khác). |
+| R7 BMH cho vault | `8ca7860` | 128 MB: ~300 → **~45 ms**; trong Chromium thật 64 MB: 75 → 20 ms | Đã đo 3 cách; `indexOf` trên byte hiếm bị loại vì 2,4 s ở ca toàn-'V'. +10 ca đối chiếu `Buffer#includes` (1590 đầu vào). |
+| R6 index tìm kiếm | `9c89b43` | 3 lượt tìm đồng thời: `getTextContent` **120 → 40** lần (probe thật) | **Lỗi thứ hai tìm thấy khi làm (không có trong memo):** nhãn index lấy từ `state.pdf` *sau* vòng lặp ⇒ đổi tài liệu giữa chừng thì chữ tài liệu cũ nằm dưới nhãn tài liệu mới. Thêm `seq` cho `runSearch`/`closeFind`. |
+| R3 thumbnail qua hàng đợi | `04ce6b6` | probe thật, 40 trang / 15 thumbnail đã vẽ, `rerenderChanged(null)`: 763 → **199 ms**; thumbnail vẽ 40 → **15** (chỉ cái đã từng vẽ; cả 15 có nội dung, không cái nào vẽ hai lần) | 1 thumbnail vẽ *trong* lúc gọi là một lát idle của hàng đợi chen vào, không phải vẽ inline. |
+
+**Probe Electron thật (CDP, `--user-data-dir`, có baseline = 4 file về `384b45b`)** — làm vì unit test không thấy được kiểu IPC thật, thời gian thật, và việc app có boot được: 40/40 trang vẽ, sidecar Python thật lên `ready`, thoát bằng `Browser.close` không để lại sidecar dev nào. Kết quả: R3/R6/R7/M4 như bảng trên.
+- ⚠️ **Một điều chưa giải thích:** lần chạy *lạnh đầu tiên* của bản mới có 2 lỗi console (`sandboxed_renderer.bundle.js script failed to run` / `Cannot destructure property 'preloadScripts' of 'binding.startupData'` — lỗi nội bộ Electron lúc dựng renderer sandbox, không liên quan code của repo). **Ba lần chạy lại: 0 lỗi; baseline 3 lần: 0 lỗi.** Không có thay đổi nào của Đợt A đụng tới preload hay khởi động, nhưng 1/4 so với 0/3 là mẫu quá nhỏ để khẳng định. Nếu thấy lại: ghi lại có app đã cài đang chạy song song hay không (lần đó có).
+- Probe là file dùng một lần, **không commit** (cần `ws`, không thêm vào `desktop/package.json`). Đây chính là H3 trong §4 — vẫn chưa có harness đo trong repo.
+
+**Khi phát hành:** Đợt A **đổi `*.py`** ⇒ `/deploy` sẽ yêu cầu build lại sidecar (cổng "tươi" đã không còn đòi vì file test). Chưa bump version, chưa viết mục HANDOFF — việc của `/deploy`.
+
+**Còn lại:** Đợt B–D (§5), trong đó S1/S2 (đưa OCR/Gemini ra khỏi event loop) **phải kiểm kê trạng thái dùng chung** (`ocr_engine`, `gemini_agent`, `_FIND_CACHE`) cùng phiên; Đợt E (tách `baking`, chưa quyết GO).

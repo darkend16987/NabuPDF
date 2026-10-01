@@ -35,7 +35,7 @@ tài liệu này chỉ có giá trị nếu được cập nhật.
 | `desktop/build/installer.nsh` | ~20 | Khoá registry của verb. Không chạy lúc dev, **chỉ** chạy lúc cài ⇒ sai thì không ai biết cho tới khi có người cài thật. Ba thứ dễ sai: thiếu `MultiSelectModel=Player` (chọn >15 file là mục menu mất), thiếu **BOM UTF-8** (nhãn tiếng Việt thành mojibake), thiếu `customUnInstall` (gỡ app xong còn mục menu chết). Có ca đối chiếu với JS trong `test:combine` → xem BI-62. |
 | `api.py` + `src/pdf/*.py` | — | Có lưới test tự động (`run_tests.py`) → rủi ro thấp hơn renderer. |
 
-> *(Cập nhật 2026-10-01 — đo lại: `npm test` nay chạy 27 bộ; nhưng chỉ ~24% số dòng
+> *(Cập nhật 2026-10-01 — đo lại: `npm test` nay chạy mọi `desktop/test/*.test.js` (31 bộ tại 2026-10-01); nhưng chỉ ~24% số dòng
 > renderer nằm trong file `require()` được từ node, ~76% còn lại chỉ có test cắt hàm /
 > ghim mã nguồn và probe. Ba bộ canh **cấu trúc** mới, không đổi hành vi:
 > `test:scope` (trùng tên toàn cục + thứ tự nạp `<script>`, BI-14), `test:ipc` (preload ⇄
