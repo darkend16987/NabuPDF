@@ -4,7 +4,40 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-09-30 · v0.2.73 đã phát hành (dưới đây) · v0.2.72 là bản trước đó_
+_Cập nhật: 2026-10-01 · v0.2.74 đã phát hành (dưới đây) · v0.2.73 là bản trước đó_
+
+> **v0.2.74 — bản "hiệu năng & độ bền" (không tính năng mới cho người dùng)** (phát hành 2026-10-01). Toàn bộ
+> từ review `docs/REVIEW-2026-10-01-perf-harness.md` (§7 có số đo, lý do và giới hạn từng mục). **Không đổi
+> hành vi nhìn thấy được**; thay đổi là: app không đứng khi OCR/Gemini chạy, mở/khôi phục tab nhẹ hơn,
+> cuộn/zoom ít lãng phí hơn, so sánh bản vẽ lớn nhanh hơn.
+>
+> 1. **Sidecar (đổi `*.py` + `sidecar.spec` ⇒ phải build lại sidecar):** OCR và Gemini chạy trên luồng riêng
+>    (`src/offload.py`, mỗi loại một worker) nên `/health` không còn bị chặn (engine OCR thật: 28,96 s →
+>    tối đa 0,10 s); `/compare` chạy qua generator + `drive_async`; diff 2 tầng khi ≥ 30 000 token
+>    (PDF thật ~45k token: 19,3 s → 0,5 s; dưới ngưỡng chạy đúng thuật toán cũ); `/images-to-pdf` nhét thẳng
+>    JPEG/MPO RGB-xám (3 ảnh 12 MP: 16 s → 0,2 s; PNG/CMYK/RGBA/WebP giữ đường cũ); `/searchable` trả 503
+>    (không còn 500) khi engine không hỗ trợ box; cache Font, timeout Gemini, `garbage=2` (chấp nhận).
+> 2. **Main process:** đọc/gửi file không chặn main (`src/safe-fs.js`, probe 3 s, hàng đợi có thứ tự theo
+>    renderer); khôi phục phiên không `existsSync` đồng bộ từng tab; `pdfPathFromArgv` (mở bằng "Open with" /
+>    second-instance) cũng async — probe quá hạn vẫn mở đường dẫn, không rơi sang khôi phục phiên. **Tab hoãn
+>    (parked) không nạp renderer** cho tới khi bấm tới: phiên 8 tab 1180 → 505 MB, 15 → 8 tiến trình.
+>    ⚠️ `combineBucket.exists` (gộp từ Explorer) **cố ý còn đồng bộ**.
+> 3. **Renderer:** huỷ render trang khi cuộn nhanh (R2, trang đích vẽ xong 2330 → 1490 ms); zoom lúc đang vẽ
+>    không rò bitmap sai scale (R1/R9); So sánh/Chồng lớp bỏ vẽ thừa (R4/R5); Ctrl+S giữa phiên chú thích
+>    3 lượt vẽ → 1 (R8); `wire.js` gộp base64 thành Blob (đỉnh heap +161 → +34 MB).
+> 4. **Cấu trúc (đổi chỗ ở, không đổi hành vi):** nửa "baking" của `editor.js` chuyển **nguyên văn** sang
+>    `renderer/editor-bake.js` (`window.EditorBake.create(...)`); chứng minh bằng `scripts/prove-bake-move.js`
+>    + so hash PDF thật cũ/mới 5/5 kịch bản; lưới `test/bake-split.test.js`. `commitBytes()` (`app.js`,
+>    `window.DocHistory.commitBytes`) là đường chuẩn cho code MỚI ghi `state.bytes`; chưa có chỗ gọi, 13 chỗ
+>    ghi tay cũ chưa chuyển (chuyển dần khi đụng tới). Thêm lưới `test:scope/ipc/bytes`, `npm test`.
+> 5. **Cố ý KHÔNG làm:** S6 (chỉ mục Tìm & Thay tăng dần — không chứng minh được tính đúng, xem memo §7 Đợt D);
+>    H3 (harness đo trong repo, ghi chú ở memo); bước 5 tách (`lift()` → `require()`).
+>
+> ⚠️ **Giới hạn đã biết:** chưa probe thật hộp thoại Mở/Lưu native, gộp từ Explorer, chọn file ở màn So
+> sánh, kéo/tách tab hoãn, "Xong → Huỷ ngay giữa lúc bake"; 3/33 lần chạy `vec` của probe bake bản mới ra PDF
+> khác (1 ca chứng minh do đầu vào probe khác, 2 ca chưa chứng minh). Chủ dự án đã test tay Đợt B–E không thấy
+> lỗi trước khi phát hành. Lỗi console nội bộ Electron (`binding.startupData`) thỉnh thoảng hiện ở lần chạy
+> đầu, chưa giải thích được, không liên quan code repo.
 
 > **v0.2.73 — di chuyển chữ trong Sửa nội dung, ✓/✗ sống qua lần lưu, màu `#e90000` và nét mặc định 1 pt** (phát hành 2026-09-30).
 >
