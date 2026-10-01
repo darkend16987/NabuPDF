@@ -23,7 +23,15 @@ const path = require("path");
 // `image_max_width` there changes OCR OUTPUT while leaving every .py untouched. The
 // 151.8 MB .pth beside them is not in git (tools/fetch_vietocr_model.py pins its
 // SHA256 instead), so there is nothing to diff for it here.
-const SIDECAR_INPUTS = '"*.py" sidecar.spec "models/vietocr/*.yml"';
+//
+// The root-level test runner and `test_*.py` are NOT sidecar inputs: PyInstaller starts
+// from sidecar.py and nothing in the bundle imports them. They match "*.py" all the
+// same, so without the excludes editing a test demanded a ~30-minute rebuild of a
+// binary that could not have changed. (`*` crosses `/` in a pathspec, but an exclude
+// pattern with no leading directory is anchored at the repo root, so only the root-level
+// test files are skipped.)
+const SIDECAR_INPUTS =
+  '"*.py" sidecar.spec "models/vietocr/*.yml" ":(exclude)test_*.py" ":(exclude)run_tests.py"';
 
 if (process.env.SKIP_SIDECAR_CHECK === "1") {
   console.log("[sidecar-check] skipped (SKIP_SIDECAR_CHECK=1)");
