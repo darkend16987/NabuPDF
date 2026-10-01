@@ -30,6 +30,15 @@ DEFAULT_CONTRACT_FIELDS = {
 }
 
 
+# Ceiling for ONE Gemini HTTP request, in MILLISECONDS (that is the SDK's unit).
+# The SDK default is `timeout=None`, i.e. wait forever: a Wi-Fi drop that leaves the TCP
+# connection half-open froze the sidecar until the app was killed (the call is
+# synchronous, and /health is only polled at startup). httpx applies this to connect and
+# to each read, so it bounds a STALLED request, not a long-but-alive one. 120 s is far
+# above a normal flash-lite reply (seconds) yet short enough to surface an error.
+GEMINI_HTTP_TIMEOUT_MS = 120_000
+
+
 class GeminiAgent:
     """AI Agent using Google Gemini to extract structured data from contract text.
 
@@ -41,17 +50,25 @@ class GeminiAgent:
         api_key: str,
         model_name: str = "gemini-3.5-flash-lite",
         fields: dict[str, str] | None = None,
+        http_timeout_ms: int = GEMINI_HTTP_TIMEOUT_MS,
     ):
         self.api_key = api_key
         self.model_name = model_name
         self.fields = fields or DEFAULT_CONTRACT_FIELDS
+        self.http_timeout_ms = http_timeout_ms
         self._client = None
+
+    def _http_options(self):
+        """HTTP options for the client — kept in one place so a test can build the
+        exact configuration production uses (and only swap the base URL)."""
+        from google.genai import types
+        return types.HttpOptions(timeout=self.http_timeout_ms)
 
     @property
     def client(self):
         if self._client is None:
             from google import genai
-            self._client = genai.Client(api_key=self.api_key)
+            self._client = genai.Client(api_key=self.api_key, http_options=self._http_options())
             logger.info("Gemini client initialized: %s", self.model_name)
         return self._client
 
