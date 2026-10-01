@@ -871,14 +871,7 @@ async function renderViewer() {
 
   // Start rendering ~500px before a page scrolls into view so it's usually ready
   // by the time it's visible.
-  pageObserver = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) {
-        if (e.isIntersecting) renderPageCanvas(+e.target.dataset.index);
-      }
-    },
-    { root: v, rootMargin: "500px 0px" }
-  );
+  pageObserver = new IntersectionObserver(onPageBandChange, { root: v, rootMargin: "500px 0px" });
   // Second, wider band: once a page drifts past KEEP_MARGIN_PX its bitmap is
   // released so RAM stays flat regardless of page count. We keep observing with
   // pageObserver (no unobserve) so a released page is repainted when it returns.
@@ -918,6 +911,36 @@ async function renderViewer() {
   if (window.FindReplace) window.FindReplace.invalidate();
 }
 
+// A page crossed the render band (500 px around the viewport).
+//   in  → rasterise it;
+//   out → if it is still being rasterised, CANCEL that (R2, docs/REVIEW-2026-10-01).
+// Before, nothing ever cancelled: drag the scrollbar through an 86-sheet A1 set and every
+// page the thumb passed was rasterised in full (1-3 s each on a CAD sheet), queued in the
+// pdf.js worker ahead of the page the user actually stopped on. Measured with a heavy
+// 30-page A1 file: 35 renders started and 35 finished for one fling, target painted
+// 1.3 s after the hand stopped.
+//
+// One IntersectionObserver batch can carry several records for the same page (in, out, in
+// again). Only the LAST says where the page is now; acting on each in turn would start a
+// render, cancel it, and then have the second "in" refused because the cancelled render
+// has not unwound yet (m.rendering is still true) - leaving the page blank for good.
+function onPageBandChange(entries) {
+  const last = new Map();
+  for (const e of entries) last.set(+e.target.dataset.index, e.isIntersecting);
+  for (const [i, inBand] of last) {
+    if (inBand) renderPageCanvas(i);
+    else cancelPageRender(i);
+  }
+}
+
+// Stop the rasterisation of page i, if one is running. pdf.js rejects the render promise
+// with RenderingCancelledException; renderPageCanvas treats that as "asked for", not as an
+// error. A no-op for a page that is idle or already finished.
+function cancelPageRender(i) {
+  const m = state.pageMetas && state.pageMetas[i];
+  if (m && m.rendering && m.renderTask) m.renderTask.cancel();
+}
+
 // Rasterise one page into its (already-placed) canvas. Idempotent: the
 // data-rendered guard stops the observer + sidebar-jump from double-drawing.
 async function renderPageCanvas(i) {
@@ -937,21 +960,25 @@ async function renderPageCanvas(i) {
   // the live overlay, so hide their baked PDF appearance here (and let the overlay
   // own the note markers) to avoid drawing them twice.
   const editing = !!(window.Editor && window.Editor.active);
+  let off = null;
   try {
     // Rasterise into an OFF-SCREEN canvas first, then blit onto the visible one
     // only after render succeeds. Assigning canvas.width clears the canvas, so
     // painting the visible canvas up-front and then failing (e.g. a transient
     // allocation failure after a large edit) used to leave the page blank with no
     // sign of the error. Rendering off-screen keeps the previous bitmap on failure.
-    const off = document.createElement("canvas");
+    off = document.createElement("canvas");
     off.width = pw;
     off.height = ph;
-    await page.render({
+    // Keep the task: cancelPageRender needs it when the page leaves the render band.
+    const task = page.render({
       canvasContext: off.getContext("2d"),
       viewport: vp,
       transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
       annotationMode: editing ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
-    }).promise;
+    });
+    m.renderTask = task;
+    await task.promise;
     canvas.width = pw;
     canvas.height = ph;
     canvas.getContext("2d").drawImage(off, 0, 0);
@@ -973,11 +1000,26 @@ async function renderPageCanvas(i) {
     if (window.FindReplace && window.FindReplace.hasHits()) window.FindReplace.drawLayer(i);
   } catch (err) {
     m.wrap.dataset.rendered = "0"; // let it retry on the next intersection
-    // Don't fail silently: a swallowed render error looked exactly like "the page
-    // vanished". The visible canvas still holds its previous bitmap (we never
-    // cleared it), so the page shows stale-but-present rather than blank.
-    console.error("renderPageCanvas: page " + (i + 1) + " render failed", err);
+    if (err && err.name === "RenderingCancelledException") {
+      // We asked for this: the page left the render band mid-render (cancelPageRender).
+      // Not an error. It is >500 px from the viewport, so nobody is looking at it; drop
+      // the off-screen bitmap and any older (stale-scale) one - leaving a bitmap behind a
+      // rendered="0" flag is exactly what freePageCanvas can never release (R1). The page
+      // is repainted from scratch when it comes back into the band.
+      if (off) {
+        off.width = 0;
+        off.height = 0;
+      }
+      m.canvas.width = 0;
+      m.canvas.height = 0;
+    } else {
+      // Don't fail silently: a swallowed render error looked exactly like "the page
+      // vanished". The visible canvas still holds its previous bitmap (we never
+      // cleared it), so the page shows stale-but-present rather than blank.
+      console.error("renderPageCanvas: page " + (i + 1) + " render failed", err);
+    }
   } finally {
+    m.renderTask = null;
     m.rendering = false;
     // If the page scrolled far away while we were rasterising (fast fling), the
     // keepObserver's free event was skipped mid-render — reclaim the bitmap now.

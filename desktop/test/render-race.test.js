@@ -170,7 +170,8 @@ const flush = () => sleep(0);
 let finished = false;
 process.on("exit", () => {
   if (!finished) {
-    console.error("FAIL the test exited before finishing: a promise never settled");
+    // stderr directly: a scenario may have swapped console.error for a collector
+    process.stderr.write("FAIL the test exited before finishing: a promise never settled\n");
     process.exitCode = 1;
   }
 });
