@@ -35,9 +35,17 @@
 // streaming builders below are the only way to put binary on the wire.
 //
 // A Blob assembled from pieces keeps its bytes in Blink's blob store (spillable to
-// disk), not on the JS heap, so only one 48 KB chunk is ever live as a string. The
-// wire format is unchanged — the sidecar still receives ordinary JSON — so this is
-// purely a renderer-side memory fix with no API surface to keep in step.
+// disk), not on the JS heap. The wire format is unchanged — the sidecar still receives
+// ordinary JSON — so this is purely a renderer-side memory fix with no API surface to
+// keep in step.
+//
+// "Only one 48 KB chunk is ever live as a string" was what this comment used to claim, and
+// it was not true: the chunks were collected in `parts` and only handed to `new Blob(parts)`
+// at the very end, so every one of them stayed a JS string until then - a 120 MB payload
+// cost +161 MB of heap right before the Blob was built (measured in Chromium with precise
+// memory info; M6 in docs/REVIEW-2026-10-01). pushB64Chunks now folds the pieces gathered so
+// far into a Blob every B64_FLUSH_PARTS chunks, so at most ~16 MB of base64 text is ever on
+// the heap whatever the payload size.
 //
 // The chunk size MUST stay a multiple of 3: base64 only pads at the end of a
 // stream, so chunking on a 3-byte boundary lets the pieces be concatenated
@@ -50,12 +58,20 @@
 // see the note above. (Also under the ~65535 argument ceiling of Function.apply.)
 const B64_CHUNK = 49152;
 
+// How many string pieces may pile up in `parts` before they are folded into one Blob.
+// 256 × 64 KB of base64 text = 16 MB of heap at the very most. A Blob made of Blobs is
+// free (Blink keeps references into its blob store, nothing is copied).
+const B64_FLUSH_PARTS = 256;
+
 // Append `u8` to `parts` as base64 text, in chunks, so the full encoding never
 // exists as one JS string. Shared by every streaming body builder below — the
 // 3-byte rule lives in exactly one place on purpose.
 function pushB64Chunks(parts, u8) {
   for (let i = 0; i < u8.length; i += B64_CHUNK) {
     parts.push(btoa(String.fromCharCode.apply(null, u8.subarray(i, i + B64_CHUNK))));
+    // Fold what has piled up into ONE Blob, in place and in order (the Blob replaces the
+    // pieces it was made from; later pieces follow it), so the strings can be collected.
+    if (parts.length >= B64_FLUSH_PARTS) parts.splice(0, parts.length, new Blob(parts));
   }
 }
 
@@ -120,8 +136,8 @@ function b64ToU8(b64) {
 // above in the shared script scope. window.Wire is the same set under a name a
 // probe can assert on.
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { B64_CHUNK, pushB64Chunks, pdfJsonBody, binArrayJsonBody, b64ToU8 };
+  module.exports = { B64_CHUNK, B64_FLUSH_PARTS, pushB64Chunks, pdfJsonBody, binArrayJsonBody, b64ToU8 };
 }
 if (typeof window !== "undefined") {
-  window.Wire = { B64_CHUNK, pushB64Chunks, pdfJsonBody, binArrayJsonBody, b64ToU8 };
+  window.Wire = { B64_CHUNK, B64_FLUSH_PARTS, pushB64Chunks, pdfJsonBody, binArrayJsonBody, b64ToU8 };
 }

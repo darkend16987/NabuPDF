@@ -149,12 +149,43 @@ async function main() {
   const high = new Uint8Array([0, 1, 127, 128, 200, 254, 255]);
   check("bytes above 0x7F survive", [...W.b64ToU8(refB64(high))], [...high]);
 
+  // ---- folding the string pieces into Blobs (M6) -----------------------------
+
+  // pdfJsonBody used to hold EVERY base64 piece as a JS string until the final `new Blob`:
+  // +161 MB of heap for a 120 MB payload. pushB64Chunks now folds the pieces into a Blob every
+  // B64_FLUSH_PARTS chunks. The risk is in the seams - a piece lost, doubled or reordered at a
+  // fold is silent corruption - so the output is pinned byte-for-byte against the one-string
+  // reference at sizes straddling the first, second and third fold.
+  const F = W.B64_FLUSH_PARTS;
+  check("fold size is a sane bound (16 MB of text at most, more than one chunk)", F > 1 && F * 65536 <= 20 * 1024 * 1024, true);
+  for (const n of [C * (F - 1), C * F, C * F + 1, C * (F + 1) + 7, C * (2 * F) + 3, C * (3 * F - 1) + 5]) {
+    const u8 = bytes(n, 7);
+    const got = await body(W.pdfJsonBody(u8, { a: 1 }));
+    check(`fold seams: ${n} bytes (${(n / C).toFixed(2)} chunks) match the reference`, got.pdf_b64 === refB64(u8) && got.a === 1, true);
+  }
+  {
+    const two = bytes(C * (F + 3) + 1, 8), one = bytes(1000, 9);
+    const got = await body(W.pdfJsonBody({ pdf_a_b64: two, pdf_b_b64: one }, { mode: "text" }));
+    check("two documents, the first crossing a fold: both intact and in order", [got.pdf_a_b64 === refB64(two), got.pdf_b_b64 === refB64(one), got.mode], [true, true, "text"]);
+    const arr = await body(W.binArrayJsonBody("images", [one, two, one], { page_size: "fit" }));
+    check("array of images across a fold: all intact, in order", [arr.images.length, arr.images[0] === refB64(one), arr.images[1] === refB64(two), arr.images[2] === refB64(one), arr.page_size], [3, true, true, true, "fit"]);
+  }
+  {
+    const parts = [];
+    W.pushB64Chunks(parts, bytes(C * (F * 3 + 10), 3));
+    check("after a big push the strings are folded: fewer than F pieces remain, led by a Blob", [parts.length < F, typeof parts[0]], [true, "object"]);
+    const small = [];
+    W.pushB64Chunks(small, bytes(C * 3, 3));
+    check("a small push stays plain strings (no needless Blob)", [small.length, small.every((x) => typeof x === "string")], [3, true]);
+  }
+
   // ---- exported surface ---------------------------------------------------
 
   // Pins that no general-purpose "encode a Uint8Array to base64" helper has crept
   // back in — that helper is the footgun BI-24 exists to remove.
   check("exports exactly the wire codec", Object.keys(W).sort(), [
     "B64_CHUNK",
+    "B64_FLUSH_PARTS",
     "b64ToU8",
     "binArrayJsonBody",
     "pdfJsonBody",
