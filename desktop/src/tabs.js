@@ -1262,14 +1262,20 @@ function snapshotSession(from) {
 
 // Rebuild the windows recorded by a previous run. Returns how many were made, so
 // the caller can fall back to a plain empty window when there was nothing usable.
-function restoreSession(list) {
+//
+// `pathState(p)` (optional) answers "exists" | "missing" | "timeout" for a path that the
+// caller already probed asynchronously (main.js does, so a dead network share cannot
+// freeze the launch - M3). Without it every path is checked here with a synchronous
+// existsSync, as before.
+function restoreSession(list, { pathState } = {}) {
   if (!Array.isArray(list)) return 0;
+  const present = (p) => isRestorable(p, pathState);
   let made = 0;
   for (const w of list) {
     if (!w || !Array.isArray(w.tabs)) continue;
     // Files the user has since moved or deleted are dropped without comment —
     // an error dialog per missing file at launch would be worse than the loss.
-    const paths = w.tabs.filter((p) => typeof p === "string" && p && safeExists(p));
+    const paths = w.tabs.filter((p) => typeof p === "string" && p && present(p));
     if (!paths.length) continue;
     const active = Math.min(Math.max(0, w.active | 0), paths.length - 1);
     const tw = new TabbedWindow({ bounds: sanitizeBounds(w.bounds) });
@@ -1286,7 +1292,7 @@ function restoreSession(list) {
         // Same rule as a tab: a file the user has since moved or deleted is dropped
         // silently. The PANE still opens (empty) so the layout the user left is the
         // layout they get back — only its content is missing, and it says so.
-        tw.addViewPane({ openPath: typeof p === "string" && p && safeExists(p) ? p : null });
+        tw.addViewPane({ openPath: typeof p === "string" && p && present(p) ? p : null });
       }
       if (Array.isArray(w.ratios)) tw.setPaneRatios(w.ratios);
     }
@@ -1308,6 +1314,30 @@ function safeExists(p) {
   } catch (_) {
     return false;
   }
+}
+
+// Should a remembered path come back? A probed answer wins: "timeout" counts as present
+// (a share that is slow today is not a file the user deleted - losing their tab would be
+// permanent, an empty tab is not), "missing" is dropped, anything unknown falls back to
+// the synchronous check.
+function isRestorable(p, pathState) {
+  const state = pathState ? pathState(p) : undefined;
+  if (state === "exists" || state === "timeout") return true;
+  if (state === "missing") return false;
+  return safeExists(p);
+}
+
+// Every path a stored session mentions (tabs and split panes), for probing up front.
+function sessionPaths(list) {
+  const out = [];
+  if (!Array.isArray(list)) return out;
+  for (const w of list) {
+    if (!w) continue;
+    for (const key of ["tabs", "panes"]) {
+      if (Array.isArray(w[key])) for (const p of w[key]) if (typeof p === "string" && p) out.push(p);
+    }
+  }
+  return out;
 }
 
 // Only trust stored bounds if they land on a display that still exists — monitors
@@ -1493,6 +1523,8 @@ module.exports = {
   pageDropTargets,
   snapshotSession,
   restoreSession,
+  sessionPaths,
+  isRestorable,
   sanitizeBounds,
   findViewPane,
   splitRects,

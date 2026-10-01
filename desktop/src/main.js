@@ -17,6 +17,7 @@ const { initLicense } = require("./license");
 const { initSigning } = require("./signing");
 const Tabs = require("./tabs");
 const { asWritable } = require("./ipc-bytes");
+const SafeFs = require("./safe-fs");
 const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
@@ -149,22 +150,37 @@ function attachContextMenu(webContents) {
   });
 }
 
+// Everything below that reads a document off disk FOR a renderer is async, and ordered
+// per target (M1, docs/REVIEW-2026-10-01). The main process is the one event loop every
+// window shares: readFileSync parked all of them for as long as the disk took (161 ms for
+// a warm 256 MB file; seconds on a NAS or a spun-down HDD; a share on a dropped VPN
+// stalls tens of seconds). Callers still fire and forget. `sendQueue` keeps two sends to
+// the same renderer in the order they were asked for - synchronous code gave that for
+// free, but with async reads a small file could otherwise overtake a big one.
+// (The IPC send itself - structured clone of the bytes - still runs here, 111 ms for
+// 256 MB; that part cannot leave the main process.)
+const sendQueue = SafeFs.createOrdered();
+
 // Read a PDF off disk and push it to a window's renderer to open. Guards the
 // path so only real .pdf files are read (defence against a bogus argv entry).
 function sendFileToView(webContents, filePath) {
-  try {
-    if (!webContents || webContents.isDestroyed()) return;
-    if (!filePath || !/\.pdf$/i.test(filePath)) return;
-    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return;
-    const data = fs.readFileSync(filePath);
-    webContents.send("file:open", {
-      path: filePath,
-      name: path.basename(filePath),
-      data,
-    });
-  } catch (_) {
-    /* ignore unreadable file — the empty tab is still usable */
-  }
+  if (!webContents) return Promise.resolve();
+  return sendQueue.run(webContents, async () => {
+    try {
+      if (webContents.isDestroyed()) return;
+      if (!filePath || !/\.pdf$/i.test(filePath)) return;
+      if (!(await SafeFs.isFile(filePath))) return;
+      const data = await fs.promises.readFile(filePath);
+      if (webContents.isDestroyed()) return; // the tab was closed while the disk was busy
+      webContents.send("file:open", {
+        path: filePath,
+        name: path.basename(filePath),
+        data,
+      });
+    } catch (_) {
+      /* ignore unreadable file — the empty tab is still usable */
+    }
+  });
 }
 
 // Hand a file to a READ-ONLY split-view pane (renderer/view.html). Same shape and
@@ -177,33 +193,35 @@ function sendFileToView(webContents, filePath) {
 //     the previous document on screen pretending to be current.
 // `channel` is "view:open" normally, "view:reload" when the main pane just saved.
 function sendFileToPane(webContents, filePath, channel = "view:open") {
-  try {
-    if (!webContents || webContents.isDestroyed()) return;
-    if (!filePath || !/\.pdf$/i.test(filePath)) return;
-    let stat = null;
+  if (!webContents) return Promise.resolve();
+  return sendQueue.run(webContents, async () => {
     try {
-      stat = fs.statSync(filePath);
+      if (webContents.isDestroyed()) return;
+      if (!filePath || !/\.pdf$/i.test(filePath)) return;
+      const { stats: stat, timedOut } = await SafeFs.probe(filePath);
+      if (webContents.isDestroyed()) return;
+      if (!stat || !stat.isFile()) {
+        webContents.send("view:clear", {
+          reason: timedOut ? "Không truy cập được file này (ổ đĩa không phản hồi)." : "Không còn thấy file này trên đĩa.",
+        });
+        return;
+      }
+      const data = await fs.promises.readFile(filePath);
+      if (webContents.isDestroyed()) return;
+      webContents.send(channel, {
+        path: filePath,
+        name: path.basename(filePath),
+        savedAt: stat.mtimeMs,
+        data,
+      });
     } catch (_) {
-      stat = null;
+      try {
+        if (!webContents.isDestroyed()) webContents.send("view:clear", { reason: "Không đọc được file này." });
+      } catch (_) {
+        /* renderer gone */
+      }
     }
-    if (!stat || !stat.isFile()) {
-      webContents.send("view:clear", { reason: "Không còn thấy file này trên đĩa." });
-      return;
-    }
-    const data = fs.readFileSync(filePath);
-    webContents.send(channel, {
-      path: filePath,
-      name: path.basename(filePath),
-      savedAt: stat.mtimeMs,
-      data,
-    });
-  } catch (_) {
-    try {
-      webContents.send("view:clear", { reason: "Không đọc được file này." });
-    } catch (_) {
-      /* renderer gone */
-    }
-  }
+  });
 }
 
 // Read a batch of PDFs off disk and hand them to a renderer to PRE-FILL the
@@ -215,23 +233,30 @@ function sendFileToPane(webContents, filePath, channel = "view:open") {
 // out of eight must not cost the other seven. The renderer reports what it could
 // not parse (password-protected files) the same way the manual picker does.
 function sendCombineToView(webContents, filePaths, dropped) {
-  try {
-    if (!webContents || webContents.isDestroyed()) return;
-    const files = [];
-    for (const p of Array.isArray(filePaths) ? filePaths : []) {
-      try {
-        if (!ShellCombine.isPdfPath(p)) continue;
-        if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
-        files.push({ path: p, name: path.basename(p), data: fs.readFileSync(p) });
-      } catch (_) {
-        /* skip this one, keep the batch */
+  if (!webContents) return Promise.resolve();
+  return sendQueue.run(webContents, async () => {
+    try {
+      if (webContents.isDestroyed()) return;
+      const candidates = (Array.isArray(filePaths) ? filePaths : []).filter((p) => ShellCombine.isPdfPath(p));
+      // Probe all together (N unreachable files cost one timeout, not N), read one by one
+      // (the bytes of a whole batch should not all be in flight at once).
+      const isFile = await Promise.all(candidates.map((p) => SafeFs.isFile(p)));
+      const files = [];
+      for (let i = 0; i < candidates.length; i++) {
+        if (!isFile[i]) continue;
+        const p = candidates[i];
+        try {
+          files.push({ path: p, name: path.basename(p), data: await fs.promises.readFile(p) });
+        } catch (_) {
+          /* skip this one, keep the batch */
+        }
       }
+      if (!files.length || webContents.isDestroyed()) return;
+      webContents.send("combine:prefill", { files, dropped: dropped | 0 });
+    } catch (_) {
+      /* ignore — the tab is still a usable empty tab */
     }
-    if (!files.length) return;
-    webContents.send("combine:prefill", { files, dropped: dropped | 0 });
-  } catch (_) {
-    /* ignore — the tab is still a usable empty tab */
-  }
+  });
 }
 
 // True once Tabs.configure() + Prefs.configure() have run, i.e. once it is safe to
@@ -658,7 +683,7 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // Content-Security-Policy for the local renderer (defence-in-depth). Scripts/
     // styles are 'self'; inline styles are used heavily so style-src needs
     // 'unsafe-inline'. connect-src must allow the loopback sidecar; worker-src
@@ -756,7 +781,13 @@ if (!app.requestSingleInstanceLock()) {
     } else if (!launchCombine) {
       // `!launchCombine` is what keeps a combine launch from ALSO restoring the
       // previous session behind the merge dialog. The bucket owns that launch.
-      const restored = Session.isEnabled() ? Tabs.restoreSession(Session.previousWindows()) : 0;
+      // M3: asking the OS "does this file still exist?" once per remembered tab, in a
+      // synchronous call, froze the whole launch for the OS timeout PER tab on a share
+      // that is gone (VPN off). Ask all of them at once, asynchronously, and give up on
+      // an unanswered one after 3 s - keeping its tab (a slow disk is not a deleted file).
+      const prev = Session.isEnabled() ? Session.previousWindows() : [];
+      const pathState = Session.isEnabled() ? await SafeFs.probeMany(Tabs.sessionPaths(prev)) : null;
+      const restored = Session.isEnabled() ? Tabs.restoreSession(prev, { pathState: (p) => pathState.get(p) }) : 0;
       if (!restored) {
         Tabs.createTabbedWindow();
       } else if (hasRecoveryOrphans()) {
@@ -825,17 +856,22 @@ ipcMain.handle("app:info", () => ({
 // One code path for every Electron, deliberately: this was written and tested
 // before the 33 → 44 bump landed, so the behaviour it restores could be verified
 // against the OS memory it replaces rather than against a guess.
-function openDefault(bucket) {
+//
+// ASYNC (M3, docs/REVIEW-2026-10-01): this runs before EVERY file dialog, and the
+// remembered folder can be a share that is no longer reachable. existsSync on such a
+// path froze every window for the OS timeout (21 s measured); SafeFs.exists gives up
+// after 3 s and the dialog simply opens in the OS default folder.
+async function openDefault(bucket) {
   const dir = Prefs.getLastDir(bucket);
   // A remembered folder can have been deleted or been on a USB stick. Hand a
   // dead path to a native dialog and behaviour is platform-specific; just fall
   // back to letting the OS decide.
-  return dir && fs.existsSync(dir) ? { defaultPath: dir } : {};
+  return dir && (await SafeFs.exists(dir)) ? { defaultPath: dir } : {};
 }
 
 // Save dialogs already pass a file NAME; join it onto the remembered folder so
 // the name keeps working and only the starting directory is restored.
-function saveDefault(bucket, fileName) {
+async function saveDefault(bucket, fileName) {
   const name = fileName || "output.pdf";
   // If the caller already decided WHERE (an absolute path, or any path with a
   // directory part), that wins — joining it onto a remembered folder would build
@@ -843,7 +879,17 @@ function saveDefault(bucket, fileName) {
   // today; this keeps that from becoming a silent trap if one ever stops.
   if (path.isAbsolute(name) || path.dirname(name) !== ".") return name;
   const dir = Prefs.getLastDir(bucket);
-  return dir && fs.existsSync(dir) ? path.join(dir, name) : name;
+  return dir && (await SafeFs.exists(dir)) ? path.join(dir, name) : name;
+}
+
+// The files a picker returned, read one after another WITHOUT holding the main process
+// (M1). An unreadable file still rejects the whole call, exactly as readFileSync threw.
+async function readPicked(filePaths) {
+  const out = [];
+  for (const fp of filePaths) {
+    out.push({ path: fp, name: path.basename(fp), data: await fs.promises.readFile(fp) });
+  }
+  return out;
 }
 
 function rememberDir(bucket, chosen) {
@@ -858,15 +904,11 @@ ipcMain.handle("dialog:open-pdf", async (e, { multi = false } = {}) => {
     title: "Mở PDF",
     properties: props,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
-    ...openDefault("open-pdf"),
+    ...(await openDefault("open-pdf")),
   });
   if (res.canceled) return [];
   rememberDir("open-pdf", res.filePaths);
-  return res.filePaths.map((fp) => ({
-    path: fp,
-    name: path.basename(fp),
-    data: fs.readFileSync(fp),
-  }));
+  return readPicked(res.filePaths);
 });
 
 // Pick PDF paths WITHOUT reading them: the tab layer opens each by path, so main
@@ -878,7 +920,7 @@ ipcMain.handle("dialog:pick-pdfs", async (e) => {
     title: "Mở PDF",
     properties: ["openFile", "multiSelections"],
     filters: [{ name: "PDF", extensions: ["pdf"] }],
-    ...openDefault("open-pdf"),
+    ...(await openDefault("open-pdf")),
   });
   if (res.canceled) return [];
   rememberDir("open-pdf", res.filePaths);
@@ -897,21 +939,17 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
       filters && filters.length
         ? filters
         : [{ name: "Ảnh", extensions: ["jpg", "jpeg", "png", "bmp", "tif", "tiff", "webp", "gif"] }],
-    ...openDefault("open-files"),
+    ...(await openDefault("open-files")),
   });
   if (res.canceled) return [];
   rememberDir("open-files", res.filePaths);
-  return res.filePaths.map((fp) => ({
-    path: fp,
-    name: path.basename(fp),
-    data: fs.readFileSync(fp),
-  }));
+  return readPicked(res.filePaths);
 });
 
 ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
   const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu PDF",
-    defaultPath: saveDefault("save-pdf", defaultName || "output.pdf"),
+    defaultPath: await saveDefault("save-pdf", defaultName || "output.pdf"),
     filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
@@ -943,7 +981,7 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
 ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => {
   const res = await dialog.showSaveDialog(senderWindow(e), {
     title: "Lưu file",
-    defaultPath: saveDefault("save-file", defaultName || "export.txt"),
+    defaultPath: await saveDefault("save-file", defaultName || "export.txt"),
     filters: filters && filters.length ? filters : [{ name: "Tất cả", extensions: ["*"] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };
@@ -955,10 +993,10 @@ ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => 
 // Reveal a path in the OS file manager (Explorer/Finder). Used by the
 // breadcrumb: click a folder segment → open that folder; the filename → select
 // the file. Falls back to opening the path if it's a directory.
-ipcMain.handle("shell:show-in-folder", (_e, fullPath) => {
+ipcMain.handle("shell:show-in-folder", async (_e, fullPath) => {
   if (!fullPath || typeof fullPath !== "string") return false;
   try {
-    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+    if (await SafeFs.isDirectory(fullPath)) {
       shell.openPath(fullPath);
     } else {
       shell.showItemInFolder(fullPath);
@@ -1585,7 +1623,7 @@ ipcMain.on("view:pick-source", (e) => {
           title: "Chọn PDF cho khung xem",
           properties: ["openFile"],
           filters: [{ name: "PDF", extensions: ["pdf"] }],
-          ...openDefault("open-pdf"),
+          ...(await openDefault("open-pdf")),
         });
         if (res.canceled || !res.filePaths.length) return;
         rememberDir("open-pdf", res.filePaths);
