@@ -160,6 +160,9 @@ function attachContextMenu(webContents) {
 // (The IPC send itself - structured clone of the bytes - still runs here, 111 ms for
 // 256 MB; that part cannot leave the main process.)
 const sendQueue = SafeFs.createOrdered();
+// second-instance launches are probed asynchronously; this keeps them in arrival order.
+const argvQueue = SafeFs.createOrdered();
+const argvKey = {};
 
 // Read a PDF off disk and push it to a window's renderer to open. Guards the
 // path so only real .pdf files are read (defence against a bogus argv entry).
@@ -308,20 +311,27 @@ function openCombineBatch(paths, dropped) {
 // Pull the first existing *.pdf path out of a process argv list. Windows passes
 // the file to "Open with" as a bare argument. Skips flags and the app path.
 //
+// ASYNC (M3): this used to be existsSync + statSync, i.e. a synchronous round trip to
+// whatever volume the path is on, on the launch path and on every second-instance. On a
+// UNC share or a mapped drive that is gone that is tens of seconds with every window
+// frozen. SafeFs.probe stops waiting after 3 s.
+//
+// A probe that TIMES OUT still returns the path: the user asked for this file, and the
+// open flow (sendFileToView) probes again and leaves the tab empty if it really cannot
+// be read. Dropping it here would make "double-click a file on a slow share" do nothing
+// at all - and, worse, fall through to restoring last session's tabs.
+//
 // NOTE: this also matches the path in a `--nabu-combine "x.pdf"` argv, because the
 // flag is skipped as a switch and the path is not. Callers MUST therefore ask
 // ShellCombine.combinePathFromArgv() FIRST — otherwise a combine invocation just
 // opens the file (see second-instance and the launch path below).
-function pdfPathFromArgv(argv) {
+async function pdfPathFromArgv(argv) {
   if (!Array.isArray(argv)) return null;
   for (const a of argv.slice(1)) {
     if (typeof a !== "string" || a.startsWith("-")) continue;
     if (!/\.pdf$/i.test(a)) continue;
-    try {
-      if (fs.existsSync(a) && fs.statSync(a).isFile()) return path.resolve(a);
-    } catch (_) {
-      /* ignore */
-    }
+    const { stats, timedOut } = await SafeFs.probe(a);
+    if (timedOut || (stats && stats.isFile())) return path.resolve(a);
   }
   return null;
 }
@@ -671,16 +681,20 @@ if (!app.requestSingleInstanceLock()) {
       combineBucket.add(combinePath);
       return;
     }
-    const filePath = pdfPathFromArgv(argv);
-    if (filePath) {
-      openPathInApp(filePath);
-      return;
-    }
-    const tw = Tabs.focusedTabbedWindow();
-    if (tw) {
-      if (tw.base.isMinimized()) tw.base.restore();
-      tw.focus();
-    }
+    // One at a time, in arrival order: the probe is async now, and two quick launches
+    // must not open their windows in the order their disks happened to answer.
+    argvQueue.run(argvKey, async () => {
+      const filePath = await pdfPathFromArgv(argv);
+      if (filePath) {
+        openPathInApp(filePath);
+        return;
+      }
+      const tw = Tabs.focusedTabbedWindow();
+      if (tw) {
+        if (tw.base.isMinimized()) tw.base.restore();
+        tw.focus();
+      }
+    }).catch((e) => console.error("[second-instance]", e));
   });
 
   app.whenReady().then(async () => {
@@ -772,7 +786,7 @@ if (!app.requestSingleInstanceLock()) {
     if (launchCombine) combineBucket.add(launchCombine);
     // Open a file passed on the command line (Windows "Open with") or stashed by
     // a pre-ready macOS open-file event; otherwise reopen the previous session.
-    const launchFile = launchCombine ? null : pendingOpenPath || pdfPathFromArgv(process.argv);
+    const launchFile = launchCombine ? null : pendingOpenPath || (await pdfPathFromArgv(process.argv));
     pendingOpenPath = null;
     if (launchFile) {
       // Launched by double-clicking a PDF: open just that file. Dragging the
