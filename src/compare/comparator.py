@@ -47,7 +47,8 @@ def _text_words(page) -> list[dict[str, Any]]:
         word = w[4]
         if not word.strip():
             continue
-        out.append({"t": word, "bbox": [w[0], w[1], w[2], w[3]]})
+        # "ln" = which text line this word sits on; only the large-document diff reads it.
+        out.append({"t": word, "bbox": [w[0], w[1], w[2], w[3]], "ln": (w[5], w[6])})
     return out
 
 
@@ -75,18 +76,18 @@ def _ocr_words_steps(page, get_ocr: Callable[[], Any]):
     except NotImplementedError:
         # Recognition-only engine: no layout — one box-less token per word.
         text = yield lambda: engine.recognize(img)
-        for ln in text.splitlines():
+        for li, ln in enumerate(text.splitlines()):
             for word in ln.split():
-                out.append({"t": word, "bbox": None})
+                out.append({"t": word, "bbox": None, "ln": li})
         return out
 
-    for text, box in lines:
+    for li, (text, box) in enumerate(lines):
         bbox = None
         if upright and box and len(box) == 4:
             bbox = [c / _OCR_ZOOM for c in box]
         for word in text.split():
             if word.strip():
-                out.append({"t": word, "bbox": bbox})
+                out.append({"t": word, "bbox": bbox, "ln": li})
     return out
 
 
@@ -111,7 +112,7 @@ def _doc_tokens_steps(doc, mode: str, get_ocr: Callable[[], Any] | None):
         if len(tokens) >= _MAX_TOKENS:
             break
         for w in (yield from _page_words_steps(doc[i], mode, get_ocr)):
-            tokens.append({"t": w["t"], "page": i, "bbox": w["bbox"]})
+            tokens.append({"t": w["t"], "page": i, "bbox": w["bbox"], "ln": (i, w.get("ln"))})
     return tokens
 
 
@@ -125,6 +126,71 @@ def _snippet(tokens: list[dict[str, Any]], limit: int = 60) -> str:
     """Readable text for a run of tokens (trimmed for the change list)."""
     s = " ".join(t["t"] for t in tokens)
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+# Past this many tokens (on the larger side) the word diff goes line-first. difflib's
+# SequenceMatcher is quadratic on real, repetitive text: measured here with Zipf-distributed
+# words, 20k tokens take 2.5 s, 40k 10.8 s, 60k 28.8 s - and the cap above is 300k, i.e.
+# minutes on the event loop (docs/REVIEW-2026-10-01 S4). Below the threshold the plain
+# algorithm runs unchanged, so every ordinary contract gets byte-for-byte the answer it
+# always got; the two-tier path is only for documents where the plain one is already slow.
+_TWO_TIER_MIN_TOKENS = 30_000
+
+
+def _line_spans(toks: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """(start, end) token index of each run of consecutive tokens that share a line key."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for k in range(1, len(toks) + 1):
+        if k == len(toks) or toks[k].get("ln") != toks[start].get("ln"):
+            spans.append((start, k))
+            start = k
+    return spans
+
+
+def _diff_opcodes(
+    words_a: list[str],
+    toks_a: list[dict[str, Any]],
+    words_b: list[str],
+    toks_b: list[dict[str, Any]],
+    min_tokens: int | None = None,
+) -> list[tuple[str, int, int, int, int]]:
+    """Opcodes (``difflib`` format, over WORD indices) turning ``words_a`` into ``words_b``.
+
+    Small inputs: exactly ``SequenceMatcher(autojunk=False).get_opcodes()``. Large ones: diff
+    the sequences of LINES first (about a tenth of the length, so ~100x cheaper), then diff the
+    words only inside the line blocks that changed. Both give a valid edit script; on repetitive
+    text they can differ only in WHICH of several identical words is reported as the changed
+    one (same number of changes in every measurement). A token with no line key counts as
+    part of one big line, which degrades to the plain diff - correct, just not fast.
+
+    No merging of adjacent changes is needed: the line-level diff never yields two non-equal
+    pieces in a row (difflib folds them into one ``replace``), and the word-level pieces live
+    strictly inside such a block, flanked by ``equal`` line pieces.
+    """
+    limit = _TWO_TIER_MIN_TOKENS if min_tokens is None else min_tokens
+    plain = lambda: difflib.SequenceMatcher(None, words_a, words_b, autojunk=False).get_opcodes()  # noqa: E731
+    if max(len(words_a), len(words_b)) < limit:
+        return plain()
+
+    spans_a = _line_spans(toks_a)
+    spans_b = _line_spans(toks_b)
+    keys_a = [" ".join(words_a[s:e]) for s, e in spans_a]
+    keys_b = [" ".join(words_b[s:e]) for s, e in spans_b]
+
+    out: list[tuple[str, int, int, int, int]] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, keys_a, keys_b, autojunk=False).get_opcodes():
+        wi1 = spans_a[i1][0] if i1 < len(spans_a) else len(words_a)
+        wi2 = spans_a[i2 - 1][1] if i2 > i1 else wi1
+        wj1 = spans_b[j1][0] if j1 < len(spans_b) else len(words_b)
+        wj2 = spans_b[j2 - 1][1] if j2 > j1 else wj1
+        if tag == "replace":
+            inner = difflib.SequenceMatcher(None, words_a[wi1:wi2], words_b[wj1:wj2], autojunk=False)
+            for t2, a1, a2, b1, b2 in inner.get_opcodes():
+                out.append((t2, wi1 + a1, wi1 + a2, wj1 + b1, wj1 + b2))
+        else:
+            out.append((tag, wi1, wi2, wj1, wj2))
+    return out
 
 
 def compare_pdfs_steps(
@@ -156,7 +222,6 @@ def compare_pdfs_steps(
         words_a = [t["t"] for t in toks_a]
         words_b = [t["t"] for t in toks_b]
 
-        sm = difflib.SequenceMatcher(None, words_a, words_b, autojunk=False)
 
         a_boxes: dict[int, list] = {}
         b_boxes: dict[int, list] = {}
@@ -169,7 +234,7 @@ def compare_pdfs_steps(
                 x0, y0, x1, y1 = tk["bbox"]
                 store.setdefault(tk["page"], []).append([x0, y0, x1, y1, kind])
 
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        for tag, i1, i2, j1, j2 in _diff_opcodes(words_a, toks_a, words_b, toks_b):
             if tag == "equal":
                 continue
             at = toks_a[i1:i2]
