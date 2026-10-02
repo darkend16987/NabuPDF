@@ -723,6 +723,45 @@ function quadsFromRects(rects, gap) {
   }));
 }
 
+// ---- z-order (thứ tự chồng) ------------------------------------------------
+//
+// An annotation's stacking order IS its position in `ed.annots[page]`: renderLayer
+// appends elements in array order, the bake adds the managed ones to /Annots in array
+// order, and importManaged reads /Annots back in that order — so reordering the array is
+// the WHOLE feature, and there is deliberately no `z` field to fall out of step with it.
+// BI-93.
+//
+// `list` is the page's annots (bottom → top), `ids` the selected ids. Returns a NEW
+// array (never mutates), so the caller can compare it with the old one and skip the undo
+// step when nothing would move.
+//
+// "forward"/"backward" move the selected block ONE step past its nearest UNSELECTED
+// neighbour — the Office rule — so a group keeps its internal order and a selection that
+// is already at the edge simply stays put. "front"/"back" gather the selection at the
+// end/start, again keeping its internal order.
+function reorderZ(list, ids, op) {
+  const out = list.slice();
+  const sel = new Set(ids);
+  if (!sel.size) return out;
+  const on = (a) => sel.has(a.id);
+  if (op === "front" || op === "back") {
+    const picked = out.filter(on);
+    const rest = out.filter((a) => !on(a));
+    return op === "front" ? rest.concat(picked) : picked.concat(rest);
+  }
+  if (op === "forward") {
+    // Top-down, so a block moves up by exactly one slot instead of cascading.
+    for (let i = out.length - 2; i >= 0; i--) {
+      if (on(out[i]) && !on(out[i + 1])) { const t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; }
+    }
+  } else if (op === "backward") {
+    for (let i = 1; i < out.length; i++) {
+      if (on(out[i]) && !on(out[i - 1])) { const t = out[i]; out[i] = out[i - 1]; out[i - 1] = t; }
+    }
+  }
+  return out;
+}
+
 // node (tests) takes the module export; the browser already has the bare names
 // above in the shared script scope. window.AnnotGeom is the same set under a name a
 // probe can assert on. Mirrors the tail of wire.js / annot-text.js exactly.
@@ -730,7 +769,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
-    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
@@ -741,7 +780,7 @@ if (typeof window !== "undefined") {
   window.AnnotGeom = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
-    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,

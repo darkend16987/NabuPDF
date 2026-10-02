@@ -1752,6 +1752,49 @@
     syncOverlays();
   }
 
+  // Thứ tự chồng: move the selection within its page's annot array (annot-geom.js
+  // reorderZ). The array order IS the stacking order, so nothing else needs to learn
+  // about it — see BI-93. Returns false (and records NO undo step) when the op would
+  // change nothing, e.g. "đưa lên trên cùng" on something already topmost.
+  //
+  // Reordered IN PLACE with splice, not by assigning a new array: other code holds the
+  // page's array across a render (annotsFor() results), and swapping it out from under
+  // them is the kind of bug that only shows after a particular click sequence.
+  function zPlan(op) {
+    if (ed.sel == null) return null;
+    const hit = findAnnot(ed.sel);
+    if (!hit) return null;
+    const cur = annotsFor(hit.page);
+    const next = reorderZ(cur, selIds(), op);
+    return next.some((a, k) => a !== cur[k]) ? { cur, next } : null;
+  }
+  function reorderSelected(op) {
+    if (drag) return false; // never mutate the model mid-drag (same rule as edUndo)
+    const plan = zPlan(op);
+    if (!plan) return false;
+    pushEdUndo();
+    plan.cur.splice(0, plan.cur.length, ...plan.next);
+    syncOverlays();
+    return true;
+  }
+
+  // Every annotation element under the pointer on this page, topmost first. Alt+click
+  // walks DOWN that stack: from the first Alt+click on nothing-selected it lands on the
+  // topmost, and each further one moves to the next object below (wrapping at the
+  // bottom). null when fewer than two objects overlap there — then Alt changes nothing.
+  // `elementsFromPoint` skips pointer-events:none, so `.an-text-bg` and friends never
+  // show up as phantom layers.
+  function pickUnder(e, layer) {
+    const stack = [];
+    for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
+      const an = el.closest && el.closest(".an");
+      if (an && layer.contains(an) && an.dataset.kind !== "watermark" && !stack.includes(an)) stack.push(an);
+    }
+    if (stack.length < 2) return null;
+    const at = stack.findIndex((an) => isSelected(+an.dataset.id));
+    return stack[(at + 1) % stack.length]; // at = -1 (none selected) → index 0, the topmost
+  }
+
   // Reflect the selected annotation's style in the palette controls.
   function syncControls() {
     if (ed.sel == null) return;
@@ -1914,7 +1957,15 @@
       return;
     }
 
-    const anEl = e.target.closest(".an");
+    let anEl = e.target.closest(".an");
+    // Alt+click: select what is UNDER the topmost object, then the next one down on each
+    // further Alt+click. An unfilled box/oval is a full-size <div> that takes the click
+    // anywhere inside it, so a text box drawn first and then boxed in could not be
+    // reached at all — Thứ tự chồng would have nothing to act on. Select tool only.
+    if (ed.tool === "select" && e.altKey && anEl) {
+      const under = pickUnder(e, layer);
+      if (under) anEl = under;
+    }
 
     if (ed.tool === "select") {
       if (anEl && anEl.dataset.kind !== "watermark") {
@@ -3691,6 +3742,14 @@
         // resolved at call time, so a missing module just means no entries).
         ...(window.Signatures ? window.Signatures.menuEntries(i, e.clientX, e.clientY) : []),
         { separator: true },
+        // Thứ tự chồng. Greyed when the op would change nothing (already topmost, …) so
+        // the menu itself tells the user where the object sits. This menu, not a
+        // palette row, because the edit bar has no spare width (BI-41).
+        { label: tr("Đưa lên trên cùng"), enabled: !!zPlan("front"), onClick: () => reorderSelected("front") },
+        { label: tr("Đưa lên một lớp"), enabled: !!zPlan("forward"), onClick: () => reorderSelected("forward") },
+        { label: tr("Đưa xuống một lớp"), enabled: !!zPlan("backward"), onClick: () => reorderSelected("backward") },
+        { label: tr("Đưa xuống dưới cùng"), enabled: !!zPlan("back"), onClick: () => reorderSelected("back") },
+        { separator: true },
         {
           label: n > 1 ? tr("Xoá mục") + ` (${n} mục)` : tr("Xoá mục"),
           enabled: n > 0,
@@ -4321,6 +4380,15 @@
     if ((e.key === "c" || e.key === "C") && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !typing && ed.sel != null) {
       const sel = window.getSelection && window.getSelection();
       if (!(sel && String(sel).length)) copyGesture();
+    }
+    // Thứ tự chồng, the Office/Illustrator chord: Ctrl+] / Ctrl+[ one step, with Shift all
+    // the way. `e.code`, not `e.key`: Shift turns "]" into "}" on a US layout and into
+    // something else entirely on others, while the physical key is the same everywhere.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing && !e.repeat && ed.sel != null &&
+        (e.code === "BracketRight" || e.code === "BracketLeft")) {
+      e.preventDefault();
+      const up = e.code === "BracketRight";
+      reorderSelected(e.shiftKey ? (up ? "front" : "back") : (up ? "forward" : "backward"));
     }
     // Single-key tool shortcuts (no modifiers, not while typing) — mirror the
     // toolbar; each letter is shown in that tool's tooltip.

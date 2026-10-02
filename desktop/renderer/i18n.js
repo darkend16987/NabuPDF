@@ -282,6 +282,10 @@
     "Dán mục đã sao chép vào trang đang xem (Ctrl+V)":
       "Paste the copied item onto the page you are viewing (Ctrl+V)",
     "Xoá mục": "Delete item",
+    "Đưa lên trên cùng": "Bring to front",
+    "Đưa lên một lớp": "Bring forward",
+    "Đưa xuống một lớp": "Send backward",
+    "Đưa xuống dưới cùng": "Send to back",
     "Xoá mục đang chọn (Delete)": "Delete the selected item (Delete)",
     "Ghi mọi thay đổi vào tài liệu và thoát": "Bake all changes into the document and exit",
     "Xong": "Done",

@@ -375,6 +375,10 @@
               "**Ctrl+click** adds or removes objects from the selection. With several selected, **dragging one moves the whole group**, changing **Màu** (colour) or **Nét** (line width) applies to all of them, and `Delete` removes the group in **one** undo step. Resize handles only appear for a **single** object — click one on its own to resize it."
             ),
             T(
+              "**Thứ tự chồng** — mục vẽ sau nằm đè lên mục vẽ trước. Muốn đổi: **bấm chuột phải** lên mục → **Đưa lên trên cùng / Đưa lên một lớp / Đưa xuống một lớp / Đưa xuống dưới cùng**, hoặc `Ctrl+]` / `Ctrl+[` (thêm `Shift` để lên hẳn trên cùng / xuống hẳn dưới cùng). Mục bị che hẳn dưới một hình chữ nhật / elip thì **giữ `Alt` bấm** — mỗi lần bấm chọn mục kế tiếp bên dưới — rồi dùng `Ctrl+]` (menu chuột phải luôn áp cho mục nằm trên cùng dưới con trỏ). Thứ tự được giữ khi **Lưu** và mở lại; riêng **Tô sáng**, **Che thông tin** và **Đo** luôn nằm dưới các mục còn lại sau khi Lưu.",
+              "**Stacking order** — an object drawn later sits on top of one drawn earlier. To change it, **right-click** the object → **Bring to front / Bring forward / Send backward / Send to back**, or use `Ctrl+]` / `Ctrl+[` (add `Shift` to go all the way to the top / bottom). An object hidden completely under a rectangle / ellipse can be reached with **Alt+click** — each click selects the next object down — then use `Ctrl+]` (the right-click menu always acts on the topmost object under the pointer). The order is kept across **Save** and reopen; only **highlight**, **redaction** and **measure** always end up beneath everything else after saving."
+            ),
+            T(
               "`Ctrl+C` sao chép, sang trang khác — hoặc sang **file PDF khác đang mở ở tab/cửa sổ khác** — rồi `Ctrl+V` để dán. Hoặc **bấm chuột phải** lên mục để có menu **Sao chép / Dán vào trang này / Xoá mục**.",
               "`Ctrl+C` copies; go to another page — or to **another PDF open in another tab or window** — and `Ctrl+V` pastes. Or **right-click** an object for **Sao chép / Dán vào trang này / Xoá mục** (copy / paste here / delete)."
             ),

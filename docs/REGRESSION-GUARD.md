@@ -2429,6 +2429,36 @@ _Ghi 2026-09-30 (v0.2.73)._
 - Kiểm: `.venv\Scripts\python test_edit_text_move.py` (có ca canh gác R3 + phá quy đổi ⇒ 7 đỏ) và
   probe CDP kéo thật ở zoom ≠ 100% (px ÷ scale).
 
+### BI-93 · Thứ tự chồng của chú thích **là** thứ tự trong mảng — không có trường `z`, và đừng thêm
+- `annot-geom.js` `reorderZ` · `editor.js` `zPlan` / `reorderSelected` / `pickUnder`, mục
+  menu chuột phải "Đưa lên trên cùng / Đưa lên một lớp / Đưa xuống một lớp / Đưa xuống dưới
+  cùng", phím `Ctrl+]` / `Ctrl+[` (+`Shift`), `Alt`+bấm. Lưới: `npm run test:zorder`.
+- **Mô hình:** chồng lớp = vị trí trong `ed.annots[trang]`. `renderLayer` dựng DOM theo thứ
+  tự mảng; bake ghi các kind "sống" vào `/Annots` theo thứ tự mảng; `importManaged` đọc
+  `/Annots` theo thứ tự đó. Nên đổi chỗ trong mảng là **toàn bộ** tính năng, và **thêm một
+  trường `z`** sẽ tạo ra hai nguồn sự thật có thể lệch nhau mà không báo lỗi.
+- **Lịch sử (đã kiểm bằng `git show`, không phải suy đoán):** repo **chưa từng** có lệnh
+  đổi thứ tự. Báo cáo "trước có, nay không" khớp với việc `MANAGED_KINDS` mở rộng: trước
+  v0.2.61 chỉ `text/note/image/arrow` là chú thích sống, còn chữ nhật/elip bị nướng vào
+  *nội dung trang* sau khi Lưu — nằm **dưới** mọi hộp văn bản. Từ v0.2.61 (chữ nhật, elip,
+  mây) và v0.2.63 (nét vẽ tay) chúng thành chú thích và xếp theo **thứ tự tạo**, nên hình
+  vẽ sau đè lên chữ. Cộng thêm: `.an-box`/`.an-ellipse` là `<div>` kín nên **nuốt click**
+  cả khi không có nền — chữ nằm gọn trong khung vẽ sau thì **không chọn được** → Alt+bấm.
+- **Giới hạn không sửa được:** `highlight`, `redact`, `dim` không thuộc `MANAGED_KINDS`,
+  bị nướng vào nội dung trang ⇒ sau khi Lưu **luôn nằm dưới** mọi chú thích sống (trong
+  phiên Chỉnh sửa, trước khi Áp dụng, chúng vẫn xếp đúng theo mảng). Chú thích do app khác
+  tạo cũng luôn nằm dưới chú thích của Nabu (ta thêm vào cuối `/Annots`). Trợ giúp có nói.
+- **Phải giữ:** (1) `pushEdUndo()` **trước** khi đổi mảng, và **không** ghi bước hoàn tác
+  khi không có gì dịch chỗ; (2) đổi **tại chỗ** bằng `splice` — code khác giữ tham chiếu
+  mảng của trang qua một lần render; (3) từ chối khi đang kéo (`drag`), như `edUndo`;
+  (4) phím tắt đọc `e.code`, không `e.key` (Shift đổi `]` thành `}` và mỗi bàn phím một
+  khác); (5) **không** thêm hàng nút vào `.edit-bar` — hết chỗ (BI-41), nên lối vào là
+  menu + phím. Cần nút thì phải vào `KIND_CTLS` **và** đo lại bảng BI-41.
+- **Alt+bấm** chỉ ở công cụ Chọn, và chỉ khi ≥2 vật chồng nhau dưới con trỏ; mỗi lần bấm đi
+  xuống một vật, hết thì quay lại trên cùng. `elementsFromPoint` bỏ qua
+  `pointer-events:none` nên `.an-text-bg` không thành "lớp ma".
+- Test tay (renderer không chạy được trong node): xem hàng "Thứ tự chồng" ở §5.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2503,6 +2533,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Thứ tự `<script>` trong `index.html` | `find-replace.js` **sau** `app.js` (dùng tên trần `state`/`sidecarFetch`/`pdfJsonBody`/`rerenderChanged` và gắn nút lúc nạp); `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
 | Bất kỳ lệnh vẽ nào trong `drawOneAnnot` / `drawWatermark` (thêm kind, đổi anchor, đổi primitive) | `cd desktop ; npm run test:rotate` **và thêm kind mới vào `KINDS` của lưới đó** · rồi test tay trên **trang đã xoay**: mở PDF scan nằm ngang (hoặc Xoay phải 90° một trang bất kỳ) → khoanh mây · khoanh vùng · mũi tên · dấu ✓ · hộp chữ → **Áp dụng** → mở lại file: mọi thứ **đúng chỗ, đúng chiều** như lúc vẽ · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-45, BI-40) |
+| Thứ tự chồng (`reorderZ`, `zPlan`/`reorderSelected`/`pickUnder`, mục menu "Đưa lên/xuống…", `Ctrl+]`/`Ctrl+[`, `Alt`+bấm) | `cd desktop ; npm run test:zorder ; npm run test:cloud ; npm run test:clip` · vẽ **hộp văn bản**, rồi vẽ **chữ nhật viền không nền** bao quanh nó → chữ **bị che, bấm không trúng** (đúng) → **Alt+bấm** chọn được hộp chữ → chuột phải → **Đưa lên trên cùng** → chữ hiện trên khung, bấm trúng được ngay · `Ctrl+]`/`Ctrl+[` đi từng lớp, `Ctrl+Shift+]`/`[` đi tới đầu/cuối · mục menu **xám** khi đã ở đầu/cuối · chọn **nhóm 3 mục** (Ctrl+bấm) → đưa lên → cả nhóm đi, **giữ nguyên thứ tự trong nhóm** · **một** Ctrl+Z trả lại đúng thứ tự cũ, Ctrl+Y làm lại · Áp dụng → Lưu → **mở lại** → thứ tự **không đổi** · Lưu 3 lần liên tiếp → thứ tự vẫn không đổi, file không phình · mở file bằng **Foxit + Acrobat + Chrome** → hộp chữ nằm **trên** khung · trang **xoay 90°** → vẫn đúng · gõ chữ trong hộp đang sửa + `Ctrl+]` → **không** đổi lớp (đang gõ) · đổi **VI↔EN** → 4 mục menu có tên tiếng Anh (BI-93) |
 | Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`) | `npm run test:geom` · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
 | Chọn nhiều mục / clipboard vật thể (`ed.selMore`, `selIds`, `toggleSelect`, `gripsFor`, `clip`, `copySelected`, `pasteClip`, menu bấm phải trong Chú thích) | `npm run test:cloud` · **giữ Ctrl bấm 3 mục** → cả 3 có viền chọn, **không** hiện tay nắm · kéo một mục trong nhóm → **cả nhóm** đi cùng, Esc giữa lúc kéo → **cả nhóm** về chỗ cũ · đổi Màu / Nét → **cả nhóm** đổi · Delete → mất cả nhóm, **một** Ctrl+Z lấy lại hết · Ctrl+C rồi sang trang khác Ctrl+V → dán đúng vị trí cũ, còn nguyên khoảng cách giữa các mục · dán **lại** trên cùng trang → lệch dần chứ không đè lên nhau · dán vào trang **nhỏ hơn** → cả nhóm bị kéo vào trong trang mà **không rời ra** · **copy → Áp dụng → Ctrl+V** vẫn dán được (BI-46) · bấm phải lên một mục → menu Sao chép/Dán/Xoá · bấm phải lên **giấy trắng** khi chưa copy gì → vẫn ra menu **ảnh** cũ · copy một ảnh từ app khác rồi Ctrl+V → vẫn là đường dán ảnh của `capture.js` (BI-30) |
 | Sửa mũi tên (`drag.type === "point"`, `snapLineEnd`, `.handle.h-pt`, `reverseSelectedArrow`) | `npm run test:cloud` · chọn mũi tên → thấy **2 nút tròn** ở hai đầu · kéo một đầu → mũi tên xoay/dài ra, đầu kia **đứng yên** · giữ Shift → khoá góc 15°, **độ dài không đổi** · Esc giữa lúc kéo → về đúng cũ, không để lại bước undo rỗng · "Đảo chiều" → mũi nhọn **và nhãn** sang đầu kia · **Áp dụng → mở lại → Chỉnh sửa** → vẫn kéo/đảo/sửa nhãn được (arrow round-trip qua `/NabuData`) |

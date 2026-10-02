@@ -434,12 +434,13 @@ check("node import exposes exactly the surface editor.js calls by bare name",
   // v0.2.71 added the tô-sáng-theo-chữ / hình-tự-do maths: the two shape-family sets and
   // their predicates, polyPath + countDistinct, quadsFromRects + its two tolerances and
   // the wash strength, and scalePts. Their own grid is test:shape.
+  // reorderZ (Thứ tự chồng, BI-93) — editor.js calls it by bare name; its grid is test:zorder.
   ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN",
    "PTS_KINDS", "QUAD_GAP", "QUAD_KINDS", "QUAD_MIN",
    "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE", "TEXTHL_OPACITY",
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
    "countDistinct", "fitShift", "isPtsKind", "isQuadKind", "polyPath", "quadsFromRects",
-   "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
+   "reorderZ", "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
 // The two KIND sets are the exception to "SHOUTY name ⇒ number": they are Sets, and
 // spelling that out here is cheaper than a second rule nobody would remember.

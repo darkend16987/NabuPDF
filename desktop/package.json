@@ -34,6 +34,7 @@
     "test:cloud": "node test/annot-geom.test.js",
     "test:shape": "node test/annot-shape.test.js",
     "test:rotate": "node test/annot-rotate.test.js",
+    "test:zorder": "node test/annot-zorder.test.js",
     "test:defaults": "node test/annot-defaults.test.js",
     "test:combine": "node test/shell-combine.test.js",
     "test:help": "node test/help-content.test.js",
