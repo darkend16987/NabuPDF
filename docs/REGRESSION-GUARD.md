@@ -2459,6 +2459,64 @@ _Ghi 2026-09-30 (v0.2.73)._
   `pointer-events:none` nên `.an-text-bg` không thành "lớp ma".
 - Test tay (renderer không chạy được trong node): xem hàng "Thứ tự chồng" ở §5.
 
+### BI-94 · Kiểu nét (liền / nét đứt / chấm): **một** bảng số, **bốn** nơi vẽ — và "liền" là sự VẮNG MẶT của khoá
+- `annot-geom.js` `DASH_KINDS` · `normDash` · `dashSpec` · `dashSegments` — `editor.js`
+  `applyDashSvg` · `appendDashedOutline` · `stampDash` · `#ed-dash` — `editor-bake.js`
+  `renderArrowPng` · `drawOneAnnot` · `deserializeManaged` — `managed-codec.js`
+  `shapeAppearance` · `serializeManaged`. Lưới: `npm run test:dash` (174 ca).
+- **Năm loại có kiểu nét:** `box`, `ellipse`, `draw`, `poly`, `arrow` (mũi tên chỉ đứt **thân**; đầu
+  mũi tên là đa giác tô đặc, giữ nguyên). **Không** có: khoang mây (viền vốn là các cung), dấu ✓ ✗,
+  đoạn đo `dim`. `_dashOf()` ở codec là nơi duy nhất quyết định "annot này có mẫu nét không" — một
+  khoá `dash` lạc vào cloud/✓ (dán từ nơi khác, file sửa tay) bị bỏ qua cả lúc ghi lẫn lúc đọc.
+- **Bốn nơi vẽ phải đọc cùng một `dashSpec(dash, width)`** (BI-40): `<svg>` overlay, `/AP` vector
+  (`borderDashArray`), PNG canvas của mũi tên (`setLineDash` nhân `RS`, rồi **xoá ngay** sau nét
+  thân), và nhánh nướng dự phòng (`drawLine` có `dashArray`). Độ dài tỉ lệ theo bề dày nét:
+  dash = `[4w, 3w]` đầu **phẳng**; chấm = `[0.01, 2w]` đầu **tròn** (0.01 chứ không 0: dash dài 0
+  hợp lệ PDF nhưng không reader nào cũng vẽ).
+- **Đầu nét thuộc về kiểu.** Đầu tròn kéo dài mỗi nét thêm một bề dày ở mỗi đầu và nuốt khoảng hở,
+  nên `dash` dùng đầu phẳng; vì vậy `draw`/`poly` (vốn luôn đầu tròn) đổi sang đầu phẳng **chỉ khi**
+  đứt. ⚠️ **`LineCapStyle.Butt` bằng `0`, tức falsy**: `dashCap || Round` luôn rơi về Round — lỗi này
+  đã xảy ra trong lúc viết và chỉ lưới test bắt được. Viết `ds ? dashCap : Round`.
+- **Liền = không có gì.** `dashSpec` trả `null`, mọi nhánh rẽ `if (ds)` bị bỏ qua, `serializeManaged`
+  **không ghi** khoá `dash`, `deserializeManaged` **không đặt** thuộc tính, chọn "Liền" **xoá** khoá
+  (không ghi `"solid"`). Hệ quả: file cũ và hình liền ra **byte y hệt** (BI-59) — đã đo A/B trên 11
+  vật thể × 4 góc xoay × hai đường ghi (managed + flatten), 46 108 byte `/NabuData` + `/AP` + `/Rect` +
+  content stream: cùng SHA-256 giữa HEAD và bản sửa. Ca "solid == toán tử dựng tay bằng pdf-lib
+  không có `borderDashArray`" nằm trong `test:dash` để giữ điều đó sau này.
+- **Hộp & elip không dùng `border: dashed` của CSS**: trình duyệt tự chọn độ dài nét, còn `/AP` thì
+  theo `dashSpec`. Khi đứt, `appendDashedOutline` thay viền bằng `<svg class="an-dash">` vẽ
+  `<rect>`/`<ellipse>` với đúng số của `dashSpec`. **Hộp thụt vào nửa bề dày + `crispEdges`; elip giữ nét
+  nằm giữa, khử răng cưa** — đây là kết quả **đo trên app thật** sau khi người dùng báo "đổi Liền → Nét đứt
+  thấy nét dày lên thành 2": `width` trong model **không hề đổi** (luôn 1, cả `/NabuData` lẫn `1 w`
+  trong `/AP`), nhưng viền CSS của hộp liền bị Chromium **làm tròn xuống số điểm ảnh nguyên và nằm
+  trong khung**, còn nét SVG nằm giữa biên thì trải **2 hàng xám 50%** ở zoom 100% và mang thêm **25% / 50% mực** ở
+  125% / 150%. Bảng đo (hàng điểm ảnh · độ phủ mực): liền 1 hàng · 1.00 ở mọi zoom; đứt-nằm-giữa 2 hàng ·
+  1.00 / 1.25 / 1.50; **thụt + crispEdges: 1 hàng · 1.00 ở 100/125/150/200%, trùng hàng với viền liền**.
+  ⚠️ `crispEdges` **một mình** còn tệ hơn (làm tròn nét LÊN 2px ở 125/150%), và **không** được cho elip
+  (răng cưa thành bậc thang 2px) — nên elip chỉ giữ nét giữa. Chỉ là chỉnh overlay: `/AP` đã lưu vẫn nằm giữa,
+  và bản trang đã lưu hiển thị liền và đứt **giống hệt** nhau (đã đo, pdf.js 100% và 300%).
+  **Chỉ độ dài nét được bảo đảm khớp, không phải pha**: hai bên không bắt đầu đường nét từ cùng một
+  điểm được bảo đảm (SVG `<rect>` đi từ góc trên-trái; đường của pdf-lib do `drawRectangle`/`drawEllipse`
+  tự chọn) — mẫu nét có thể lệch pha nhưng không lệch độ dài. Chưa đo pha; đừng hứa nó khớp.
+- **Nhánh nướng dự phòng của nét vẽ tay / hình tự do** (chỉ chạy trên trang `/Rotate` không phải bội
+  của 90°) vẽ từng đoạn bằng `drawLine`; mẫu nét **khởi động lại ở mỗi lệnh `drawLine`**, nên với
+  nét vẽ tay gồm vô số đoạn 1–2pt nó sẽ thành **liền**. Vì vậy `dashSegments` đi dọc cả đường **một
+  lần** rồi mới cắt: lưới đo 100 đoạn 1pt cho cùng 58pt mực như một đoạn 100pt, ở cả bốn góc xoay.
+- **Mặc định cho hình vẽ SAU chỉ sống trong phiên** (`ed.dash`, không ghi localStorage / Cài đặt): một
+  mặc định "đứt" bị quên lặng lẽ biến mọi hình sau thành đứt là bất ngờ tệ hơn việc chọn lại. Chọn
+  trước khi vẽ → áp cho hình sau; chọn vật rồi đổi → áp cho cả nhóm đang chọn, **một** bước hoàn tác
+  (gộp theo `"dash:" + ed.sel`). Ô chọn được đồng bộ lại ở `setTool` (về giá trị mặc định) và
+  `syncControls` (về giá trị của vật đang chọn) — cùng luật với ô Nét.
+- **Thanh chỉnh sửa rộng thêm** (BI-41): nhãn "Kiểu nét" + ô chọn rộng 127px, hiện cho box / elip /
+  vẽ tay / hình tự do / mũi tên. **Đã đo bằng probe Electron, có baseline HEAD** (cùng cách dựng, cùng
+  `innerWidth` in ra): cao `#edit-bar` **y hệt HEAD** ở mọi ca — công cụ Hộp 86px (1366, 1100, 1344),
+  mũi tên đang chọn 87/86/87px — và `#ed-apply`/`#ed-exit` nằm trọn trong cửa sổ cả ở 1100px
+  (x 951–1088). Không có hàng mới nào bị đẩy xuống. Bảng BI-41 ở trên **chưa** đo lại cho 126px thêm này
+  ở các công cụ rộng nhất (khoang mây không có ô này nên không đổi) — nếu sau này thêm ô nữa, đo lại.
+- **Thêm kiểu nét mới** (ví dụ chấm-gạch) = thêm **một** nhánh vào `dashSpec` + một `<option>` +
+  khoá i18n; **không** sửa ở bốn nơi vẽ. Nếu thấy mình sửa ở bốn nơi, đang làm sai.
+- Test tay (renderer không chạy được trong node): xem hàng "Kiểu nét" ở §5.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2534,6 +2592,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | `annot-text.js` / `annot-geom.js` | `npm run test:text` + `test:cloud` + `test:geom` · rồi **test tay**: gõ chữ Việt vào hộp → Xong → mở lại file, chữ **không** tràn khung · khoanh mây (hộp + freehand) → Lưu → mây đúng chỗ · mũi tên có nhãn ở cả hai đầu (BI-40) |
 | Bất kỳ lệnh vẽ nào trong `drawOneAnnot` / `drawWatermark` (thêm kind, đổi anchor, đổi primitive) | `cd desktop ; npm run test:rotate` **và thêm kind mới vào `KINDS` của lưới đó** · rồi test tay trên **trang đã xoay**: mở PDF scan nằm ngang (hoặc Xoay phải 90° một trang bất kỳ) → khoanh mây · khoanh vùng · mũi tên · dấu ✓ · hộp chữ → **Áp dụng** → mở lại file: mọi thứ **đúng chỗ, đúng chiều** như lúc vẽ · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-45, BI-40) |
 | Thứ tự chồng (`reorderZ`, `zPlan`/`reorderSelected`/`pickUnder`, mục menu "Đưa lên/xuống…", `Ctrl+]`/`Ctrl+[`, `Alt`+bấm) | `cd desktop ; npm run test:zorder ; npm run test:cloud ; npm run test:clip` · vẽ **hộp văn bản**, rồi vẽ **chữ nhật viền không nền** bao quanh nó → chữ **bị che, bấm không trúng** (đúng) → **Alt+bấm** chọn được hộp chữ → chuột phải → **Đưa lên trên cùng** → chữ hiện trên khung, bấm trúng được ngay · `Ctrl+]`/`Ctrl+[` đi từng lớp, `Ctrl+Shift+]`/`[` đi tới đầu/cuối · mục menu **xám** khi đã ở đầu/cuối · chọn **nhóm 3 mục** (Ctrl+bấm) → đưa lên → cả nhóm đi, **giữ nguyên thứ tự trong nhóm** · **một** Ctrl+Z trả lại đúng thứ tự cũ, Ctrl+Y làm lại · Áp dụng → Lưu → **mở lại** → thứ tự **không đổi** · Lưu 3 lần liên tiếp → thứ tự vẫn không đổi, file không phình · mở file bằng **Foxit + Acrobat + Chrome** → hộp chữ nằm **trên** khung · trang **xoay 90°** → vẫn đúng · gõ chữ trong hộp đang sửa + `Ctrl+]` → **không** đổi lớp (đang gõ) · đổi **VI↔EN** → 4 mục menu có tên tiếng Anh (BI-93) |
+| Kiểu nét (`DASH_KINDS`/`normDash`/`dashSpec`/`dashSegments` ở `annot-geom.js`, `applyDashSvg`/`appendDashedOutline`/`stampDash`/`#ed-dash` ở `editor.js`, nhánh dash của `shapeAppearance`/`serializeManaged`, `renderArrowPng`, `drawOneAnnot`, `deserializeManaged`) | `cd desktop ; npm run test:dash ; npm run test:managed ; npm run test:rotate ; npm run test:cloud` · **hồi quy trước (quan trọng nhất)**: một tài liệu **0° chỉ có hình liền** → Áp dụng → Lưu phải ra **byte y hệt** bản trước (BI-59) · vẽ **mỗi loại một hình** (chữ nhật, elip, nét vẽ tay, hình tự do, mũi tên) với **Nét đứt**, rồi cùng bộ đó với **Chấm**, độ dày **1, 4 và 12** → trên màn hình, đứt **đều** và **không nuốt** khoảng hở (đầu phẳng); Chấm là **chấm tròn** · mũi tên: chỉ **thân** đứt, **đầu mũi tên đặc** · Áp dụng → Lưu → **mở lại** → hình vẫn đứt và ô **Kiểu nét** hiện đúng giá trị khi chọn từng hình; đổi lại **Liền** → lưu → mở lại → liền · chọn **2–3 hình khác loại** (Ctrl+bấm) rồi đổi kiểu → cả nhóm đổi, **một** Ctrl+Z trả lại tất cả · công cụ **Khoanh mây / ✓ / ✗ / Đo / Ghi chú / Hộp chữ** → **không** có ô Kiểu nét · copy một hình đứt → dán sang **tab khác** và **file khác** → vẫn đứt · mở file đã lưu bằng **Foxit + Acrobat + Chrome + Edge** → nét đứt **đúng độ dài và đúng đầu nét** (chữ nhật/elip/vẽ tay/hình tự do là `/AP` vector, mũi tên là PNG: kiểm riêng **mũi tên Chấm**, probe chưa đo pixel của nó) · zoom 400% → viền **nét, không rỗ** · trang **xoay 90/180/270** → đứt đúng chỗ, không méo · trang **bị che thông tin (redact)** có hình đứt → hình vẫn **đứt** sau khi bake (đường raster dựng trang mới) · hình đứt **có nền mờ** → nền đúng, chỉ viền đứt · Lưu 3–4 lần liên tiếp → **cỡ file không phình**, mẫu nét **không đổi** · đổi **VI↔EN** → nhãn "Kiểu nét / Line style", "Liền / Solid", "Nét đứt / Dashed", "Chấm / Dotted" · cửa sổ **hẹp (~1100px)**: nút **Xong** vẫn thấy được ở công cụ Hộp (BI-41, BI-94) |
 | Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`) | `npm run test:geom` · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
 | Chọn nhiều mục / clipboard vật thể (`ed.selMore`, `selIds`, `toggleSelect`, `gripsFor`, `clip`, `copySelected`, `pasteClip`, menu bấm phải trong Chú thích) | `npm run test:cloud` · **giữ Ctrl bấm 3 mục** → cả 3 có viền chọn, **không** hiện tay nắm · kéo một mục trong nhóm → **cả nhóm** đi cùng, Esc giữa lúc kéo → **cả nhóm** về chỗ cũ · đổi Màu / Nét → **cả nhóm** đổi · Delete → mất cả nhóm, **một** Ctrl+Z lấy lại hết · Ctrl+C rồi sang trang khác Ctrl+V → dán đúng vị trí cũ, còn nguyên khoảng cách giữa các mục · dán **lại** trên cùng trang → lệch dần chứ không đè lên nhau · dán vào trang **nhỏ hơn** → cả nhóm bị kéo vào trong trang mà **không rời ra** · **copy → Áp dụng → Ctrl+V** vẫn dán được (BI-46) · bấm phải lên một mục → menu Sao chép/Dán/Xoá · bấm phải lên **giấy trắng** khi chưa copy gì → vẫn ra menu **ảnh** cũ · copy một ảnh từ app khác rồi Ctrl+V → vẫn là đường dán ảnh của `capture.js` (BI-30) |
 | Sửa mũi tên (`drag.type === "point"`, `snapLineEnd`, `.handle.h-pt`, `reverseSelectedArrow`) | `npm run test:cloud` · chọn mũi tên → thấy **2 nút tròn** ở hai đầu · kéo một đầu → mũi tên xoay/dài ra, đầu kia **đứng yên** · giữ Shift → khoá góc 15°, **độ dài không đổi** · Esc giữa lúc kéo → về đúng cũ, không để lại bước undo rỗng · "Đảo chiều" → mũi nhọn **và nhãn** sang đầu kia · **Áp dụng → mở lại → Chỉnh sửa** → vẫn kéo/đảo/sửa nhãn được (arrow round-trip qua `/NabuData`) |

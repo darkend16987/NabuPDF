@@ -330,6 +330,27 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   **Nét vẽ tay không có** — điểm của nó là vết chuột chứ không phải góc ai đặt ra, và chúng được thưa
 >   hoá khi lưu nên đỉnh vừa kéo chưa chắc sống sót qua một vòng lưu.
 
+> **Thứ tự chồng của chú thích (từ v0.2.75):** mục vẽ sau nằm đè lên mục vẽ trước. Muốn đổi, ở chế độ
+> Chú thích **bấm chuột phải** lên mục → **Đưa lên trên cùng / Đưa lên một lớp / Đưa xuống một lớp / Đưa xuống
+> dưới cùng** (lệnh nào không làm gì — mục đã ở trên cùng chẳng hạn — thì mờ đi), hoặc `Ctrl+]` / `Ctrl+[`
+> (thêm `Shift` để đi hẳn lên trên cùng / xuống dưới cùng).
+> - **Chọn nhiều mục** (giữ `Ctrl` bấm) thì cả nhóm đi cùng nhau và **giữ nguyên thứ tự trong nhóm**.
+>   Một `Ctrl+Z` là về như cũ.
+> - **Mục bị che hẳn** dưới một khung chữ nhật / elip (bấm vào chỉ trúng khung): **giữ `Alt` bấm** để chọn
+>   mục nằm bên dưới — mỗi lần bấm xuống thêm một lớp, hết thì quay lại trên cùng — rồi dùng `Ctrl+]`.
+>   Menu chuột phải luôn áp cho mục **nằm trên cùng** dưới con trỏ, nên với mục bị che hãy dùng `Alt`+bấm trước.
+> - Thứ tự **được giữ khi Lưu** và khi mở lại file. Riêng **tô sáng theo vùng**, **che thông tin** và
+>   **đo kích thước** được ghi thẳng vào nội dung trang nên sau khi Lưu luôn nằm dưới các chú thích khác.
+
+> **Kiểu nét: liền / nét đứt / chấm (từ v0.2.75):** ô **Kiểu nét** nằm cạnh ô **Nét** trên thanh Chú thích,
+> cho **khung chữ nhật, elip, nét vẽ tay, hình tự do và mũi tên**. Khoanh mây, dấu ✓ ✗ và đoạn đo không có.
+> - **Mũi tên** chỉ đứt phần **thân**; đầu mũi tên vẫn đặc.
+> - **Chọn hình rồi đổi** thì áp cho cả nhóm đang chọn (một `Ctrl+Z` trả lại tất cả). **Chưa chọn gì** mà đổi
+>   thì áp cho các hình vẽ **sau** — chỉ trong phiên đang mở, **không** ghi vào Cài đặt.
+> - Độ dài nét tỉ lệ theo ô **Nét**: nét càng dày, đoạn đứt càng dài. **Chấm** là chấm tròn.
+> - Kiểu nét **đi theo file**: Lưu → mở lại vẫn đổi được, lưu dạng vector nên phóng to và in vẫn sắc. Chọn
+>   lại **Liền** là về như chưa từng đứt. Hình nét liền cũ không đổi.
+
 > **Màu mặc định của chú thích là ĐỎ (từ v0.2.60; từ v0.2.73 là đỏ tươi RGB 233, 0, 0 = `#e90000`):**
 > hộp văn bản, mũi tên, khoanh mây, chữ nhật, tròn, hình tự do, vẽ tay, ghi chú và đoạn đo đều lấy màu
 > này cho vật thể **mới**. Đổi ở **Cài đặt → Màu chú thích mặc định** — app nhớ lựa chọn cho các lần sau

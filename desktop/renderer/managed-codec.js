@@ -118,6 +118,18 @@
     if (typeof symbolStrokes === "function") return symbolStrokes(kind, x, y, w, h);
     return require("./annot-geom.js").symbolStrokes(kind, x, y, w, h);
   }
+  // Nét đứt (annot-geom.js dashSpec). `_dashOf` is the ONE place that decides whether an
+  // annot carries a pattern at all: only the five DASH_KINDS do, and anything else reads
+  // as "solid" even if a stray `dash` key rode in on a pasted object — so a cloud or a tick
+  // can never grow a dash in /NabuData or in its /AP.
+  function _dashSpec(dash, width) {
+    if (typeof dashSpec === "function") return dashSpec(dash, width);
+    return require("./annot-geom.js").dashSpec(dash, width);
+  }
+  function _dashOf(a) {
+    const g = typeof dashSpec === "function" ? { DASH_KINDS, normDash } : require("./annot-geom.js");
+    return g.DASH_KINDS.has(a.kind) ? g.normDash(a.dash) : "solid";
+  }
 
   // ---- the private keys ----------------------------------------------------
 
@@ -307,6 +319,11 @@
       rotate: degrees(0), // see ROTATION note above — never the page angle
     };
     if (useGs) common.graphicsState = "NabuGS"; // emits `/NabuGS gs`
+    // Nét đứt. `d` is only ever emitted when asked for: a solid line passes NO
+    // borderDashArray, so its operators are byte-for-byte what they were (BI-59).
+    const ds = _dashOf(a) === "solid" ? null : _dashSpec(_dashOf(a), a.width);
+    if (ds) common.borderDashArray = ds.array;
+    const dashCap = ds ? (ds.cap === "round" ? LineCapStyle.Round : LineCapStyle.Butt) : null;
     const out = (ops, wPt, hPt, left, top) => ({
       ops: ops.map(String).join("\n"),
       wPt, hPt, pad: lw,
@@ -340,8 +357,9 @@
       if (!g) return null; // fewer than two distinct points — caller flattens (= nothing)
       const wPt = g.W + 2 * lw;
       const hPt = g.H + 2 * lw;
+      // A dashed stroke swaps the round cap for the style's own (butt for "dash"): see dashSpec.
       const ops = drawSvgPath(g.d, Object.assign({}, common, {
-        x: lw, y: hPt - lw, borderLineCap: LineCapStyle.Round,
+        x: lw, y: hPt - lw, borderLineCap: ds ? dashCap : LineCapStyle.Round, // NOT `dashCap ||`: Butt is 0, which is falsy
       }));
       ops.splice(1, 0, setLineJoin(LineJoinStyle.Round));
       return out(ops, wPt, hPt, g.minX - lw, g.minY - lw);
@@ -364,7 +382,7 @@
       const wPt = g.W + 2 * lw;
       const hPt = g.H + 2 * lw;
       const opts = Object.assign({}, common, {
-        x: lw, y: hPt - lw, borderLineCap: LineCapStyle.Round,
+        x: lw, y: hPt - lw, borderLineCap: ds ? dashCap : LineCapStyle.Round, // NOT `dashCap ||`: Butt is 0, which is falsy
       });
       if (!g.closed) opts.color = undefined; // an open path is never filled
       const ops = drawSvgPath(g.d, opts);
@@ -431,6 +449,9 @@
     // xSkew / ySkew are REQUIRED by drawRectangle in pdf-lib 1.17.1 — it reads `.type`
     // off each without a guard and throws on a missing one. drawEllipse does not take
     // them at all, and drawSvgPath ignores them. Measured, not assumed.
+    // Only a DOTTED box/oval needs a cap (round, so each dot is a circle); "dash" keeps the
+    // default butt cap and so emits nothing extra.
+    if (dashCap === LineCapStyle.Round) common.borderLineCap = dashCap;
     const boxCommon = Object.assign({}, common, { xSkew: degrees(0), ySkew: degrees(0) });
     const ops =
       a.kind === "ellipse"
@@ -469,10 +490,15 @@
       return o;
     }
     if (a.kind === "arrow") {
-      return { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
-               color: a.color, width: a.width || 2,
-               label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
-               labelSize: a.labelSize || 14 };
+      const o = { k: "arrow", x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2,
+                  color: a.color, width: a.width || 2,
+                  label: a.label || "", labelEnd: a.labelEnd === "tail" ? "tail" : "head",
+                  labelSize: a.labelSize || 14 };
+      // Only when not solid — an absent key reads back as solid, which is what every file
+      // written before line styles existed must keep meaning, and it keeps /NabuData
+      // byte-identical for a solid arrow (BI-59).
+      if (_dashOf(a) !== "solid") o.dash = _dashOf(a);
+      return o;
     }
     // Boxes and ovals: geometry + the four style knobs the edit bar exposes for them.
     // No appearance data at all travels here — shapeAppearance() rebuilds the vector
@@ -519,6 +545,7 @@
         o.fill = a.fill;
         o.fillOpacity = a.fillOpacity != null ? a.fillOpacity : 1;
       }
+      if (_dashOf(a) !== "solid") o.dash = _dashOf(a); // same only-when-set rule as the arrow
       return o;
     }
     // Tô sáng theo chữ: the line quads ARE the shape, and the marked words travel with

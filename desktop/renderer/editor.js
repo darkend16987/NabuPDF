@@ -335,6 +335,10 @@
     // Seeded from Cài đặt → Nét mặc định; the edit bar's Nét box changes it for this
     // session only (same split as `color` above).
     penWidth: savedPenWidth(),
+    // Kieu net for the NEXT box / oval / pen stroke / polygon / arrow: "solid" | "dash" |
+    // "dot". Session-only on purpose (no localStorage): a forgotten dashed default quietly
+    // making every later shape dashed is a worse surprise than re-picking it. BI-94.
+    dash: "solid",
     arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
@@ -754,6 +758,74 @@
     return s;
   }
 
+  // Nét đứt, overlay half. Every number comes from annot-geom.js dashSpec - the same call
+  // the /AP, the arrow PNG and the flattened bake make - so the screen cannot drift from
+  // the saved file (BI-40). A solid annot returns early and is left exactly as it was.
+  function applyDashSvg(node, a) {
+    const ds = dashSpec(a.dash, a.width);
+    if (!ds) return;
+    node.setAttribute("stroke-dasharray", ds.array.join(" "));
+    node.setAttribute("stroke-linecap", ds.cap); // the cap is part of the style, see dashSpec
+  }
+  // A dashed box / oval cannot use the CSS dashed border: the browser picks the dash
+  // lengths, and the saved /AP would then dash differently from what the user saw. So a
+  // dashed one swaps the border for an <svg> outline drawn with dashSpec's numbers.
+  // Returns false for a solid one, which keeps the border and every pixel it had before.
+  //
+  // THE BOX IS INSET AND UN-ANTI-ALIASED, and that is a measured fix, not taste. A solid
+  // box's border is a CSS border: Chromium floors its width to whole device pixels and
+  // sits it INSIDE the box, so a 1pt border is one crisp row at every zoom. A centred SVG
+  // stroke is neither: at 100% it straddles two pixel rows (2 x 50% grey, "looks like 2pt"),
+  // and at 125% / 150% it carries 25% / 50% MORE ink than the solid border it replaces.
+  // Probe on the real app (width 1; the model width never changed): solid 1 row cov 1.00;
+  // dashed-centred 2 rows cov 1.00 / 1.25 / 1.50 at 100 / 125 / 150%; inset + crispEdges 1 row
+  // cov 1.00 at all of them, identical to the solid rows. So: inset by half a pen (where the
+  // CSS border sits, so Liền -> Nét đứt no longer moves the line) and crispEdges.
+  // crispEdges ALONE is worse (it rounds the stroke UP to 2px at 125 / 150%), and an OVAL
+  // must not get it at all (it aliases the curve into 2px stair-steps) - the oval stays a
+  // centred, anti-aliased stroke, which already looks like its soft solid border.
+  // Overlay only: the saved /AP is centred and renders solid and dashed identically.
+  function appendDashedOutline(el, a) {
+    const ds = dashSpec(a.dash, a.width);
+    if (!ds) return false;
+    const w = Math.max(1, a.w);
+    const h = Math.max(1, a.h);
+    const lw = Math.max(1, a.width || 2);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "an-dash");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "100%");
+    const shape = document.createElementNS("http://www.w3.org/2000/svg", a.kind === "ellipse" ? "ellipse" : "rect");
+    if (a.kind === "ellipse") {
+      shape.setAttribute("cx", String(w / 2));
+      shape.setAttribute("cy", String(h / 2));
+      shape.setAttribute("rx", String(w / 2));
+      shape.setAttribute("ry", String(h / 2));
+    } else {
+      shape.setAttribute("x", String(lw / 2));
+      shape.setAttribute("y", String(lw / 2));
+      // 0.01 floor: a box smaller than its own pen would get a zero-size rect, which SVG
+      // does not render at all, while the CSS border it replaces still shows.
+      shape.setAttribute("width", String(Math.max(0.01, w - lw)));
+      shape.setAttribute("height", String(Math.max(0.01, h - lw)));
+      shape.setAttribute("shape-rendering", "crispEdges");
+    }
+    shape.setAttribute("fill", "none");
+    shape.setAttribute("stroke", a.color);
+    shape.setAttribute("stroke-width", String(lw));
+    applyDashSvg(shape, a);
+    svg.appendChild(shape);
+    el.appendChild(svg);
+    return true;
+  }
+  // Stamp the remembered style on a freshly drawn annot. Solid writes NOTHING, so a shape
+  // drawn with the default is the same object it always was.
+  function stampDash(a) {
+    if (DASH_KINDS.has(a.kind) && ed.dash !== "solid") a.dash = ed.dash;
+    return a;
+  }
+
   function renderAnnot(a, s) {
     const el = document.createElement("div");
     el.className = "an an-" + a.kind;
@@ -788,6 +860,7 @@
       path.setAttribute("stroke-width", String(a.width));
       path.setAttribute("stroke-linecap", "round");
       path.setAttribute("stroke-linejoin", "round");
+      applyDashSvg(path, a);
       svg.appendChild(path);
       el.appendChild(svg);
       addPtsGrips(el, a, s);
@@ -827,6 +900,7 @@
       path.setAttribute("stroke-width", String(Math.max(1, a.width || 2)));
       path.setAttribute("stroke-linecap", "round");
       path.setAttribute("stroke-linejoin", "round");
+      applyDashSvg(path, a);
       svg.appendChild(path);
       el.appendChild(svg);
       addPtsGrips(el, a, s);
@@ -892,6 +966,7 @@
       line.setAttribute("stroke", a.color);
       line.setAttribute("stroke-width", String(a.width || 2));
       line.setAttribute("stroke-linecap", "round");
+      applyDashSvg(line, a); // the shaft only - the head below is a filled polygon and stays solid
       const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
       const p1 = [ex - hl * Math.cos(ang - ha), ey - hl * Math.sin(ang - ha)];
       const p2 = [ex - hl * Math.cos(ang + ha), ey - hl * Math.sin(ang + ha)];
@@ -1179,10 +1254,10 @@
     } else if (a.kind === "highlight") {
       el.style.background = a.color;
     } else if (a.kind === "box") {
-      el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
+      if (!appendDashedOutline(el, a)) el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
       if (a.fill && a.fill !== "none") el.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
     } else if (a.kind === "ellipse") {
-      el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
+      if (!appendDashedOutline(el, a)) el.style.border = Math.max(1, (a.width || 2)) * s + "px solid " + a.color;
       el.style.borderRadius = "50%";
       if (a.fill && a.fill !== "none") el.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
     } else if (a.kind === "note") {
@@ -1816,6 +1891,7 @@
     }
     if (["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
+    if (DASH_KINDS.has(a.kind)) $("ed-dash").value = normDash(a.dash);
     if (a.kind === "cloud" || a.kind === "cloudpen") {
       const b = bumpOf(a);
       $("ed-cloudsize").value = String(b);
@@ -2047,6 +2123,7 @@
         a.fillOpacity = effFillOpacity(ed.tool);
       }
       if (ed.tool === "cloud") a.bump = ed.cloudBump;
+      stampDash(a); // box / ellipse only (DASH_KINDS); a cloud, highlight or redact is left alone
       pushEdUndo(); // dropped again if the shape ends up tiny/cancelled
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -2072,6 +2149,7 @@
 
     if (ed.tool === "arrow") {
       const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth, labelEnd: ed.arrowLabelEnd };
+      stampDash(a);
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -2110,6 +2188,7 @@
 
     if (ed.tool === "draw") {
       const a = { id: ed.seq++, kind: "draw", pts: [p], color: ed.color, width: ed.penWidth };
+      stampDash(a);
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -2156,6 +2235,7 @@
         fillOpacity: effFillOpacity(ed.tool),
       };
       if (ed.tool === "cloudpen") a.bump = ed.cloudBump;
+      stampDash(a); // poly only; a cloudpen is not in DASH_KINDS
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -3330,16 +3410,16 @@
   const TOOL_CTLS = {
     text: ["color", "font", "fontsize", "biu", "textrot", "fill"],
     highlight: ["color"],
-    draw: ["color", "penwidth"],
-    box: ["color", "penwidth", "fill"],
-    ellipse: ["color", "penwidth", "fill"],
+    draw: ["color", "penwidth", "dash"],
+    box: ["color", "penwidth", "dash", "fill"],
+    ellipse: ["color", "penwidth", "dash", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
-    poly: ["color", "penwidth", "fill"],
+    poly: ["color", "penwidth", "dash", "fill"],
     texthl: ["color"],
     // No "arrowrev" here: reversing needs an arrow to reverse, and under the arrow
     // TOOL nothing is selected yet. It is a KIND_CTLS-only control (see below).
-    arrow: ["color", "penwidth", "arrowlabel"],
+    arrow: ["color", "penwidth", "dash", "arrowlabel"],
     note: ["color"],
     image: [],
     redact: ["redact"],
@@ -3353,14 +3433,14 @@
   const KIND_CTLS = {
     text: ["color", "font", "fontsize", "biu", "textrot", "fill"],
     highlight: ["color"],
-    draw: ["color", "penwidth"],
-    box: ["color", "penwidth", "fill"],
-    ellipse: ["color", "penwidth", "fill"],
+    draw: ["color", "penwidth", "dash"],
+    box: ["color", "penwidth", "dash", "fill"],
+    ellipse: ["color", "penwidth", "dash", "fill"],
     cloud: ["color", "penwidth", "fill", "cloudsize"],
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
-    poly: ["color", "penwidth", "fill"],
+    poly: ["color", "penwidth", "dash", "fill"],
     texthl: ["color"],
-    arrow: ["color", "penwidth", "arrowlabel", "arrowrev"],
+    arrow: ["color", "penwidth", "dash", "arrowlabel", "arrowrev"],
     note: ["color"],
     image: ["imgpages"],
     redact: ["redact"],
@@ -3422,6 +3502,8 @@
     // switching tool has to bring back the width the NEXT stroke will get.
     const wpick = $("ed-penwidth");
     if (wpick) wpick.value = String(ed.penWidth);
+    const dpick = $("ed-dash"); // ...and the Kieu net box, for the same reason
+    if (dpick) dpick.value = ed.dash;
     // Same reason as the colour picker above: switching to the Hộp văn bản tool must
     // show the angle the NEXT box will get, not whatever the last SELECTED box had.
     const rpick = $("ed-textrot");
@@ -4095,6 +4177,21 @@
     if (targets.length) {
       pushEdUndo("pwidth:" + ed.sel);
       for (const a of targets) a.width = ed.penWidth;
+      syncOverlays();
+    }
+  };
+  // Kiểu nét. Sets the default for the NEXT shape and, like Nét, applies to the whole
+  // selection (only the kinds that can carry a pattern). Choosing "Liền" REMOVES the key
+  // rather than writing "solid", so the object returns to the exact shape it had before.
+  $("ed-dash").onchange = (e) => {
+    ed.dash = normDash(e.target.value);
+    const targets = selAnnots().filter((a) => DASH_KINDS.has(a.kind));
+    if (targets.length) {
+      pushEdUndo("dash:" + ed.sel);
+      for (const a of targets) {
+        if (ed.dash === "solid") delete a.dash;
+        else a.dash = ed.dash;
+      }
       syncOverlays();
     }
   };

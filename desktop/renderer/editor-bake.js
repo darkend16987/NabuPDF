@@ -31,6 +31,7 @@
  *   must load BEFORE this file (index.html order; test:scope pins it):
  *     annot-text.js     normTextStyle layoutTextBox measureCtx rotatedBox textFont
  *     annot-geom.js     arrowLabelPos isPtsKind TEXTHL_OPACITY cloudPath bumpOf cloudPathPoly symbolStrokes
+ *                       dashSpec dashSegments normDash DASH_KINDS   (nét đứt, BI-94)
  *     managed-codec.js  isVectorKind serializeManaged strToBytes pushPageAnnot apRotatable sniffImage
  *                       normAngle apMatrixFor apRectFor NABU_KIND NABU_DATA NABU_SRC shapeAppearance
  *                       managedSrcBytes managedSrcDataUrl makeMap isManagedKind pageRotate
@@ -197,10 +198,15 @@
     cx.lineWidth = w * RS;
     cx.lineCap = "round";
     cx.lineJoin = "round";
+    // Nét đứt: the shaft only, scaled with the supersample like every other length here.
+    // Cleared straight after the stroke so nothing later inherits the pattern.
+    const dsAr = dashSpec(a.dash, a.width);
+    if (dsAr) { cx.setLineDash(dsAr.array.map((v) => v * RS)); cx.lineCap = dsAr.cap; }
     cx.beginPath();
     cx.moveTo(X(a.x1), Y(a.y1));
     cx.lineTo(X(a.x2), Y(a.y2));
     cx.stroke();
+    if (dsAr) cx.setLineDash([]);
     // Filled arrowhead.
     cx.fillStyle = a.color;
     cx.beginPath();
@@ -314,12 +320,16 @@
       return a;
     }
     if (data.k === "arrow") {
-      return { id: ed.seq++, kind: "arrow",
+      const arrow = { id: ed.seq++, kind: "arrow",
                x1: +data.x1 || 0, y1: +data.y1 || 0, x2: +data.x2 || 0, y2: +data.y2 || 0,
                color: data.color || "#ffd54a", width: +data.width || 2,
                label: data.label ? String(data.label) : undefined,
                labelEnd: data.labelEnd === "tail" ? "tail" : "head",
                labelSize: +data.labelSize || 14, _managed: true };
+      // Left OFF the object when absent/unknown (= solid), like `fill` below: an absent key
+      // is the shape a file written before line styles existed reads as.
+      if (normDash(data.dash) !== "solid") arrow.dash = normDash(data.dash);
+      return arrow;
     }
     if (isVectorKind(data.k)) {
       // No `fill` key at all ⇒ stroke-only, which is also how a file written before
@@ -369,6 +379,8 @@
         a.fill = data.fill;
         a.fillOpacity = data.fillOpacity != null ? +data.fillOpacity : 1;
       }
+      // Only the kinds that can carry a pattern; a cloud with a stray `dash` key stays solid.
+      if (DASH_KINDS.has(data.k) && normDash(data.dash) !== "solid") a.dash = normDash(data.dash);
       return a;
     }
     if (data.k === "texthl") {
@@ -754,6 +766,10 @@
   }
 
   async function drawOneAnnot(doc, page, a, map) {
+    // Nét đứt (annot-geom.js dashSpec): the cap is part of the style — butt for "dash", round
+    // for "dot". Only the five DASH_KINDS ever get a non-null spec; solid lines never reach
+    // for it, so their operators are the ones they always were.
+    const capOf = (ds) => (ds.cap === "round" ? PDFLib.LineCapStyle.Round : PDFLib.LineCapStyle.Butt);
     if (a.kind === "highlight" || a.kind === "texthl") {
         // MULTIPLY, not a plain 35% wash — and this is a FIX, not a style change.
         // On screen a highlight has always been `mix-blend-mode: multiply` (app.css), so
@@ -802,14 +818,18 @@
         // the wash and keeps the outline, which is the shape the reviewer drew.
         const pts = a.pts || [];
         const chain = a.closed && pts.length > 2 ? pts.concat([pts[0]]) : pts;
-        for (let k = 1; k < chain.length; k++) {
-          const [px, py] = map(chain[k - 1].x, chain[k - 1].y);
-          const [qx, qy] = map(chain[k].x, chain[k].y);
+        // A dash pattern restarts at every drawLine, so on a polyline of short segments it
+        // would read as solid: walk the whole path once instead (dashSegments).
+        const dsP = dashSpec(a.dash, a.width);
+        const segsP = dsP ? dashSegments(chain, dsP.array) : chain.slice(1).map((q, k) => [chain[k], q]);
+        for (const [s0, s1] of segsP) {
+          const [px, py] = map(s0.x, s0.y);
+          const [qx, qy] = map(s1.x, s1.y);
           page.drawLine({
             start: { x: px, y: py }, end: { x: qx, y: qy },
             thickness: Math.max(0.1, a.width || 2),
             color: hexRgb(a.color),
-            lineCap: PDFLib.LineCapStyle.Round,
+            lineCap: dsP ? capOf(dsP) : PDFLib.LineCapStyle.Round,
           });
         }
       } else if (a.kind === "draw") {
@@ -821,12 +841,15 @@
         // overlay <svg> shows (stroke-linecap: round) and what makes this identical to
         // the round-capped, round-joined polyline in the managed /AP.
         const c = hexRgb(a.color);
-        for (let k = 1; k < a.pts.length; k++) {
-          const [sx, sy] = map(a.pts[k - 1].x, a.pts[k - 1].y);
-          const [ex, ey] = map(a.pts[k].x, a.pts[k].y);
+        // Dashed: walk the path once (see the poly branch) instead of one pattern per segment.
+        const dsD = dashSpec(a.dash, a.width);
+        const segsD = dsD ? dashSegments(a.pts, dsD.array) : a.pts.slice(1).map((q, k) => [a.pts[k], q]);
+        for (const [s0, s1] of segsD) {
+          const [sx, sy] = map(s0.x, s0.y);
+          const [ex, ey] = map(s1.x, s1.y);
           page.drawLine({
             start: { x: sx, y: sy }, end: { x: ex, y: ey },
-            thickness: a.width, color: c, lineCap: PDFLib.LineCapStyle.Round,
+            thickness: a.width, color: c, lineCap: dsD ? capOf(dsD) : PDFLib.LineCapStyle.Round,
           });
         }
       } else if (a.kind === "text") {
@@ -854,6 +877,8 @@
           opts.color = hexRgb(a.fill);
           opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
         }
+        const dsB = dashSpec(a.dash, a.width);
+        if (dsB) { opts.borderDashArray = dsB.array; if (dsB.cap === "round") opts.borderLineCap = capOf(dsB); }
         page.drawRectangle(opts);
       } else if (a.kind === "ellipse") {
         const [x1, y1] = map(a.x, a.y);
@@ -870,6 +895,8 @@
           opts.color = hexRgb(a.fill);
           opts.opacity = a.fillOpacity != null ? a.fillOpacity : 1;
         }
+        const dsE = dashSpec(a.dash, a.width);
+        if (dsE) { opts.borderDashArray = dsE.array; if (dsE.cap === "round") opts.borderLineCap = capOf(dsE); }
         page.drawEllipse(opts);
       } else if (a.kind === "cloud") {
         // Scallop outline mapped like the freehand path: (0,0) of the SVG sits at
@@ -915,7 +942,12 @@
         const w = a.width || 2;
         const [sx, sy] = map(a.x1, a.y1);
         const [ex, ey] = map(a.x2, a.y2);
-        page.drawLine({ start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: w, color: c });
+        // Shaft only: the head strokes below stay solid whatever the style (a dashed arrowhead
+        // is not an arrowhead), same as the SVG and the canvas PNG.
+        const dsA = dashSpec(a.dash, a.width);
+        page.drawLine(dsA
+          ? { start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: w, color: c, dashArray: dsA.array, lineCap: capOf(dsA) }
+          : { start: { x: sx, y: sy }, end: { x: ex, y: ey }, thickness: w, color: c });
         // arrowhead: two short strokes back from the tip
         const ang = Math.atan2(ey - sy, ex - sx);
         const hl = Math.max(8, w * 4);

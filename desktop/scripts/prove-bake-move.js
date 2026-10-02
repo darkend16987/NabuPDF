@@ -44,7 +44,7 @@ const PDFLIB_NAMES = ["PDFLib", "PDFDocument", "rgb", "PDFName", "PDFHexString",
 const PDFLIB_USED = ["PDFLib", "PDFDocument", "rgb", "PDFName", "PDFHexString", "PDFRawStream", "PDFDict"]; // what the block actually references
 const EXPECTED_GLOBALS = {
   "annot-text.js": ["normTextStyle", "layoutTextBox", "measureCtx", "rotatedBox", "textFont"],
-  "annot-geom.js": ["arrowLabelPos", "isPtsKind", "TEXTHL_OPACITY", "cloudPath", "bumpOf", "cloudPathPoly", "symbolStrokes"],
+  "annot-geom.js": ["arrowLabelPos", "isPtsKind", "TEXTHL_OPACITY", "cloudPath", "bumpOf", "cloudPathPoly", "symbolStrokes", "dashSpec", "dashSegments", "normDash", "DASH_KINDS"],
   "managed-codec.js": [
     "isVectorKind", "serializeManaged", "strToBytes", "pushPageAnnot", "apRotatable", "sniffImage", "normAngle",
     "apMatrixFor", "apRectFor", "NABU_KIND", "NABU_DATA", "NABU_SRC", "shapeAppearance", "managedSrcBytes",

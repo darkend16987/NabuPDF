@@ -243,6 +243,12 @@
     "Xoay thêm 90° ngược chiều kim đồng hồ": "Turn a further 90° anti-clockwise",
     "Độ dày nét vẽ / nét viền": "Stroke / outline width",
     "Nét": "Line",
+    "Kiểu nét": "Line style",
+    "Liền": "Solid",
+    "Nét đứt": "Dashed",
+    "Chấm": "Dotted",
+    "Kiểu nét: liền, nét đứt hoặc chấm — áp cho hình đang chọn và các hình vẽ sau":
+      "Line style: solid, dashed or dotted — applies to the selected shape and to shapes you draw next",
     "Màu nền: bên trong hình khoanh vùng, hoặc phía sau chữ của hộp văn bản":
       "Fill colour: inside a drawn region, or behind a text box's words",
     "Nền": "Fill",

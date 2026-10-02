@@ -723,6 +723,63 @@ function quadsFromRects(rects, gap) {
   }));
 }
 
+// ---- nét đứt (line style) ----------------------------------------------------
+//
+// ONE source of numbers for FOUR writers that have to paint the same line (BI-40): the
+// overlay <svg> (renderAnnot), the round-trip /AP (managed-codec shapeAppearance), the
+// arrow's canvas PNG (renderArrowPng) and the flattening fallback (drawOneAnnot). Each of
+// them used to need nothing here — a solid line has no pattern to disagree about — so the
+// moment a second one reads its own idea of "dashed", a saved file stops matching the screen.
+//
+// SOLID IS ABSENCE. `normDash` maps anything unknown (a missing key, a hand-edited file) to
+// "solid" and `dashSpec` returns null for it, so a solid line goes through the exact code
+// it went through before this existed and 0° documents stay byte-identical (BI-59).
+//
+// Lengths scale with the pen width, so a hairline and an 8pt stroke both read as dashed.
+// The CAP is part of the style, not a free choice: a round cap lengthens every dash by one
+// pen width at each end and would close a short gap, so "dash" uses butt caps; "dot" is a
+// near-zero-length dash drawn with a ROUND cap, which paints a true circle. 0.01 rather
+// than 0: a zero-length dash is legal PDF, but not every reader honours it.
+const DASH_KINDS = new Set(["box", "ellipse", "draw", "poly", "arrow"]);
+function normDash(d) { return d === "dash" || d === "dot" ? d : "solid"; }
+function dashSpec(dash, width) {
+  const d = normDash(dash);
+  if (d === "solid") return null;
+  const w = Math.max(1, +width || 2);
+  const r = (n) => +n.toFixed(2);
+  return d === "dot"
+    ? { array: [0.01, r(w * 2)], cap: "round" }
+    : { array: [r(w * 4), r(w * 3)], cap: "butt" };
+}
+
+// Walk a polyline and return its ON stretches as [from, to] point pairs. Needed ONLY by the
+// flattening fallback for freehand strokes and polygons: that path draws one drawLine per
+// segment (to stay correct on a /Rotate page), and a dash pattern restarts at every
+// drawLine — on a freehand stroke made of 2pt segments that turns "dashed" into "solid".
+// Walking the whole path once and emitting the pieces keeps the rhythm. Pure, in the
+// caller's own coordinate space; the caller maps each endpoint (an isometry at scale 1).
+function dashSegments(pts, array) {
+  const out = [];
+  if (!pts || pts.length < 2 || !array || array.length < 2) return out;
+  if (!array.every((v) => v > 0.001)) return out; // a 0 would never advance
+  let idx = 0, left = array[0], on = true;
+  for (let k = 1; k < pts.length; k++) {
+    let x = pts[k - 1].x, y = pts[k - 1].y;
+    const dx = pts[k].x - x, dy = pts[k].y - y;
+    let seg = Math.hypot(dx, dy);
+    if (!(seg > 0)) continue;
+    const ux = dx / seg, uy = dy / seg;
+    while (seg > 1e-9) {
+      const step = Math.min(left, seg);
+      const nx = x + ux * step, ny = y + uy * step;
+      if (on) out.push([{ x, y }, { x: nx, y: ny }]);
+      x = nx; y = ny; seg -= step; left -= step;
+      if (left <= 1e-9) { idx = (idx + 1) % array.length; on = !on; left = array[idx]; }
+    }
+  }
+  return out;
+}
+
 // ---- z-order (thứ tự chồng) ------------------------------------------------
 //
 // An annotation's stacking order IS its position in `ed.annots[page]`: renderLayer
@@ -769,7 +826,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
-    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ, DASH_KINDS, normDash, dashSpec, dashSegments,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
@@ -780,7 +837,7 @@ if (typeof window !== "undefined") {
   window.AnnotGeom = {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
-    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ,
+    PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ, DASH_KINDS, normDash, dashSpec, dashSegments,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,

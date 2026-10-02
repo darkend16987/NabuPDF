@@ -728,6 +728,11 @@ body.editing .annot-layer .an { cursor: move; }
 .an-redact { background: #000; }
 .an-image img { width: 100%; height: 100%; display: block; }
 .an-draw svg { display: block; overflow: visible; }
+/* Dashed box / oval outline (renderAnnot → appendDashedOutline). overflow:visible because the
+   stroke is CENTRED on the rectangle, so half of it sits outside the element box — the same
+   place the saved /AP puts it. pointer-events:none so the outline never steals the click
+   from the box itself (the box <div> is what select / drag / grips attach to). */
+.an-dash { display: block; overflow: visible; pointer-events: none; }
 .an-arrow svg { display: block; overflow: visible; }
 .an-cloud svg { display: block; overflow: visible; }
 .an-cloudpen svg { display: block; overflow: visible; }

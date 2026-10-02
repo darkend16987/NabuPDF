@@ -95,7 +95,8 @@ const { normTextStyle } = require("../renderer/annot-text.js");
 // The LIFTED deserializeManaged branches on the shape families, and addManagedAnnot's
 // tô-sáng-theo-chữ branch reads the wash strength — both by bare name, so both have to
 // exist in this module's scope the way they do in the browser's shared script scope.
-const { isPtsKind, isQuadKind, TEXTHL_OPACITY, polyPath } = require("../renderer/annot-geom.js");
+// DASH_KINDS / normDash: the lifted deserializeManaged reads them by bare name (nét đứt, BI-94).
+const { isPtsKind, isQuadKind, TEXTHL_OPACITY, polyPath, DASH_KINDS, normDash } = require("../renderer/annot-geom.js");
 
 // eslint-disable-next-line no-eval
 const lift = (name) => eval("(" + fnSource(name) + ")");

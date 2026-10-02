@@ -4,7 +4,34 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-01 · v0.2.74 đã phát hành (dưới đây) · v0.2.73 là bản trước đó_
+_Cập nhật: 2026-10-02 · v0.2.75 đã phát hành (dưới đây) · v0.2.74 là bản trước đó_
+
+> **v0.2.75 — thứ tự chồng của chú thích + kiểu nét liền / nét đứt / chấm** (phát hành 2026-10-02).
+> Hai việc, hai commit, **không đổi `*.py`** (sidecar KHÔNG build lại; marker vẫn `6d615b1c`).
+>
+> 1. **Thứ tự chồng (BI-93, commit `2dc0a2e`).** Chồng lớp **là** vị trí trong `ed.annots[trang]` — không có
+>    trường `z`. `annot-geom.reorderZ` (thuần) · `editor.js` `zPlan`/`reorderSelected`/`pickUnder` · 4 mục menu
+>    chuột phải · `Ctrl+]`/`Ctrl+[` (+Shift, đọc `e.code`) · **Alt+bấm** chọn vật bị che (hộp/elip không nền
+>    là `<div>` kín nên nuốt click). **Repo chưa từng có lệnh đổi thứ tự**: báo cáo "trước có" khớp với việc
+>    `MANAGED_KINDS` mở rộng ở v0.2.61/0.2.63 (trước đó chữ nhật bị nướng DƯỚI mọi hộp văn bản). Không thêm nút
+>    vào thanh chỉnh sửa (BI-41). Giới hạn: `highlight`/`redact`/`dim` luôn nằm dưới sau khi Lưu. `test:zorder` 56 ca.
+> 2. **Kiểu nét (BI-94).** `DASH_KINDS` = box, ellipse, draw, poly, arrow (mũi tên chỉ đứt thân). **Một**
+>    `dashSpec(dash,width)` cho **bốn** nơi vẽ: `<svg>` overlay, `/AP` vector, PNG canvas của mũi tên, nhánh
+>    nướng dự phòng (+ `dashSegments` đi dọc cả đường một lần, vì mẫu nét khởi động lại ở mỗi `drawLine`). **Liền =
+>    vắng mặt**: không ghi khoá `dash`, nét liền ra **byte y hệt** (A/B với HEAD: 11 vật × 4 góc × 2 đường ghi,
+>    cùng SHA-256). Mặc định chỉ sống trong phiên. `test:dash` 179 ca.
+>    ⚠️ **Bẫy đã dính:** `LineCapStyle.Butt === 0` là falsy → `dashCap || Round` luôn ra Round (viết `ds ? dashCap : Round`).
+>    ⚠️ **Người dùng báo "đổi Liền → Nét đứt thấy nét dày lên 2"**: đo thật — `width` trong model **không đổi** (1 ở
+>    `/NabuData`, `1 w` ở `/AP`); chỉ là viền CSS (làm tròn xuống điểm ảnh nguyên, nằm TRONG khung) khác nét SVG
+>    (nằm giữa, khử răng cưa → 2 hàng xám 50% ở 100%, +25%/+50% mực ở 125%/150%). Sửa: hộp nét đứt **thụt nửa bề dày
+>    + `crispEdges`** (1 hàng, cùng mực như viền liền ở 100/125/150/200%); elip giữ nét giữa (crispEdges làm răng cưa).
+>    Chỉ overlay — trang đã lưu hiển thị liền và đứt giống hệt nhau.
+> 3. **Còn mở (không giấu):** elip nét đứt vẫn nhiều mực hơn nét liền ~10–25% ở zoom ≥125% (cố ý, xem trên) · hộp
+>    nhỏ hơn bề dày nét (ví dụ 6×6pt, nét 12) hiện mảnh chữ L 12×12 thay vì 24×24 của nét liền · pha nét đứt giữa
+>    màn hình và file chưa đo (độ dài khớp, điểm bắt đầu chưa chắc) · mũi tên **Chấm** sau khi lưu mới xem bằng mắt,
+>    chưa đo pixel · Foxit/Acrobat **chưa mở** — nằm trong ma trận test tay §5 của REGRESSION-GUARD.
+> 4. **Landing/hướng dẫn:** `site/index.html` (khối "Mới"), `lich-su-phien-ban.html` (mục Tháng 10/2026), `app.js`
+>    (lưới tính năng), `README.md`, `HUONG-DAN-SU-DUNG.md`, `help.js` (song ngữ). Thanh chỉnh sửa: cao y hệt HEAD (86–87px).
 
 > **v0.2.74 — bản "hiệu năng & độ bền" (không tính năng mới cho người dùng)** (phát hành 2026-10-01). Toàn bộ
 > từ review `docs/REVIEW-2026-10-01-perf-harness.md` (§7 có số đo, lý do và giới hạn từng mục). **Không đổi

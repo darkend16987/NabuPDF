@@ -168,53 +168,51 @@
       <div class="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-orange-50/60 p-7 shadow-card md:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Mới</span>
-          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.73</span> · 30/09/2026</span>
+          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.75</span> · 02/10/2026</span>
           <a href="/lich-su-phien-ban.html" class="ml-auto text-sm font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">Xem toàn bộ lịch sử →</a>
         </div>
 
-        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Kéo chữ gốc sang chỗ khác, dấu ✓ ✗ copy được cả sau khi lưu — và nét chú thích mảnh, đỏ rõ hơn</h2>
+        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Đổi thứ tự chồng của chú thích, và vẽ nét đứt / nét chấm</h2>
 
         <div class="mt-6 grid gap-6 md:grid-cols-2">
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg>
-              Di chuyển chữ trong Sửa nội dung
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+              Đổi thứ tự chồng của chú thích
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Dòng chữ nằm lệch, đè lên khung bảng, hay cần nhường chỗ cho con dấu? Trong <b>Sửa nội dung</b>,
-              nay chỉ cần <b>giữ chuột kéo</b> ô chữ sang chỗ mới — chữ đã sửa hay chưa sửa đều kéo được. Bấm
-              (không kéo) vẫn mở ô để sửa như trước.
+              Vẽ khung chữ nhật đè lên một hộp văn bản vẽ trước đó? Nay <b>chuột phải</b> lên mục → <b>Đưa lên trên cùng /
+              Đưa lên một lớp / Đưa xuống một lớp / Đưa xuống dưới cùng</b>, hoặc bấm <code>Ctrl+]</code> /
+              <code>Ctrl+[</code> (thêm <code>Shift</code> để đi hẳn lên trên cùng hay xuống dưới cùng). Chọn nhiều mục
+              thì cả nhóm đi cùng nhau, giữ nguyên thứ tự trong nhóm; một <code>Ctrl+Z</code> là về như cũ.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Trước khi ghi, chỗ cũ hiện <b>khung sọc đỏ</b> (chữ ở đó sẽ bị xoá), chỗ mới hiện <b>bản xem
-              trước</b> của chữ; kéo về sát chỗ cũ là ô tự bắt về. Bấm <b>Áp dụng</b> thì chữ cũ bị <b>xoá thật</b>
-              và vẽ lại ở chỗ mới — kể cả trên bản vẽ CAD xoay ngang. Một <code>Ctrl+Z</code> là về như cũ.
+              Mục bị che hẳn dưới một khung thì <b>giữ <code>Alt</code> bấm</b> để chọn mục nằm bên dưới — mỗi lần bấm
+              xuống thêm một lớp. Thứ tự <b>được giữ khi Lưu</b> và mở lại. Riêng <b>tô sáng</b>, <b>che thông tin</b> và
+              <b>đo kích thước</b> luôn nằm dưới các mục còn lại sau khi lưu.
             </p>
           </div>
 
           <div>
             <h3 class="flex items-center gap-2 font-bold text-ink">
-              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21l7-7"/><path d="M14 4l6 6-9 9H5v-6z"/></svg>
-              Màu và nét mặc định mới cho chú thích
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3"/><path d="M10.5 12h3"/><path d="M17 12h3"/></svg>
+              Kiểu nét: liền, nét đứt hoặc chấm
             </h3>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Chú thích mới nay vẽ bằng <b>đỏ tươi RGB 233, 0, 0</b> — cả dấu ✗ — và <b>nét 1 pt</b> thay vì 2 pt,
-              nên khoanh mây, khung, mũi tên hay nét đo trên bản vẽ không còn che mất các đường mảnh bên dưới.
+              Ô <b>Kiểu nét</b> mới nằm cạnh ô <b>Nét</b> trên thanh Chú thích, dùng cho <b>khung chữ nhật, elip, nét vẽ
+              tay, hình tự do và mũi tên</b>. Với mũi tên chỉ phần <b>thân</b> đứt, đầu mũi tên giữ nguyên. Đường quy
+              hoạch, ranh giới tạm, vùng chưa duyệt… nay vẽ thẳng bằng nét đứt.
             </p>
             <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              Thích nét dày hơn? <b>Cài đặt</b> có thêm dòng <b>Nét mặc định</b>, nằm ngay dưới <b>Màu chú thích mặc
-              định</b>, và app <b>nhớ</b> lựa chọn đó qua các lần mở. Chú thích đã vẽ và file đã lưu <b>không</b> bị đổi
-              màu hay đổi nét.
-            </p>
-            <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-              <b>Dấu ✓ và ✗ nay sống qua lần lưu:</b> bấm Xong hay mở lại file, dấu tích vẫn chọn, kéo, đổi màu
-              và <b>copy–dán</b> được — kể cả sang file khác. Trước đây phải copy trước khi bấm Xong.
+              Chọn một hình rồi đổi kiểu là áp cho cả nhóm đang chọn; chưa chọn gì thì áp cho các hình vẽ <b>sau</b>.
+              Kiểu nét <b>đi theo file</b>: lưu xong mở lại vẫn đổi được, và nét <b>vẫn sắc khi phóng to hay in</b>.
+              Hình nét liền cũ <b>không đổi một chút nào</b>.
             </p>
           </div>
         </div>
 
         <p class="mt-6 text-sm text-ink-muted">
-          <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã cập nhật cho cả ba, tiếng Việt và tiếng Anh.
+          <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã cập nhật cho cả hai, tiếng Việt và tiếng Anh.
           App tự cập nhật — thường bạn không cần tải lại bằng tay.
         </p>
       </div>

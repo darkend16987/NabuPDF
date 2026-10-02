@@ -435,16 +435,18 @@ check("node import exposes exactly the surface editor.js calls by bare name",
   // their predicates, polyPath + countDistinct, quadsFromRects + its two tolerances and
   // the wash strength, and scalePts. Their own grid is test:shape.
   // reorderZ (Thứ tự chồng, BI-93) — editor.js calls it by bare name; its grid is test:zorder.
-  ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN",
+  // DASH_KINDS / normDash / dashSpec / dashSegments (Kiểu nét, BI-94) — the four writers read
+  // them by bare name (editor.js, editor-bake.js, managed-codec.js); grid: test:dash.
+  ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "DASH_KINDS",
    "PTS_KINDS", "QUAD_GAP", "QUAD_KINDS", "QUAD_MIN",
    "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE", "TEXTHL_OPACITY",
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "countDistinct", "fitShift", "isPtsKind", "isQuadKind", "polyPath", "quadsFromRects",
-   "reorderZ", "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
+   "countDistinct", "dashSegments", "dashSpec", "fitShift", "isPtsKind", "isQuadKind", "normDash",
+   "polyPath", "quadsFromRects", "reorderZ", "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
 // The two KIND sets are the exception to "SHOUTY name ⇒ number": they are Sets, and
 // spelling that out here is cheaper than a second rule nobody would remember.
-const SET_EXPORTS = new Set(["PTS_KINDS", "QUAD_KINDS"]);
+const SET_EXPORTS = new Set(["PTS_KINDS", "QUAD_KINDS", "DASH_KINDS"]);
 check("the constants are numbers (or the two kind Sets), the rest functions",
   Object.keys(G).map((k) => (SET_EXPORTS.has(k)
     ? G[k] instanceof Set

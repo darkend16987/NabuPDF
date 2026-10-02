@@ -111,6 +111,8 @@ const {
   // the highlight branch (which now bakes with /BM /Multiply) and isPtsKind/polyPath for
   // hình tự do's flatten fallback on a non-quarter-turn page.
   TEXTHL_OPACITY, isPtsKind, isQuadKind, polyPath, quadsFromRects, scalePts,
+  // Nét đứt (BI-94): the lifted drawOneAnnot asks dashSpec for every box/ellipse/draw/poly/arrow.
+  dashSpec, dashSegments,
 } = require("../renderer/annot-geom.js");
 const {
   makeMap, pageRotate, sniffImage, strToBytes, serializeManaged, pushPageAnnot,
