@@ -2626,6 +2626,178 @@ async function extractSelected() {
   }
 }
 
+// ---- ghép nhiều trang vào một tờ (N-up, v0.2.76) ---------------------------
+//
+// "2 trang ngang vào 1 trang dọc". The layout maths and the pdf-lib surgery are
+// PageNup (page-nup.js: DOM-free, node-tested by `npm run test:nup`; the output was also
+// rendered through MuPDF to confirm /Rotate and CropBox). Only the dialog and the write
+// protocol live here.
+//
+// The chosen pages are REPLACED by the sheets inside the open document, as ONE undo step
+// (commitBytes): Ctrl+Z gives the document back exactly as it was, and the file on disk
+// is untouched until the user saves.
+//
+// What does not survive, and the dialog says so before it happens: annotations on the
+// chosen pages (links, form fields, comments, Nabu's editable ones) — embedPage carries
+// only the page's drawing. REFUSED while pages are hidden (BI-74): the document is rebuilt
+// from scratch, which would drop what the vault keeps on the catalog.
+const NUP_MM = 72 / 25.4;
+
+// Resolve null (cancelled) or { ids, opts } — 0-based page indices and PageNup options.
+function askNup() {
+  return new Promise((resolve) => {
+    const tr = (vi, p) => (window.t ? window.t(vi, p) : vi);
+    const PN = window.PageNup;
+    const PR = window.PageRange;
+    const modal = $("nup-modal");
+    const all = $("nup-all");
+    const pick = $("nup-pick");
+    const inp = $("nup-spec");
+    const hint = $("nup-hint");
+    const ok = $("nup-ok");
+    const per = $("nup-per");
+    const sheet = $("nup-sheet");
+    const orient = $("nup-orient");
+    const margin = $("nup-margin");
+    const gap = $("nup-gap");
+    const border = $("nup-border");
+    $("nup-all-label").textContent = tr("Tất cả {m} trang", { m: state.numPages });
+    // Ticked pages become the default scope; otherwise the whole document. The list is
+    // spelled out in FULL (max = Infinity): formatList's default ends in "…", which
+    // parseSpec would silently drop together with the last page.
+    const pre = [...state.selected].sort((a, b) => a - b);
+    if (pre.length >= 2) {
+      pick.checked = true;
+      inp.value = PR.formatList(pre, Infinity);
+    } else {
+      all.checked = true;
+      inp.value = "";
+    }
+    const chosen = () =>
+      pick.checked
+        ? [...PR.parseSpec(inp.value, state.numPages)].sort((a, b) => a - b)
+        : [...Array(state.numPages).keys()];
+    const sync = () => {
+      const ids = chosen();
+      if (!ids.length) {
+        hint.textContent =
+          pick.checked && !inp.value.trim()
+            ? tr("Nhập các trang cần ghép, vd 1-4, 7.")
+            : tr("Chưa nhận ra trang nào — vd 1-4, 7.");
+        ok.disabled = true;
+        return;
+      }
+      const p = PN.plan(state.numPages, ids, Number(per.value));
+      hint.textContent = tr("Sẽ ghép {k} trang thành {s} tờ — tài liệu còn {n} trang.", {
+        k: ids.length,
+        s: p.sheets,
+        n: p.items.length,
+      });
+      ok.disabled = false;
+    };
+    // Typing in the range box IS choosing "Chỉ các trang được chọn" (same rule as the
+    // replace dialog; the box is never `disabled` so it can take focus).
+    const choosePick = () => {
+      if (!pick.checked) pick.checked = true;
+      sync();
+    };
+    all.onchange = pick.onchange = per.onchange = sync;
+    inp.onfocus = inp.oninput = choosePick;
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter" && !ok.disabled) {
+        e.preventDefault();
+        ok.click();
+      }
+    };
+    const done = (val) => {
+      modal.hidden = true;
+      all.onchange = pick.onchange = per.onchange = inp.oninput = inp.onfocus = inp.onkeydown = null;
+      ok.onclick = null;
+      $("nup-cancel").onclick = null;
+      resolve(val);
+    };
+    $("nup-cancel").onclick = () => done(null);
+    ok.onclick = () =>
+      done({
+        ids: chosen(),
+        opts: PN.normOpts({
+          per: Number(per.value),
+          sheet: sheet.value,
+          orient: orient.value,
+          margin: Number(margin.value) * NUP_MM,
+          gap: Number(gap.value) * NUP_MM,
+          border: border.checked,
+        }),
+      });
+    modal.hidden = false;
+    sync();
+    ok.focus();
+  });
+}
+
+// Entry point: the Trang ▾ menu. FREE on purpose (the project is AGPL-3.0 and the owner
+// decided so): no license gate here and `btn-nup` is NOT in GATED_BTNS. Rotate/delete are
+// free for the same reason. If it is ever gated, it needs both — BI-9 / BI-26.
+async function openNup() {
+  if (!state.bytes || !state.numPages) return;
+  // Page indices must not move under a live overlay — same freeze as every page command.
+  if ((window.Editor && window.Editor.active) || (window.TextEdit && window.TextEdit.active)) {
+    toast("Bấm Xong ở chế độ chỉnh sửa trước khi ghép trang.", "bad");
+    return;
+  }
+  if (state.vaultPages.size) {
+    toast("Tài liệu đang có trang ẩn — bỏ ẩn (hoặc xuất bản sao không kèm trang ẩn) rồi mới ghép trang.", "bad");
+    return;
+  }
+  const r = await askNup();
+  if (!r || !r.ids.length) return;
+  await runNup(r.ids, r.opts);
+}
+
+async function runNup(ids, opts) {
+  const tr = (vi, p) => (window.t ? window.t(vi, p) : vi);
+  const PN = window.PageNup;
+  let src;
+  try {
+    src = await PDFDocument.load(state.bytes);
+  } catch (err) {
+    toast("Không đọc được tài liệu: " + ((err && err.message) || err), "bad");
+    return;
+  }
+  // Say what is lost BEFORE it is lost. Counting entries is exact; guessing which are
+  // "important" is not, so the dialog makes no such claim.
+  const lost = PN.countAnnots(src, ids);
+  if (
+    lost &&
+    !(await uiConfirm(
+      tr(
+        "Các trang được chọn có {n} chú thích / liên kết / ô biểu mẫu. Khi ghép, chúng sẽ KHÔNG được giữ (chỉ giữ phần hình của trang). Ctrl+Z hoàn tác được. Vẫn ghép?",
+        { n: lost }
+      ),
+      { okText: tr("Vẫn ghép"), cancelText: tr("Huỷ") }
+    ))
+  ) {
+    return;
+  }
+  showOverlay("Đang ghép trang…");
+  try {
+    const plan = PN.plan(state.numPages, ids, opts.per);
+    const out = await PDFDocument.create();
+    await PN.build(src, out, plan.items, opts, { degrees, rgb: window.PDFLib.rgb });
+    const bytes = await out.save(); // anything that can throw has thrown BEFORE the undo step
+    const at = plan.items.findIndex((it) => it.sheet);
+    await commitBytes(bytes, { select: [at], lastClicked: at });
+    toast(
+      tr("Đã ghép {k} trang thành {s} tờ — Ctrl+Z để hoàn tác.", { k: plan.chosen.length, s: plan.sheets }),
+      "good"
+    );
+  } catch (err) {
+    toast("Lỗi ghép trang: " + ((err && err.message) || err), "bad");
+  } finally {
+    hideOverlay();
+  }
+}
+
 // ---- delete a page range, minus exceptions -------------------------------
 //
 // "Xoá từ trang X đến trang Y, trừ Z" — for the common case of dropping a long
@@ -5058,6 +5230,7 @@ $("btn-redo").onclick = () => (window.Editor && window.Editor.active ? window.Ed
 $("btn-merge").onclick = mergeFiles;
 $("btn-insert").onclick = insertFile;
 $("btn-replace").onclick = replaceSelectedFromFile;
+$("btn-nup").onclick = openNup;
 $("btn-blank").onclick = addBlankPage;
 $("btn-extract").onclick = extractSelected;
 $("btn-rotate-l").onclick = () => rotateSelected(-90);

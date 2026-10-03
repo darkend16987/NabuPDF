@@ -447,6 +447,19 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - File nguồn có mật khẩu → mở nó, bỏ mật khẩu trước. Thay một **trang đang ẩn** (🔒) thì app hỏi lại,
 >   vì nội dung đã ẩn sẽ mất cùng trang đó.
 
+> 🗂️ **Ghép nhiều trang vào một tờ (từ v0.2.76, miễn phí):** **Trang ▾ → Ghép nhiều trang vào một tờ…**
+> — ví dụ đưa **2 trang ngang** vào **một tờ A4 dọc** (trang trên, trang dưới) để in tiết kiệm giấy.
+> - **Trang nào:** tất cả, hoặc **Chỉ các trang được chọn** (gõ `1-4, 7`). Tick chọn trước khi mở thì ô này đã
+>   điền sẵn. Dòng tóm tắt cho biết **trước** sẽ ra bao nhiêu tờ và tài liệu còn bao nhiêu trang.
+> - **Số trang trên một tờ:** 2 hoặc 4 (2 × 2). **Khổ tờ:** A4 / A3 / Letter. **Hướng tờ:** dọc hoặc ngang
+>   (2 trang **dọc** vào một tờ **ngang** sẽ to hơn). Có thể chỉnh lề, khoảng cách và bật viền mảnh.
+> - Trang xoay (`/Rotate`) hoặc đã cắt khung vẫn ra **đúng như đang thấy**. Trang trắng để ô trống.
+> - **Ảnh:** dùng **Ảnh → PDF** trước (mỗi ảnh một trang), rồi ghép như trên.
+> - ⚠️ **Chú thích, liên kết và ô biểu mẫu** trên các trang được ghép **không được giữ** (chỉ giữ phần hình
+>   của trang) — app báo số lượng và hỏi trước. `Ctrl+Z` trả lại nguyên bản.
+> - Không dùng được khi tài liệu có **trang ẩn** (bỏ ẩn trước) hoặc đang ở chế độ chỉnh sửa (bấm **Xong**).
+> - Thông tin tài liệu và mục lục không đi theo (giống khi sắp xếp trang).
+
 > 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
 > **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).
 > - Nội dung trang được **mã hoá AES-256** và thay bằng một **trang giữ chỗ** in dòng "🔒 TRANG ĐÃ ẨN".

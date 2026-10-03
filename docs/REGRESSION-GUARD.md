@@ -2517,6 +2517,47 @@ _Ghi 2026-09-30 (v0.2.73)._
   khoá i18n; **không** sửa ở bốn nơi vẽ. Nếu thấy mình sửa ở bốn nơi, đang làm sai.
 - Test tay (renderer không chạy được trong node): xem hàng "Kiểu nét" ở §5.
 
+### BI-95 · Ghép nhiều trang vào một tờ (N-up): `embedPage` của pdf-lib **bỏ qua `/Rotate`, CropBox, chú thích — và ném lỗi muộn**
+- `renderer/page-nup.js` (thuần, `window.PageNup`) · `app.js` `askNup` / `openNup` / `runNup` · `index.html`
+  `#btn-nup` (menu Trang ▾) + `#nup-modal` · **MIỄN PHÍ** (quyết định của chủ dự án; dự án theo AGPL-3.0): `btn-nup` **không** nằm trong
+  `GATED_BTNS` và `openNup` **không** gọi `gateProFeature()`. Muốn khoá sau này phải làm **cả hai** (BI-9, BI-26).
+  Lưới: `npm run test:nup` (88 ca). Mục tiêu người dùng: "2 trang ngang vào 1 tờ A4 dọc".
+- **Năm điều đã ĐO trên pdf-lib 1.17.1, không phải đoán** (đừng quên khi đổi cách nhúng):
+  1. Trang giữ nguyên là **vector** (Form XObject) — chữ vẫn sắc khi phóng to / in.
+  2. **`/Rotate` bị bỏ qua**: trang lưu 595×842 có `/Rotate 90` nhúng ra 595×842. `placement()` tự bù: xoay
+     theo chiều kim đồng hồ = góc **âm**, và gốc dời về góc sẽ thành dưới-trái (pdf-lib áp
+     translate → rotate → scale, đã đọc `operations.drawPage`). Test dùng phép biến đổi **độc lập** (đặt 4
+     góc của hộp lưu rồi so với hộp hiển thị) cho cả 0/90/180/270.
+  3. **CropBox bị bỏ qua** nếu không truyền `boundingBox`; `pageGeom` lấy CropBox ∩ MediaBox (CropBox nằm
+     ngoài MediaBox = rác, quay về MediaBox). Ma trận mặc định của pdf-lib đã dời `-left,-bottom`.
+  4. **Không mang chú thích** (`/Annots` ở trang kết quả là mảng rỗng do `addPage` tạo). Nên `runNup`
+     **đếm** (`countAnnots`) và **hỏi trước** khi mất, kèm "Ctrl+Z hoàn tác được". Chỉ đếm số mục —
+     không tự đoán cái nào "quan trọng". Chú thích sửa-lại-được của Nabu cũng mất ở đây.
+  5. ⚠️ **Trang không có `/Contents` làm `save()` ném `MissingPageContentsEmbeddingError`** — không phải
+     `embedPage()`. Trang do "Thêm trang trắng" tạo ra là đúng loại này. `try/catch` quanh `embedPage`
+     **không bắt được gì** (lưới test bắt được lỗi này lúc viết); phải nhìn `page.node.Contents()` **trước**.
+     Ô của trang trắng để trống (giữ viền nếu bật).
+- **Ghi vào tài liệu: thay các trang đã chọn bằng các tờ, một bước hoàn tác** (`commitBytes`). Mọi thứ có
+  thể ném (load, dựng, `save`) xảy ra **trước** `pushUndo` nên không để lại bước hoàn tác ma. Tài liệu
+  được dựng lại bằng `PDFDocument.create()` + `copyPages` (như `reorderPage`) — nên **thông tin tài liệu /
+  mục lục / form cấp catalog không đi theo**, giống sắp xếp trang; trang không chọn được chép nguyên vẹn
+  (còn `/Rotate`). Không chạm file trên đĩa cho tới khi người dùng lưu.
+- **Từ chối khi có trang ẩn** (`state.vaultPages.size`, BI-74): tài liệu bị dựng lại từ đầu sẽ làm rơi thứ
+  kho trang ẩn giữ ở catalog. Từ chối còn hơn đoán. Cũng từ chối khi đang ở chế độ chú thích / sửa chữ.
+- **Quy tắc phạm vi** (`plan`): các trang chọn được dùng theo thứ tự trang, mỗi tờ `per` trang; các tờ nằm
+  **tại vị trí trang chọn đầu tiên**, trang khác giữ nguyên chỗ. Lẻ trang → tờ cuối ít ô hơn (không bỏ
+  trang nào). Chọn rời rạc cho ra kết quả có nghĩa nhưng **không phải điều người dùng hay tưởng** — hộp
+  thoại hiện số trang còn lại để họ thấy.
+- **Ô tự điền sẵn danh sách trang phải KHÔNG cắt**: `PageRange.formatList(list, Infinity)`. Mặc định nó kết
+  thúc bằng "…" sau 8 nhóm; `parseSpec` âm thầm bỏ token đó **cùng trang cuối** — mất trang không lỗi.
+- **Đã kiểm bằng bộ dựng hình độc lập (MuPDF)**, không chỉ toán: 5 trang đánh dấu (0°, 90°, 270°, 180°, CropBox)
+  → dấu đỏ nằm đúng góc hiển thị, lệch ≤ 0,8 px ở 72 dpi.
+- **Chưa đo:** Foxit / Acrobat mở kết quả · tài liệu lớn (hàng trăm trang, `embedPages` chạy trên luồng UI) ·
+  trang có độ trong suốt / nhóm màu phức tạp · khổ trang rất lệch tỉ lệ (một trang 10×1000pt) · mở file kết
+  quả rồi **Ctrl+Z qua lại nhiều lần** với tài liệu rất lớn (bộ nhớ lịch sử).
+- Thêm khổ tờ mới = thêm một dòng vào `SHEETS` + một `<option>` + khoá i18n. Thêm "5/6/8 trang một tờ" =
+  mở rộng `gridOf` (hiện chỉ 2 và 4) **và** `normOpts` (đang ép `per` về 2 hoặc 4).
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2593,6 +2634,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Bất kỳ lệnh vẽ nào trong `drawOneAnnot` / `drawWatermark` (thêm kind, đổi anchor, đổi primitive) | `cd desktop ; npm run test:rotate` **và thêm kind mới vào `KINDS` của lưới đó** · rồi test tay trên **trang đã xoay**: mở PDF scan nằm ngang (hoặc Xoay phải 90° một trang bất kỳ) → khoanh mây · khoanh vùng · mũi tên · dấu ✓ · hộp chữ → **Áp dụng** → mở lại file: mọi thứ **đúng chỗ, đúng chiều** như lúc vẽ · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-45, BI-40) |
 | Thứ tự chồng (`reorderZ`, `zPlan`/`reorderSelected`/`pickUnder`, mục menu "Đưa lên/xuống…", `Ctrl+]`/`Ctrl+[`, `Alt`+bấm) | `cd desktop ; npm run test:zorder ; npm run test:cloud ; npm run test:clip` · vẽ **hộp văn bản**, rồi vẽ **chữ nhật viền không nền** bao quanh nó → chữ **bị che, bấm không trúng** (đúng) → **Alt+bấm** chọn được hộp chữ → chuột phải → **Đưa lên trên cùng** → chữ hiện trên khung, bấm trúng được ngay · `Ctrl+]`/`Ctrl+[` đi từng lớp, `Ctrl+Shift+]`/`[` đi tới đầu/cuối · mục menu **xám** khi đã ở đầu/cuối · chọn **nhóm 3 mục** (Ctrl+bấm) → đưa lên → cả nhóm đi, **giữ nguyên thứ tự trong nhóm** · **một** Ctrl+Z trả lại đúng thứ tự cũ, Ctrl+Y làm lại · Áp dụng → Lưu → **mở lại** → thứ tự **không đổi** · Lưu 3 lần liên tiếp → thứ tự vẫn không đổi, file không phình · mở file bằng **Foxit + Acrobat + Chrome** → hộp chữ nằm **trên** khung · trang **xoay 90°** → vẫn đúng · gõ chữ trong hộp đang sửa + `Ctrl+]` → **không** đổi lớp (đang gõ) · đổi **VI↔EN** → 4 mục menu có tên tiếng Anh (BI-93) |
 | Kiểu nét (`DASH_KINDS`/`normDash`/`dashSpec`/`dashSegments` ở `annot-geom.js`, `applyDashSvg`/`appendDashedOutline`/`stampDash`/`#ed-dash` ở `editor.js`, nhánh dash của `shapeAppearance`/`serializeManaged`, `renderArrowPng`, `drawOneAnnot`, `deserializeManaged`) | `cd desktop ; npm run test:dash ; npm run test:managed ; npm run test:rotate ; npm run test:cloud` · **hồi quy trước (quan trọng nhất)**: một tài liệu **0° chỉ có hình liền** → Áp dụng → Lưu phải ra **byte y hệt** bản trước (BI-59) · vẽ **mỗi loại một hình** (chữ nhật, elip, nét vẽ tay, hình tự do, mũi tên) với **Nét đứt**, rồi cùng bộ đó với **Chấm**, độ dày **1, 4 và 12** → trên màn hình, đứt **đều** và **không nuốt** khoảng hở (đầu phẳng); Chấm là **chấm tròn** · mũi tên: chỉ **thân** đứt, **đầu mũi tên đặc** · Áp dụng → Lưu → **mở lại** → hình vẫn đứt và ô **Kiểu nét** hiện đúng giá trị khi chọn từng hình; đổi lại **Liền** → lưu → mở lại → liền · chọn **2–3 hình khác loại** (Ctrl+bấm) rồi đổi kiểu → cả nhóm đổi, **một** Ctrl+Z trả lại tất cả · công cụ **Khoanh mây / ✓ / ✗ / Đo / Ghi chú / Hộp chữ** → **không** có ô Kiểu nét · copy một hình đứt → dán sang **tab khác** và **file khác** → vẫn đứt · mở file đã lưu bằng **Foxit + Acrobat + Chrome + Edge** → nét đứt **đúng độ dài và đúng đầu nét** (chữ nhật/elip/vẽ tay/hình tự do là `/AP` vector, mũi tên là PNG: kiểm riêng **mũi tên Chấm**, probe chưa đo pixel của nó) · zoom 400% → viền **nét, không rỗ** · trang **xoay 90/180/270** → đứt đúng chỗ, không méo · trang **bị che thông tin (redact)** có hình đứt → hình vẫn **đứt** sau khi bake (đường raster dựng trang mới) · hình đứt **có nền mờ** → nền đúng, chỉ viền đứt · Lưu 3–4 lần liên tiếp → **cỡ file không phình**, mẫu nét **không đổi** · đổi **VI↔EN** → nhãn "Kiểu nét / Line style", "Liền / Solid", "Nét đứt / Dashed", "Chấm / Dotted" · cửa sổ **hẹp (~1100px)**: nút **Xong** vẫn thấy được ở công cụ Hộp (BI-41, BI-94) |
+| Ghép nhiều trang vào một tờ (`page-nup.js` `placement` / `pageGeom` / `plan` / `build`, `askNup`/`openNup`/`runNup`, `#btn-nup`, `#nup-modal`) | `cd desktop ; npm run test:nup` (88 ca) · rồi **test tay**: mở file có **trang ngang, trang lưu dọc có `/Rotate 90`, và một trang trắng** → Trang ▾ → Ghép nhiều trang vào một tờ → 2 trang, A4 dọc → trang xoay phải hiện **thẳng** (không nằm ngang), trang trắng để ô trống, Lưu rồi mở bằng **Foxit/Acrobat** và nhìn lại · Ctrl+Z → về đúng số trang cũ · chọn 2 trang rồi mở hộp thoại → ô "Các trang" đã điền sẵn đúng · gõ `abc` → nút Ghép bị khoá · trang có liên kết → hộp xác nhận nói đúng số mục sẽ mất · tài liệu có trang ẩn → bị từ chối bằng thông báo |
 | Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`) | `npm run test:geom` · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
 | Chọn nhiều mục / clipboard vật thể (`ed.selMore`, `selIds`, `toggleSelect`, `gripsFor`, `clip`, `copySelected`, `pasteClip`, menu bấm phải trong Chú thích) | `npm run test:cloud` · **giữ Ctrl bấm 3 mục** → cả 3 có viền chọn, **không** hiện tay nắm · kéo một mục trong nhóm → **cả nhóm** đi cùng, Esc giữa lúc kéo → **cả nhóm** về chỗ cũ · đổi Màu / Nét → **cả nhóm** đổi · Delete → mất cả nhóm, **một** Ctrl+Z lấy lại hết · Ctrl+C rồi sang trang khác Ctrl+V → dán đúng vị trí cũ, còn nguyên khoảng cách giữa các mục · dán **lại** trên cùng trang → lệch dần chứ không đè lên nhau · dán vào trang **nhỏ hơn** → cả nhóm bị kéo vào trong trang mà **không rời ra** · **copy → Áp dụng → Ctrl+V** vẫn dán được (BI-46) · bấm phải lên một mục → menu Sao chép/Dán/Xoá · bấm phải lên **giấy trắng** khi chưa copy gì → vẫn ra menu **ảnh** cũ · copy một ảnh từ app khác rồi Ctrl+V → vẫn là đường dán ảnh của `capture.js` (BI-30) |
 | Sửa mũi tên (`drag.type === "point"`, `snapLineEnd`, `.handle.h-pt`, `reverseSelectedArrow`) | `npm run test:cloud` · chọn mũi tên → thấy **2 nút tròn** ở hai đầu · kéo một đầu → mũi tên xoay/dài ra, đầu kia **đứng yên** · giữ Shift → khoá góc 15°, **độ dài không đổi** · Esc giữa lúc kéo → về đúng cũ, không để lại bước undo rỗng · "Đảo chiều" → mũi nhọn **và nhãn** sang đầu kia · **Áp dụng → mở lại → Chỉnh sửa** → vẫn kéo/đảo/sửa nhãn được (arrow round-trip qua `/NabuData`) |

@@ -213,6 +213,7 @@
             <button class="dd-item" id="btn-rotate-r"><svg class="ic"><use href="#ic-rotate-r"/></svg>Xoay phải 90°</button>
             <button class="dd-item" id="btn-delete"><svg class="ic"><use href="#ic-trash"/></svg>Xoá trang đang chọn</button>
             <button class="dd-item" id="mi-delete-range" title="Nhập từ trang X đến trang Y, trừ ra vài trang — không cần tick chọn"><svg class="ic"><use href="#ic-trash"/></svg>Xoá nhiều trang theo khoảng…</button>
+            <button class="dd-item" id="btn-nup" title="Ghép 2 hoặc 4 trang vào một tờ — ví dụ 2 trang ngang vào một tờ A4 dọc"><svg class="ic"><use href="#ic-layers"/></svg>Ghép nhiều trang vào một tờ…</button>
             <button class="dd-item" id="mi-page-numbers"><svg class="ic"><use href="#ic-type"/></svg>Đánh số trang…</button>
           </div>
         </div>
@@ -712,6 +713,49 @@
         <div class="modal-actions">
           <button id="replace-cancel" data-modal-close>Hủy</button>
           <button id="replace-ok" class="primary">Thay trang</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ghép nhiều trang vào một tờ (openNup, app.js). Bố cục + pdf-lib là PageNup
+         (page-nup.js) — node-tested (npm run test:nup). Chữ động mang data-no-i18n. -->
+    <div class="modal" id="nup-modal" hidden>
+      <div class="modal-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        <h3>Ghép nhiều trang vào một tờ</h3>
+        <label class="chk"><input type="radio" name="nup-mode" id="nup-all" value="all" checked /> <span id="nup-all-label" data-no-i18n>Tất cả các trang</span></label>
+        <label class="chk"><input type="radio" name="nup-mode" id="nup-pick" value="pick" /> Chỉ các trang được chọn</label>
+        <label>Các trang <input id="nup-spec" type="text" placeholder="vd: 1-4, 7" autocomplete="off" spellcheck="false" /></label>
+        <label>Số trang trên một tờ
+          <select id="nup-per">
+            <option value="2" selected>2 trang</option>
+            <option value="4">4 trang (2 × 2)</option>
+          </select>
+        </label>
+        <div class="modal-row">
+          <label>Khổ tờ
+            <select id="nup-sheet">
+              <option value="a4" selected>A4</option>
+              <option value="a3">A3</option>
+              <option value="letter">Letter</option>
+            </select>
+          </label>
+          <label>Hướng tờ
+            <select id="nup-orient">
+              <option value="portrait" selected>Dọc</option>
+              <option value="landscape">Ngang</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-row">
+          <label>Lề ngoài (mm) <input id="nup-margin" type="number" min="0" max="35" step="1" value="8" /></label>
+          <label>Giữa các trang (mm) <input id="nup-gap" type="number" min="0" max="35" step="1" value="4" title="Khoảng cách giữa các trang trên cùng một tờ" /></label>
+        </div>
+        <label class="chk"><input type="checkbox" id="nup-border" /> Viền mảnh quanh mỗi trang</label>
+        <p class="cmp-note" id="nup-hint" data-no-i18n></p>
+        <div class="modal-actions">
+          <button id="nup-cancel" data-modal-close>Hủy</button>
+          <button id="nup-ok" class="primary">Ghép trang</button>
         </div>
       </div>
     </div>
@@ -1529,6 +1573,9 @@
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>
+    <!-- page-nup.js: ghép nhiều trang vào một tờ. Chỉ gắn window.PageNup, app.js gọi lúc bấm
+         nút (không phải lúc nạp) nên không có luật thứ tự — vẫn để trước app.js cho gọn. -->
+    <script src="page-nup.js"></script>
     <script src="sig-image.js"></script>
     <!-- raster-cap.js: hạn mức bitmap trang (BI-78). Phải nạp TRƯỚC app.js —
          renderPageCanvas gọi window.RasterCap.viewRasterDpr trên mọi trang. -->

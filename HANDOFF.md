@@ -4,8 +4,21 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-02 · v0.2.75 đã phát hành (dưới đây) · v0.2.74 là bản trước đó_
+_Cập nhật: 2026-10-03 · v0.2.76 đã phát hành (dưới đây) · v0.2.75 là bản trước đó_
 
+> **v0.2.76 — Ghép nhiều trang vào một tờ (N-up, BI-95)** (phát hành 2026-10-03; chủ dự án quyết định MIỄN PHÍ).
+> Menu **Trang ▾ → Ghép nhiều trang vào một tờ…**. `renderer/page-nup.js` (thuần, `window.PageNup`) ·
+> `app.js` `askNup`/`openNup`/`runNup` · `#btn-nup` + `#nup-modal` · `test:nup` 88 ca. **Không đổi `*.py`.**
+> Dùng `embedPage`/`drawPage` của pdf-lib; thay các trang chọn bằng các tờ, một `commitBytes` (Ctrl+Z).
+> Đã ĐO trên pdf-lib 1.17.1: bỏ qua `/Rotate`, CropBox và chú thích, và **ném lỗi ở `save()`** (không phải
+> `embedPage`) với trang không có `/Contents`. Kiểm: MuPDF dựng hình (lệch ≤ 0,8 px), đột biến 5/6, probe
+> Electron thật 11 mục. ⚠️ **Còn mở:** Foxit/Acrobat chưa mở kết quả · tài liệu lớn chưa đo · chú thích mất
+> (đã cảnh báo trong app) · `btn-nup` là tính năng **MIỄN PHÍ** (chủ dự án quyết định; không có trong
+> `GATED_BTNS`, `openNup` không gọi `gateProFeature()`) · ảnh: đi qua Ảnh → PDF rồi ghép
+> (chưa có khổ "2 ảnh / A4" trong hộp Ảnh → PDF, vì cần build lại sidecar).
+> Landing/hướng dẫn: `site/index.html` (khối "Mới"), `lich-su-phien-ban.html`, `app.js`, `README.md`,
+> `HUONG-DAN-SU-DUNG.md`, `help.js` (song ngữ). Chưa kiểm Vercel đã deploy `site/` hay chưa.
+>
 > **v0.2.75 — thứ tự chồng của chú thích + kiểu nét liền / nét đứt / chấm** (phát hành 2026-10-02).
 > Hai việc, hai commit, **không đổi `*.py`** (sidecar KHÔNG build lại; marker vẫn `6d615b1c`).
 >

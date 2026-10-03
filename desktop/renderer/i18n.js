@@ -741,6 +741,37 @@
     "Mở file này ở khung chính để sửa": "Open this file in the editable pane",
     "Khung xem — chưa chọn tài liệu.": "View pane — no document selected.",
 
+    // --- Ghép nhiều trang vào một tờ (v0.2.76) ---
+    "Ghép nhiều trang vào một tờ…": "Combine several pages onto one sheet…",
+    "Ghép nhiều trang vào một tờ": "Combine several pages onto one sheet",
+    "Ghép 2 hoặc 4 trang vào một tờ — ví dụ 2 trang ngang vào một tờ A4 dọc":
+      "Put 2 or 4 pages on one sheet — e.g. two landscape pages on one portrait A4 sheet",
+    "Các trang": "Pages",
+    "vd: 1-4, 7": "e.g. 1-4, 7",
+    "Số trang trên một tờ": "Pages per sheet",
+    "2 trang": "2 pages",
+    "4 trang (2 × 2)": "4 pages (2 × 2)",
+    "Khổ tờ": "Sheet size",
+    "Hướng tờ": "Sheet orientation",
+    "Lề ngoài (mm)": "Outer margin (mm)",
+    "Giữa các trang (mm)": "Between pages (mm)",
+    "Khoảng cách giữa các trang trên cùng một tờ": "Distance between the pages on one sheet",
+    "Viền mảnh quanh mỗi trang": "Thin border around each page",
+    "Ghép trang": "Combine pages",
+    "Nhập các trang cần ghép, vd 1-4, 7.": "Type the pages to combine, e.g. 1-4, 7.",
+    "Chưa nhận ra trang nào — vd 1-4, 7.": "No page recognised yet — e.g. 1-4, 7.",
+    "Sẽ ghép {k} trang thành {s} tờ — tài liệu còn {n} trang.":
+      "Will combine {k} pages into {s} sheets — the document will have {n} pages.",
+    "Bấm Xong ở chế độ chỉnh sửa trước khi ghép trang.": "Click Done in edit mode before combining pages.",
+    "Tài liệu đang có trang ẩn — bỏ ẩn (hoặc xuất bản sao không kèm trang ẩn) rồi mới ghép trang.":
+      "The document has hidden pages — unhide them (or export a copy without them) before combining pages.",
+    "Các trang được chọn có {n} chú thích / liên kết / ô biểu mẫu. Khi ghép, chúng sẽ KHÔNG được giữ (chỉ giữ phần hình của trang). Ctrl+Z hoàn tác được. Vẫn ghép?":
+      "The chosen pages have {n} annotations / links / form fields. They will NOT be kept when combined (only the page's drawing is). Ctrl+Z undoes it. Combine anyway?",
+    "Vẫn ghép": "Combine anyway",
+    "Huỷ": "Cancel",
+    "Đang ghép trang…": "Combining pages…",
+    "Đã ghép {k} trang thành {s} tờ — Ctrl+Z để hoàn tác.": "Combined {k} pages into {s} sheets — Ctrl+Z to undo.",
+
     // --- Thay trang (v0.2.72) ---
     "Thay trang đang chọn bằng PDF khác…": "Replace selected pages with another PDF…",
     "Thay các trang đang chọn (liền nhau) bằng trang của một PDF khác":
