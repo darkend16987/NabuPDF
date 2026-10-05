@@ -120,6 +120,7 @@ const INDEX_RULES = [
   ["raster-cap.js", "app.js", "renderPageCanvas calls window.RasterCap on every page (BI-78)"],
   ["thumb-queue.js", "app.js", "app.js calls ThumbQueue.createThumbQueue at load time"],
   ["page-vault.js", "app.js", "app.js reads window.PageVault while rendering thumbnails"],
+  ["side-panels.js", "app.js", "app.js calls window.SidePanels.init(...) at load time"],
   ["wire.js", "app.js", "bare pdfJsonBody / b64ToU8"],
   ["wire.js", "text-edit.js", "bare pdfJsonBody / b64ToU8"],
   ["wire.js", "compare.js", "bare pdfJsonBody / b64ToU8"],

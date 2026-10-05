@@ -81,6 +81,9 @@
         <symbol id="ic-tick" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 6"/></symbol>
         <symbol id="ic-cross" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
         <symbol id="ic-ruler" viewBox="0 0 24 24"><path d="M3 16.5L16.5 3 21 7.5 7.5 21z"/><path d="M6 13.5l2 2M9 10.5l2 2M12 7.5l2 2"/></symbol>
+        <!-- Cột trái: tab "Trang" (hai tờ chồng nhau) và tab "Dấu trang" (bookmark). -->
+        <symbol id="ic-pages" viewBox="0 0 24 24"><rect x="8" y="3" width="12" height="15" rx="1.5"/><path d="M5 7v12a2 2 0 0 0 2 2h9"/></symbol>
+        <symbol id="ic-bookmark" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"/></symbol>
         <symbol id="ic-message" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/></symbol>
         <symbol id="ic-photo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-4 4-2-2-7 6"/></symbol>
         <symbol id="ic-redact" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></symbol>
@@ -423,14 +426,34 @@
 
     <main class="workspace">
       <aside class="sidebar" id="sidebar">
-        <div class="sidebar-head">
-          <span id="page-count">Chưa có tài liệu</span>
-          <div class="sidebar-head-actions">
-            <button id="btn-select-all" class="link" disabled>Chọn tất cả</button>
-            <button id="btn-sidebar" class="link sidebar-toggle" title="Ẩn danh sách trang (F4)"><svg class="ic chev-left"><use href="#ic-chevron"/></svg></button>
-          </div>
+        <!-- Chế độ của cột trái (side-panels.js). #thumbs và mọi id bên trong khung "Trang"
+             giữ nguyên — app.js vẫn sở hữu thumbnail, observer và hàng đợi vẽ. -->
+        <div class="side-tabs" role="tablist" aria-label="Chế độ cột trái">
+          <button id="side-tab-thumbs" class="side-tab active" type="button" role="tab" aria-selected="true" data-pane="thumbs" title="Trang — hình thu nhỏ các trang"><svg class="ic"><use href="#ic-pages"/></svg></button>
+          <button id="side-tab-outline" class="side-tab" type="button" role="tab" aria-selected="false" data-pane="outline" title="Dấu trang (mục lục) của tài liệu"><svg class="ic"><use href="#ic-bookmark"/></svg></button>
+          <span class="side-tabs-fill"></span>
+          <button id="btn-sidebar" class="link sidebar-toggle" title="Ẩn danh sách trang (F4)"><svg class="ic chev-left"><use href="#ic-chevron"/></svg></button>
         </div>
-        <div class="thumbs" id="thumbs"></div>
+        <div class="side-pane" id="pane-thumbs" data-pane="thumbs" role="tabpanel">
+          <div class="sidebar-head">
+            <span id="page-count">Chưa có tài liệu</span>
+            <div class="sidebar-head-actions">
+              <button id="btn-select-all" class="link" disabled>Chọn tất cả</button>
+            </div>
+          </div>
+          <div class="thumbs" id="thumbs"></div>
+        </div>
+        <div class="side-pane" id="pane-outline" data-pane="outline" role="tabpanel" hidden>
+          <div class="sidebar-head">
+            <span>Dấu trang</span>
+            <div class="sidebar-head-actions">
+              <button id="outline-expand" class="link" type="button" title="Mở hết các nhánh">Mở hết</button>
+              <button id="outline-collapse" class="link" type="button" title="Thu hết các nhánh">Thu hết</button>
+            </div>
+          </div>
+          <div class="outline-tree" id="outline-tree" role="tree"></div>
+          <div class="side-empty" id="outline-empty" hidden></div>
+        </div>
       </aside>
       <!-- Kéo để đổi bề rộng danh sách trang; bấm đúp để về mặc định. Là phần tử
            trong dòng chảy flex (không phải absolute) nên nó tự nằm đúng mép, khỏi
@@ -1601,6 +1624,10 @@
          (which reads window.PageVault while rendering thumbnails). Publishes ONE
          global and no bare names — the page-range.js tier. -->
     <script src="page-vault.js"></script>
+    <!-- side-panels.js: the left column's modes (Trang / Dấu trang). BEFORE app.js, which
+         calls window.SidePanels.init(...) at load time and hands it everything it needs —
+         it reads no app.js global by bare name (BI-14). -->
+    <script src="side-panels.js"></script>
     <script src="app.js"></script>
     <!-- pan.js must load AFTER app.js ($ / state / isTyping come from it) and
          BEFORE editor.js / capture.js, so its capture-phase viewer listener is

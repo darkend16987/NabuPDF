@@ -314,6 +314,21 @@
 
     // --- sidebar / empty state ---
     "Chọn tất cả": "Select all",
+    // --- left column modes (side-panels.js) ---
+    "Trang — hình thu nhỏ các trang": "Pages — page thumbnails",
+    "Dấu trang (mục lục) của tài liệu": "The document's bookmarks (table of contents)",
+    "Dấu trang": "Bookmarks",
+    "Mở hết": "Expand all",
+    "Thu hết": "Collapse all",
+    "Mở hết các nhánh": "Expand every branch",
+    "Thu hết các nhánh": "Collapse every branch",
+    "Chưa có tài liệu.": "No document open.",
+    "Đang đọc dấu trang…": "Reading bookmarks…",
+    "Không đọc được dấu trang của tài liệu này.": "Couldn't read this document's bookmarks.",
+    "Tài liệu này không có dấu trang.": "This document has no bookmarks.",
+    "(không tên)": "(untitled)",
+    "Liên kết ra ngoài: {u}": "External link: {u}",
+    "Dấu trang này trỏ tới một trang không còn trong tài liệu.": "This bookmark points to a page that is no longer in the document.",
     "Mở một file PDF để bắt đầu": "Open a PDF file to get started",
     "Kéo–thả file vào đây, hoặc bấm": "Drag & drop a file here, or click",
     "Gộp nhiều PDF thành một file…": "Combine several PDFs into one file…",
@@ -881,6 +896,9 @@
     // carries, so capturing it would freeze one document's hint into the registry and
     // then show it on every later prompt (BI-10).
     "pw-note",
+    // Left column (side-panels.js): the bookmark tree is built from the document, and its
+    // message line ("Đang đọc dấu trang…" / "không có dấu trang") is rewritten per document.
+    "outline-tree", "outline-empty",
   ]);
 
   let lang = "vi";

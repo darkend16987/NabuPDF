@@ -173,6 +173,10 @@
           ul: [
             T("`F4` ẩn / hiện cột trang. Kéo mép cột để đổi bề rộng, bấm đúp mép để về mặc định.", "`F4` hides / shows the page list. Drag its edge to resize, double-click the edge to reset."),
             T(
+              "Hai biểu tượng trên đầu cột đổi chế độ: **Trang** (thumbnail) và **Dấu trang** — mục lục mà file mang theo (làm bằng Word, Acrobat, Foxit…). Bấm một dấu trang để nhảy tới đúng chỗ; dấu trang trỏ tới trang đã bị xoá hiện **mờ**. Kéo đổi thứ tự trang **không** làm mất dấu trang.",
+              "The two icons at the top of the column switch its mode: **Pages** (thumbnails) and **Bookmarks** — the table of contents the file carries (made in Word, Acrobat, Foxit…). Click a bookmark to jump to it; one that points at a deleted page is shown **dimmed**. Reordering pages does **not** lose the bookmarks."
+            ),
+            T(
               "`F11` — **toàn màn hình**, trọn trang trong màn hình, ẩn thanh công cụ. `Esc` để thoát. Trong chế độ này, rê chuột vào **mép trái** thì dải trang trượt ra; `F4` để ghim nó lại.",
               "`F11` — **full screen** reading: the whole page on screen, toolbars hidden. `Esc` exits. In this mode, moving the pointer to the **left edge** slides the page strip out; `F4` pins it open."
             ),

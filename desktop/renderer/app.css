@@ -265,6 +265,46 @@ body.presenting .sidebar-resizer { display: none; }
 }
 .sidebar-expand .ic { width: 15px; height: 15px; margin: 0; }
 
+/* ---- chế độ của cột trái: Trang / Dấu trang (side-panels.js) ----
+   Dải tab nằm trên cùng cột; mỗi chế độ là một .side-pane chiếm phần còn lại. Khung ẩn là
+   display:none — với khung Trang, IntersectionObserver của thumbnail vì thế tự đứng yên. */
+.side-tabs {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 2px;
+  padding: 4px 6px; border-bottom: 1px solid var(--line);
+}
+.side-tab {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 26px; padding: 0; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.side-tab .ic { width: 16px; height: 16px; margin: 0; }
+.side-tab:hover { color: var(--fg); background: var(--bg-hover); }
+.side-tab.active { color: var(--accent); background: var(--bg-3); border-color: var(--line); }
+.side-tabs-fill { flex: 1; }
+.side-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.side-pane[hidden] { display: none; }
+.side-pane .sidebar-head { flex-wrap: wrap; gap: 4px; }
+.side-empty { padding: 24px 16px; color: var(--muted); font-size: 12px; text-align: center; line-height: 1.6; }
+.outline-tree { flex: 1; min-height: 0; overflow: auto; padding: 6px 4px; font-size: 12.5px; }
+.ol-row {
+  display: flex; align-items: flex-start; gap: 2px; padding: 3px 6px 3px 4px;
+  border-radius: 6px; cursor: pointer; color: var(--fg); line-height: 1.35;
+}
+.ol-row:hover { background: var(--bg-hover); }
+.ol-row.current { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
+.ol-row.dead { color: var(--muted); cursor: default; }
+.ol-row.dead:hover { background: transparent; }
+.ol-twisty {
+  flex: 0 0 14px; width: 14px; height: 17px; padding: 0; border: 0;
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 8px; line-height: 17px;
+}
+.ol-twisty::before { content: "▶"; display: inline-block; transition: transform 0.12s; }
+.ol-node.open > .ol-row > .ol-twisty::before { transform: rotate(90deg); }
+.ol-twisty.leaf { visibility: hidden; }
+.ol-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ol-kids { display: none; }
+.ol-node.open > .ol-kids { display: block; }
+
 /* ---- status bar ---- */
 .statusbar {
   flex: 0 0 auto; display: flex; align-items: center; gap: 10px;

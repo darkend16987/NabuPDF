@@ -18,6 +18,7 @@
     "test": "node scripts/run-tests.js",
     "test:tabs": "node test/tabs-logic.test.js",
     "test:pages": "node test/page-range.test.js",
+    "test:side": "node test/side-panels.test.js",
     "test:nup": "node test/page-nup.test.js",
     "test:thumbs": "node test/thumb-queue.test.js",
     "test:raster": "node test/raster-cap.test.js",

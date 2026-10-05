@@ -682,6 +682,7 @@ async function renderAll() {
     await renderViewer();
     $("empty-state").style.display = "none";
     updateToolbar();
+    if (window.SidePanels) window.SidePanels.docChanged(); // bookmarks belong to the new state.pdf
   } catch (err) {
     // Encrypted PDF: let loadBytes prompt for a password + decrypt, then retry.
     if (err && err.name === "PasswordException") {
@@ -1525,6 +1526,7 @@ async function rerenderChanged(changed) {
     if (window.Editor) window.Editor.syncOverlays();
     if (window.TextEdit) window.TextEdit.syncOverlays();
     if (window.FindReplace) window.FindReplace.invalidate(); // same reason as in renderAll
+    if (window.SidePanels) window.SidePanels.docChanged(); // state.pdf was replaced above
   } finally {
     hideOverlay();
   }
@@ -5314,6 +5316,21 @@ $("comments-close").onclick = () => toggleComments(false);
 // Thumbnail sidebar collapse/expand (button + F4).
 $("btn-sidebar").onclick = () => toggleSidebar(true);
 $("sidebar-expand").onclick = () => toggleSidebar(false);
+
+// Left column modes — Trang / Dấu trang (side-panels.js). Everything it needs is handed
+// in here rather than read as a bare global (BI-14).
+window.SidePanels.init({
+  getPdf: () => state.pdf,
+  getPageMeta: (i) => (state.pageMetas ? state.pageMetas[i] : null),
+  viewer: () => $("viewer"),
+  scrollToPage,
+  renderPage: (i) => renderPageCanvas(i),
+  // Back on the thumbnails: syncThumbFocus could not scroll a display:none list.
+  onThumbsShown: () => {
+    thumbFocusIdx = -1;
+    syncThumbFocus();
+  },
+});
 
 // Sidebar resize handle. Pointer capture keeps the drag alive when the cursor
 // runs past the handle (which it always does) and guarantees the pointerup even
