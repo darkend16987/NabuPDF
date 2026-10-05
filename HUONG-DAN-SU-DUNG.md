@@ -447,6 +447,25 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - File nguồn có mật khẩu → mở nó, bỏ mật khẩu trước. Thay một **trang đang ẩn** (🔒) thì app hỏi lại,
 >   vì nội dung đã ẩn sẽ mất cùng trang đó.
 
+> ✏️ **Sửa chú thích do phần mềm khác tạo (từ v0.2.77):** mở file đối tác gửi (Acrobat, Foxit, PDF-XChange…) →
+> bấm **Chú thích** → khoanh vùng, khoanh mây, elip, đường kẻ, mũi tên, đa giác, nét vẽ tay, **con dấu / ảnh dán**,
+> **hộp văn bản**, **ghi chú dán** và **tô sáng** của họ chọn / kéo / đổi màu / xoá được như của Nabu.
+> - **Hộp văn bản** sửa chữ được (bấm đúp) và sau khi lưu **vẫn là hộp văn bản của họ** — mở bằng Acrobat / Foxit vẫn gõ
+>   tiếp được, vẫn giữ font, nền, viền và tên người tạo. Hộp nhiều kiểu chữ sẽ thành **một kiểu** sau khi sửa.
+> - **Ghi chú dán:** bấm đúp → **Sửa gốc** để sửa lời của họ, hoặc **Thêm bình luận** — bình luận thành **câu trả lời
+>   thật** dưới ghi chú (Acrobat / Foxit thấy trong luồng), lời của họ giữ nguyên.
+> - **Tô sáng:** đổi màu / độ mờ, xoá. **Con dấu, ảnh dán:** kéo, đổi cỡ, xoá — chỉ vị trí / cỡ đổi, hình gốc giữ nguyên nét.
+> - Cái nào bạn **không đụng tới** thì khi Lưu vẫn **y nguyên** như người tạo để lại. Hình (khoanh vùng, mây, mũi tên…)
+>   đã sửa thì thành hình của Nabu nhưng vẫn giữ tên người tạo và lời bình.
+> - **Chưa sửa được** (vẫn xem được, vẫn có trong danh sách): hộp văn bản có mũi tên chỉ (callout), ghi chú đã có luồng
+>   trả lời, chú thích bị khoá hoặc trong suốt.
+>
+> 🗂️ **Cột trái: Trang · Dấu trang · Chú thích (từ v0.2.77):** ba biểu tượng trên đầu cột trái.
+> - **Dấu trang:** mục lục mà file mang theo (xuất từ Word có Heading, làm bằng Acrobat…). Bấm để nhảy tới; dấu trang trỏ vào
+>   trang đã xoá hiện mờ. Kéo đổi thứ tự trang **không** làm mất dấu trang (và ô biểu mẫu).
+> - **Chú thích** (nút 💬 trên thanh trên cùng cũng mở tab này): mọi chú thích — của Nabu và của phần mềm khác — theo trang,
+>   kèm tên người tạo; lọc theo loại / người; bấm để nhảy tới, chỗ đó nháy sáng. Dùng được cả khi đang chú thích.
+
 > 🗂️ **Ghép nhiều trang vào một tờ (từ v0.2.76, miễn phí):** **Trang ▾ → Ghép nhiều trang vào một tờ…**
 > — ví dụ đưa **2 trang ngang** vào **một tờ A4 dọc** (trang trên, trang dưới) để in tiết kiệm giấy.
 > - **Trang nào:** tất cả, hoặc **Chỉ các trang được chọn** (gõ `1-4, 7`). Tick chọn trước khi mở thì ô này đã
@@ -458,7 +477,7 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - ⚠️ **Chú thích, liên kết và ô biểu mẫu** trên các trang được ghép **không được giữ** (chỉ giữ phần hình
 >   của trang) — app báo số lượng và hỏi trước. `Ctrl+Z` trả lại nguyên bản.
 > - Không dùng được khi tài liệu có **trang ẩn** (bỏ ẩn trước) hoặc đang ở chế độ chỉnh sửa (bấm **Xong**).
-> - Thông tin tài liệu và mục lục không đi theo (giống khi sắp xếp trang).
+> - Thông tin tài liệu và mục lục không đi theo (khác với kéo đổi thứ tự trang, vốn giữ mục lục từ v0.2.77).
 
 > 🔒 **Ẩn trang bằng mật khẩu (từ v0.2.64):** chuột phải một trang trong **cột trang** →
 > **Ẩn trang này bằng mật khẩu…** (chọn nhiều trang trước thì ẩn cả loạt bằng một mật khẩu).

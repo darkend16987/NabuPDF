@@ -4,7 +4,24 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-03 · v0.2.76 đã phát hành (dưới đây) · v0.2.75 là bản trước đó_
+_Cập nhật: 2026-10-05 · v0.2.77 (dưới đây) · v0.2.76 là bản trước đó_
+
+> **v0.2.77 — Sửa chú thích của phần mềm khác + cột trái Trang / Dấu trang / Chú thích** (2026-10-05).
+> Kế hoạch & số đo: `docs/RESEARCH-2026-10-05-foreign-annots-sidebar-panels.md` (Q1–Q4 người dùng đã chốt). Sổ bất biến
+> **BI-96…BI-101**. **Không đổi `*.py`** (sidecar KHÔNG build lại; marker vẫn `6d615b1c`).
+> 1. **BI-96** `reorderPage` di chuyển trang TẠI CHỖ (`PageRange.movePageInDoc`, ghim 4 thuộc tính kế thừa) ⇒ không mất
+>    dấu trang / form / metadata. **BI-97/98** cột trái 3 tab (`side-panels.js`), tab Chú thích đọc dict bằng pdf-lib
+>    **trong Worker** (`annot-scan.js`); panel Ghi chú bên phải đã bỏ.
+> 2. **BI-99** chế độ Chú thích chỉ ẩn bản Nabu mà overlay thay (`annot-hide.js`: pdf.js `AnnotationStorage {noView}` +
+>    `ENABLE_STORAGE`); bôi đen dùng cùng danh sách ⇒ chú thích của đối tác không còn mất. **BI-101** `repaintPage` chờ lần
+>    vẽ dở (race thật: thoát Chú thích lúc trang đang vẽ để lại bitmap chế độ sửa).
+> 3. **BI-100** nhập chú thích ngoại (`foreign-annot.js`): nhóm B (hình/nét) → đối tượng Nabu khi sửa; Stamp chỉ đổi
+>    `/Rect` (ảnh đại diện từ `/AP`); nhóm A sửa TẠI CHỖ giữ kiểu: FreeText (`writeFreeText`, ngắt dòng lúc nhập), Text
+>    (trả lời = `/Text /IRT` thật), Highlight. "Không đụng thì không ghi" quyết bằng giá trị; N2 gỡ/sửa bản gốc chỉ khi
+>    Subtype + Rect + NM khớp. Lưới `test:foreign` 174 ca, `test:annothide`, `test:side`, `test:annotscan`.
+> ⚠️ **Còn mở:** chưa mở kết quả bằng Foxit / Acrobat thật · chưa có file từ PDF-XChange / Foxit · chưa nhập: callout
+> (`/CL` — PyMuPDF gắn `/CL` cho MỌI FreeText), ghi chú đã có luồng · sửa dấu trang (Đợt 4) chưa làm.
+>
 
 > **v0.2.76 — Ghép nhiều trang vào một tờ (N-up, BI-95)** (phát hành 2026-10-03; chủ dự án quyết định MIỄN PHÍ).
 > Menu **Trang ▾ → Ghép nhiều trang vào một tờ…**. `renderer/page-nup.js` (thuần, `window.PageNup`) ·

@@ -168,33 +168,48 @@
       <div class="rounded-3xl border border-brand-200 bg-gradient-to-br from-brand-50 via-white to-orange-50/60 p-7 shadow-card md:p-10">
         <div class="flex flex-wrap items-center gap-3">
           <span class="inline-flex items-center gap-2 rounded-full bg-brand-600 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">Mới</span>
-          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.76</span> · 03/10/2026</span>
+          <span class="text-sm font-semibold text-brand-800">Bản <span id="whatsnew-version">v0.2.77</span> · 05/10/2026</span>
           <a href="/lich-su-phien-ban.html" class="ml-auto text-sm font-medium text-brand-700 underline underline-offset-2 hover:text-brand-800">Xem toàn bộ lịch sử →</a>
         </div>
 
-        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Ghép 2 trang ngang vào một tờ A4 dọc — miễn phí</h2>
+        <h2 class="mt-5 text-2xl font-extrabold tracking-tight md:text-3xl">Sửa được chú thích do Acrobat, Foxit tạo — và chúng vẫn là của người tạo</h2>
 
-        <div class="mt-6">
-          <h3 class="flex items-center gap-2 font-bold text-ink">
-            <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="8" rx="1"/><rect x="5" y="13" width="14" height="8" rx="1"/></svg>
-            Ghép nhiều trang vào một tờ
-          </h3>
-          <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-            Muốn in tiết kiệm giấy, hay đưa hai bản vẽ / hai trang scan ngang vào <b>một tờ A4 dọc</b>? Vào
-            <b>Trang ▾ → Ghép nhiều trang vào một tờ…</b>, chọn <b>2 trang</b> (hoặc <b>4 trang</b>, xếp 2 × 2) trên
-            một tờ <b>A4 / A3 / Letter</b>, dọc hoặc ngang. Chọn <b>tất cả</b> hay chỉ các trang bạn gõ (<code>1-4, 7</code>);
-            dòng tóm tắt cho biết trước sẽ ra bao nhiêu tờ. Chỉnh được lề, khoảng cách giữa các trang và viền mảnh.
-          </p>
-          <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-            Trang đã xoay hoặc đã cắt khung vẫn ra <b>đúng như bạn đang thấy</b>, chữ và nét vẫn là <b>vector</b> nên
-            phóng to hay in vẫn sắc. Một <code>Ctrl+Z</code> trả lại nguyên bản, và file trên đĩa không đổi cho tới khi bạn lưu.
-            Với <b>ảnh</b>: dùng <b>Ảnh → PDF</b> trước rồi ghép như trên. Tính năng <b>miễn phí</b>.
-          </p>
-          <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
-            <b>Lưu ý:</b> chú thích, liên kết và ô biểu mẫu trên các trang được ghép <b>không được giữ</b> (chỉ giữ phần hình
-            của trang) — app báo số lượng và hỏi trước khi làm. Chưa dùng được khi tài liệu có trang ẩn.
-          </p>
+        <div class="mt-6 grid gap-6 md:grid-cols-2">
+          <div>
+            <h3 class="flex items-center gap-2 font-bold text-ink">
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              Chú thích của đối tác giờ sửa được
+            </h3>
+            <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+              File đối tác gửi lại đầy <b>khoanh mây, mũi tên, hộp văn bản, ghi chú, tô sáng, con dấu, ảnh dán</b> làm bằng
+              Acrobat / Foxit / PDF-XChange? Bấm <b>Chú thích</b>: chúng là đối tượng sống như của Nabu — chọn, kéo, đổi màu,
+              sửa chữ, xoá. Hộp văn bản sửa xong <b>vẫn là hộp văn bản</b>, ghi chú vẫn là ghi chú, tô sáng vẫn là tô sáng —
+              đối tác mở lại bằng Acrobat / Foxit vẫn sửa tiếp được, vẫn thấy tên người tạo. Bình luận bạn thêm vào một ghi chú
+              thành <b>câu trả lời thật</b> trong luồng. Con dấu và ảnh dán chỉ đổi vị trí / cỡ, hình gốc giữ nguyên nét.
+            </p>
+            <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+              Cái nào bạn <b>không đụng tới</b> thì khi lưu vẫn <b>y nguyên</b> như người tạo để lại. Trong lúc chú thích,
+              chữ và hình của đối tác cũng không còn biến khỏi trang nữa — kể cả khi bôi đen một vùng trên cùng trang.
+            </p>
+          </div>
+          <div>
+            <h3 class="flex items-center gap-2 font-bold text-ink">
+              <svg class="h-5 w-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+              Cột trái: Trang · Dấu trang · Chú thích
+            </h3>
+            <p class="mt-2 text-[15px] leading-relaxed text-ink-muted">
+              Ba biểu tượng trên đầu cột trái đổi chế độ như Foxit: <b>Trang</b> (thumbnail), <b>Dấu trang</b> — mục lục file
+              mang theo, bấm để nhảy tới — và <b>Chú thích</b>: mọi chú thích trong tài liệu, của Nabu lẫn của phần mềm khác,
+              xếp theo trang, kèm tên người tạo, lọc theo loại / người, bấm là nhảy tới. Kéo đổi thứ tự trang giờ
+              <b>không làm mất</b> dấu trang và ô biểu mẫu.
+            </p>
+          </div>
         </div>
+
+        <p class="mt-6 text-sm text-ink-muted">
+          <b>Chưa sửa được:</b> hộp văn bản có mũi tên chỉ (callout) và ghi chú đã có luồng trả lời — vẫn xem được,
+          vẫn nằm trong danh sách, giữ nguyên khi lưu. Hộp văn bản nhiều kiểu chữ sẽ thành một kiểu sau khi sửa.
+        </p>
 
         <p class="mt-6 text-sm text-ink-muted">
           <b>Hướng dẫn sử dụng</b> trong app (<code>F1</code>) đã cập nhật, tiếng Việt và tiếng Anh.
