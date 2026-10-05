@@ -80,7 +80,7 @@ async function makeFixture() {
   left.zero = reg(base("Square", [250, 10, 280, 40], "x-zero", { BS: { W: 0 } }));
   left.parent = reg(base("Square", [290, 10, 320, 40], "x-parent"));
   left.reply = reg({ Type: "Annot", Subtype: "Text", Rect: [290, 50, 310, 70], IRT: left.parent, Contents: S("đồng ý"), T: S("tuyetpta") });
-  left.freetext = reg(base("FreeText", [330, 10, 380, 40], "x-ft", { Contents: S("hello"), DA: PDFString.of("/Helv 10 Tf 0 g") }));
+  left.freetext = reg(base("FreeText", [330, 10, 380, 40], "x-ft", { Contents: S("hello"), DA: PDFString.of("/Helv 10 Tf 0 g"), IT: "FreeTextCallout", CL: [330, 10, 340, 20, 350, 20] }));
   left.oc = reg(base("Square", [390, 10, 420, 40], "x-oc", { OC: ctx.obj({ Type: "OCG", Name: S("Layer") }) }));
   const inline = ctx.obj(base("Square", [430, 10, 460, 40], "x-inline"));
   p1.node.set(PDFName.of("Annots"), ctx.obj([...Object.values(R1), ...Object.values(left), inline]));
@@ -120,7 +120,7 @@ async function makeFixture() {
   check("zero-width border → left alone (Nabu reads width 0 as 2)", why("x-zero"), "no-border");
   check("an annotation someone REPLIED to → left alone (removing it would orphan the thread)", why("x-parent"), "has-replies");
   check("optional content (layer) → left alone", why("x-oc"), "optional-content");
-  check("FreeText → not this wave (group A keeps its own type, Đợt 3c)", why("x-ft"), "subtype");
+  check("FreeText CALLOUT → left alone (its leader /CL would have to move with the box)", why("x-ft"), "callout");
   const inlineRaw = annotsOf(doc, 0).find((r) => !(r instanceof PDFRef));
   check("inline annotation dict → left alone (no object number to find it by, N2)",
     FA.readForeign(PDFLib, doc, inlineRaw, inlineRaw, targets).skip, "inline");
@@ -565,6 +565,178 @@ async function makeFixture() {
     sandbox.document.createElement = realCreate;
   }
 
+  // ---- 6c. FreeText (Đợt 3c): an edited partner text box stays THAT /FreeText -----------------
+  {
+    const fd = await PDFDocument.create();
+    const c = fd.context;
+    const g1 = fd.addPage([600, 800]);
+    const g2 = fd.addPage([600, 800]);
+    g2.node.set(PDFName.of("Rotate"), c.obj(90));
+    const S = (s) => PDFHexString.fromText(s);
+    const reg = (d) => c.register(c.obj(d));
+    const apOf = (ops) => c.register(c.flateStream(ops, { Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10] }));
+    const ft = (rect, nm, extra) => reg(Object.assign({ Type: "Annot", Subtype: "FreeText", Rect: rect, F: 4, NM: S(nm), T: S("hang_"), Subj: S("Text Box"),
+      CreationDate: PDFString.of("D:20260603120305+07'00'"), IT: PDFName.of("FreeText") }, extra));
+    const FR = {};
+    FR.a = ft([100, 600, 300, 640], "ft-a", {
+      RD: [0.75, 0.75, 0.75, 0.75], C: [1, 1, 1], Contents: S("INNO từ chối\rdòng 2"),
+      DA: PDFString.of("1 0 0 rg /F1 10 Tf"), DS: PDFString.of("font-family:Arial;font-size:10pt;color:#FF0000;"),
+      RC: PDFString.of('<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml"><p>INNO</p></body>'),
+      AP: { N: apOf("1 1 1 rg 1 0 0 RG 1 w 0.5 0.5 9 9 re B") },
+    });
+    FR.b = ft([100, 500, 250, 520], "ft-b", { IT: PDFName.of("FreeTextTypeWriter"), Contents: S("typewriter"), DA: PDFString.of("/Helv 12 Tf 0 0 1 rg"), BS: { W: 0 },
+      AP: { N: apOf("BT /Helv 12 Tf (typewriter) Tj ET") } });
+    FR.long = ft([300, 600, 360, 640], "ft-long", { Contents: S("một hai ba bốn năm"), DA: PDFString.of("/Helv 10 Tf 0 g") });
+    FR.empty = ft([100, 400, 150, 420], "ft-empty", { Contents: S("  "), DA: PDFString.of("/Helv 12 Tf 0 g") });
+    FR.turned = ft([100, 300, 150, 320], "ft-rot", { Contents: S("x"), DA: PDFString.of("/Helv 12 Tf 0 g"), Rotate: 90 });
+    g1.node.set(PDFName.of("Annots"), c.obj(Object.values(FR)));
+    const FR2 = { c: ft([100, 100, 220, 140], "ft-c", { Contents: S("xoay"), DA: PDFString.of("/Helv 12 Tf 0 0 0 rg"), DS: PDFString.of("font: Helvetica 12pt; text-align:center; color:#000000") }) };
+    g2.node.set(PDFName.of("Annots"), c.obj(Object.values(FR2)));
+    const fbytes = await fd.save();
+
+    const fdoc = await PDFDocument.load(fbytes, { updateMetadata: false });
+    const frec = (raw) => FA.readForeign(PDFLib, fdoc, raw, fdoc.context.lookup(raw), new Set());
+    const ra = frec(FR.a);
+    check("FreeText read: text (\\r → \\n), size from /DS, colour from /DS (not /DA's white-is-background trap), /C as background, font resource",
+      [ra.text, ra.size, ra.color, ra.fill, ra.fontRes, ra.align, ra.bold], ["INNO từ chối\ndòng 2", 10, "#ff0000", "#ffffff", "F1", "left", false]);
+    check("…its border read off its own /AP: 1 pt red", ra.border, { width: 1, color: "#ff0000" });
+    const rb = frec(FR.b);
+    check("typewriter box: /DA colour + size, no border (/BS /W 0), no background", [rb.color, rb.size, rb.border, rb.fill], ["#0000ff", 12, null, null]);
+    check("empty FreeText → left alone", frec(FR.empty).skip, "empty");
+    check("FreeText turned by its own /Rotate → left alone", frec(FR.turned).skip, "rotated");
+    check("/Q 1 or text-align:center → centred", frec(FR2.c).align, "center");
+    check("FreeText → text object over /Rect minus /RD",
+      FA.toObjects(ra, (x, y) => [x, 800 - y]).map((o) => [o.kind, o.x, o.y, o.w, o.h, o.fontSize, o.color, o.fill]),
+      [["text", 100.75, 160.75, 198.5, 38.5, 10, "#ff0000", "#ffffff"]]);
+
+    const m5 = (str) => str.length * 5;
+    check("wrapText: words wrapped greedily to the box", FA.wrapText("aaa bbb ccc", 40, m5), "aaa bbb\nccc");
+    check("wrapText: a line that fits is left exactly as it is (1 pt slack)", FA.wrapText("aaa bbb", 34, m5), "aaa bbb");
+    check("wrapText: existing line breaks kept, each paragraph wrapped on its own", FA.wrapText("aaa bbb ccc\nddd", 40, m5), "aaa bbb\nccc\nddd");
+    check("wrapText: a word wider than the box breaks by characters", FA.wrapText("abcdefghij", 20, m5), "abcd\nefgh\nij");
+    check("wrapText: no width → unchanged", FA.wrapText("aaa bbb", 0, m5), "aaa bbb");
+    check("wrapText: a fitting line keeps even its trailing spaces (the partner's text, untouched)", FA.wrapText("aaa  \nbb", 100, m5), "aaa  \nbb");
+
+    // a canvas good enough for the shipped text rasteriser: measures, draws nothing, hands back a real PNG
+    const PNG1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const fakeCtx = () => new Proxy({ measureText: (t) => ({ width: String(t).length * 5, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }) },
+      { get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { t[k] = v; return true; } });
+    const realCreate = sandbox.document.createElement;
+    sandbox.document.createElement = (t) => (t === "canvas" ? { width: 0, height: 0, getContext: () => fakeCtx(), toDataURL: () => PNG1 } : realCreate(t));
+    const fdict = async (bytes) => {
+      const d = await PDFDocument.load(bytes, { updateMetadata: false });
+      const m = new Map();
+      for (let i = 0; i < 2; i++) for (const raw of annotsOf(d, i)) {
+        const x = d.context.lookup(raw);
+        const nm = x.lookup(PDFName.of("NM"));
+        let key = (nm ? nm.decodeText() : raw.toString()) + "@" + i;
+        while (m.has(key)) key += "+";
+        const ent = {};
+        for (const [k, v] of x.entries()) ent[k.decodeText()] = v.toString();
+        const txt = (k) => { const v = x.lookup(PDFName.of(k)); return v && v.decodeText ? v.decodeText() : null; };
+        const ap = x.lookup(PDFName.of("AP"));
+        const n = ap && ap.lookup(PDFName.of("N"));
+        let apOps = null;
+        if (n && n.contents) { try { apOps = Buffer.from(PDFLib.decodePDFRawStream(n).decode()).toString("latin1"); } catch (_) { apOps = "?"; } }
+        m.set(key, { ref: raw.toString(), ent, nabu: !!x.get(PDFName.of("NabuKind")), Contents: txt("Contents"), DA: txt("DA"), DS: txt("DS"), T: txt("T"),
+          apRef: ap && ap.get(PDFName.of("N")) ? ap.get(PDFName.of("N")).toString() : null, apOps,
+          apMatrix: n && n.dict && n.dict.get(PDFName.of("Matrix")) ? n.dict.get(PDFName.of("Matrix")).toString().replace(/s+/g, " ") : null,
+          rect: x.lookup(PDFName.of("Rect")).asArray().map((v) => v.asNumber()), rd: x.lookup(PDFName.of("RD")) ? x.lookup(PDFName.of("RD")).asArray().map((v) => v.asNumber()) : null });
+      }
+      return m;
+    };
+    await openBytes(fbytes);
+    sandbox.state.numPages = 2;
+    await reimport();
+    const fl = live();
+    check("FreeText boxes import as Nabu text objects (A, typewriter B; C on the turned page)",
+      fl.map((l) => [l.page, l.a.kind, l.a._foreign.keep.NM]), [[0, "text", "ft-a"], [0, "text", "ft-b"], [0, "text", "ft-long"], [1, "text", "ft-c"]]);
+    const L0 = fl.find((l) => l.a._foreign.keep.NM === "ft-long").a;
+    check("a long sentence in a narrow partner box is wrapped to that box in the editor (Nabu text boxes do not wrap by themselves)",
+      [L0.text.includes("\n"), L0.text.replace(/\n/g, " "), L0.text.split("\n").every((ln) => ln.length * 5 <= L0.w + 1)], [true, "một hai ba bốn năm", true]);
+    check("…normalised like a re-opened Nabu box (every text field present), carrying font resource + border",
+      [fl[0].a.font, fl[0].a.lineHeight > 0, typeof fl[0].a.letterSpacing, fl[0].a._foreign.ft.fontRes, fl[0].a._foreign.ft.border], ["sans", true, "number", "F1", { width: 1, color: "#ff0000" }]);
+    check("…recorded for an IN-PLACE rewrite", ed._foreignImported.map((e) => [e.inplace, e.subtype]), [[true, "FreeText"], [true, "FreeText"], [true, "FreeText"], [true, "FreeText"]]);
+
+    const f0 = await fdict(fbytes);
+    ed.annots[0].push({ id: ed.seq++, kind: "box", x: 10, y: 10, w: 20, h: 20, color: "#00ff00", width: 2 });
+    await api.bakePending();
+    const f1 = await fdict(sandbox.state.bytes);
+    check("untouched text boxes: same number, same dict, key for key",
+      ["ft-a@0", "ft-b@0", "ft-long@0", "ft-c@1", "ft-empty@0", "ft-rot@0"].filter((k) => !f1.has(k) || f1.get(k).ref !== f0.get(k).ref || JSON.stringify(f1.get(k).ent) !== JSON.stringify(f0.get(k).ent)), []);
+
+    // edit A's text and move it; recolour C on the turned page; delete B
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const findF = (nm) => live().find((l) => l.a._foreign && l.a._foreign.keep.NM === nm);
+    const A = findF("ft-a").a;
+    A.text = "Đã sửa trong Nabu\nhai dòng";
+    A.y += 20;
+    const aAt = [A.x, A.y, A.w, A.h];
+    findF("ft-long").a.x += 10; // moved only — its text was not retyped
+    const C = findF("ft-c").a;
+    C.color = "#0000ff";
+    const cAt = [C.x, C.y, C.w, C.h];
+    ed.annots[0] = ed.annots[0].filter((a) => !(a._foreign && a._foreign.keep.NM === "ft-b"));
+    const pre = await fdict(sandbox.state.bytes);
+    toasts.length = 0;
+    await api.bakePending();
+    const f2 = await fdict(sandbox.state.bytes);
+    const fa = f2.get("ft-a@0");
+    check("edited box A is STILL the partner's /FreeText: same object number, no NabuKind, Subtype / IT / author / NM / created kept",
+      [fa.ref === pre.get("ft-a@0").ref, fa.nabu, fa.ent.Subtype, fa.ent.IT, fa.T, fa.ent.NM === pre.get("ft-a@0").ent.NM, fa.ent.CreationDate === pre.get("ft-a@0").ent.CreationDate],
+      [true, false, "/FreeText", "/FreeText", "hang_", true, true]);
+    check("…what Acrobat / Foxit edit from: /Contents (new text, \\r lines), /DA (their /F1, our size + colour), /DS, /Q",
+      [fa.Contents, fa.DA, /color:#FF0000/.test(fa.DS) && /10pt/.test(fa.DS), fa.ent.Q], ["Đã sửa trong Nabu\rhai dòng", "/F1 10 Tf 1 0 0 rg", true, "0"]);
+    check("…/RC (rich text) dropped, background /C kept white, /M updated", [fa.ent.RC, fa.ent.C.replace(/\s+/g, " "), fa.ent.M !== pre.get("ft-a@0").ent.M], [undefined, "[ 1 1 1 ]", true]);
+    check("…a NEW appearance: background fill, the text picture, the partner's red 1 pt border", [fa.apRef !== pre.get("ft-a@0").apRef, /re f/.test(fa.apOps), /\/NabuImg Do/.test(fa.apOps), /1\.00 w 1\.0000 0\.0000 0\.0000 RG/.test(fa.apOps) && /re S/.test(fa.apOps)], [true, true, true, true]);
+    const box = [fa.rect[0] + fa.rd[0], fa.rect[1] + fa.rd[1], fa.rect[2] - fa.rd[2], fa.rect[3] - fa.rd[3]];
+    check("…/Rect − /RD is exactly the moved box (20 pt lower on the page)",
+      box.map((v) => Math.round(v * 100) / 100), [100.75, 580.75, 299.25, 619.25]);
+    const dF = await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false });
+    check("…the old appearance stream is freed", dF.context.lookup(PDFLib.PDFRef.of(+pre.get("ft-a@0").apRef.split(" ")[0])), undefined);
+    check("deleted box B is gone", f2.has("ft-b@0"), false);
+    check("a box only MOVED keeps the partner's /Contents exactly — not the line breaks added to fit the editor",
+      [f2.get("ft-long@0").ref === pre.get("ft-long@0").ref, f2.get("ft-long@0").Contents], [true, "một hai ba bốn năm"]);
+    const fc = f2.get("ft-c@1");
+    check("recoloured C on the /Rotate 90 page: same object, /DA blue, appearance turned by /Matrix", [fc.ref === pre.get("ft-c@1").ref, fc.DA, fc.apMatrix, fa.apMatrix], [true, "/Helv 12 Tf 0 0 1 rg", "[ 0 1 -1 0 0 0 ]", null]);
+    check("no warning", toasts.filter((t) => t !== "Đã áp dụng chỉnh sửa."), []);
+    check("nothing Nabu-tagged written for any text box (only the green box from before)", [...f2.values()].filter((v) => v.nabu).length, 1);
+
+    // round trip: re-import reads back what Nabu wrote, and a bake with nothing changed leaves it alone
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const A2 = findF("ft-a").a;
+    const C2 = findF("ft-c").a;
+    check("re-import of A: same text, size, colour, background, border, box",
+      [A2.text, A2.fontSize, A2.color, A2.fill, A2._foreign.ft.border, [A2.x, A2.y, A2.w, A2.h].map((v, k) => near(v, aAt[k]))],
+      ["Đã sửa trong Nabu\nhai dòng", 10, "#ff0000", "#ffffff", { width: 1, color: "#ff0000" }, [true, true, true, true]]);
+    check("re-import of C on the turned page: same box (BI-45), blue, centred",
+      [[C2.x, C2.y, C2.w, C2.h].map((v, k) => near(v, cAt[k])), C2.color, C2.align], [[true, true, true, true], "#0000ff", "center"]);
+    const f3pre = await fdict(sandbox.state.bytes);
+    ed.annots[0].push({ id: ed.seq++, kind: "box", x: 40, y: 10, w: 20, h: 20, color: "#00ff00", width: 2 });
+    await api.bakePending();
+    const f3 = await fdict(sandbox.state.bytes);
+    check("…and a later bake that does not touch them leaves Nabu's own rewrite byte-for-byte alone (N1 holds after 3c)",
+      ["ft-a@0", "ft-c@1"].filter((k) => JSON.stringify(f3.get(k).ent) !== JSON.stringify(f3pre.get(k).ent)), []);
+
+    // N2: the original changed under us → kept, the edit is written BESIDE it as a Nabu box (no /NM), user told
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    findF("ft-a").a.text = "lần hai";
+    const dd = await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false });
+    const rawA = annotsOf(dd, 0).find((r) => { const x = dd.context.lookup(r); const nm = x.lookup(PDFName.of("NM")); return nm && nm.decodeText() === "ft-a"; });
+    dd.context.lookup(rawA).set(PDFName.of("Rect"), dd.context.obj([0, 0, 5, 5]));
+    sandbox.state.bytes = await dd.save();
+    toasts.length = 0;
+    await api.bakePending();
+    const f4 = await fdict(sandbox.state.bytes);
+    check("N2: the original FreeText stays as the file has it; the edit is a Nabu text box beside it, without the original's /NM; the user is told",
+      [f4.get("ft-a@0").Contents, [...f4.values()].filter((v) => v.nabu && /text/.test(v.ent.NabuKind)).map((v) => v.ent.NM), toasts.filter((t) => /không sửa được tại chỗ/.test(t)).length],
+      ["Đã sửa trong Nabu\rhai dòng", [undefined], 1]);
+    sandbox.document.createElement = realCreate;
+  }
+
   // ---- 7. wiring pins (DOM side; the probe runs them for real) ----------------------------------
   const read = (f) => fs.readFileSync(path.join(R, f), "utf8");
   const ED = read("editor.js");
@@ -584,10 +756,12 @@ async function makeFixture() {
     /annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\)\)/.test(bwr) && /rasterRedacted\(i, redacts, vp1, fp\.keepIds\)/.test(bwr), true);
   const bip = BK.slice(BK.indexOf("async function bakeInPlace()"), BK.indexOf("async function bakeWithRedaction()"));
   check("bakeInPlace: plan → strip ours → remove partner originals → move stamps by /Rect → draw all but the untouched / moved stamps",
-    /const fp = foreignPlan\(\);[\s\S]*stripManagedAnnots\(doc\);[\s\S]*removeForeign\(doc, fp\.remove\);[\s\S]*await applyStampRects\(doc, fp\.rects\);[\s\S]*annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\) && !fp\.rectIds\.has\(a\.id\)\)/.test(bip), true);
-  check("bakeWithRedaction: stamps moved by /Rect in `src` before copying; drawn as a picture only on a page rebuilt from one",
+    /const fp = foreignPlan\(\);[\s\S]*stripManagedAnnots\(doc\);[\s\S]*removeForeign\(doc, fp\.remove\);[\s\S]*await applyStampRects\(doc, fp\.rects\);[\s\S]*const failedInPlace = await applyInPlace\(doc, fp\.inplace\);[\s\S]*annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\) && !fp\.rectIds\.has\(a\.id\) &&\s*\(!fp\.inplaceIds\.has\(a\.id\) \|\| failedInPlace\.has\(a\.id\)\)\)/.test(bip), true);
+  check("bakeWithRedaction: stamps moved by /Rect and text boxes rewritten in `src` before copying (not on redacted pages); drawn as Nabu objects only on a page rebuilt from a picture",
     bwr.indexOf("await applyStampRects(src, fp.rects);") > 0 && bwr.indexOf("await applyStampRects(src, fp.rects);") < bwr.indexOf("out.copyPages(") &&
-    /const anns = redacts\.length \? all : all\.filter\(\(a\) => !fp\.rectIds\.has\(a\.id\)\);/.test(bwr), true);
+    bwr.indexOf("await applyInPlace(src, fp.inplace.filter((it) => !redactedPages.has(it.entry.page)));") > 0 &&
+    bwr.indexOf("await applyInPlace(src,") < bwr.indexOf("out.copyPages(") &&
+    /const anns = redacts\.length \? all\s*: all\.filter\(\(a\) => !fp\.rectIds\.has\(a\.id\) && \(!fp\.inplaceIds\.has\(a\.id\) \|\| failedInPlace\.has\(a\.id\)\)\);/.test(bwr), true);
   const AS = require("../renderer/annot-scan.js");
   check("list label: an imported plain Line (a 2-point poly in the editor) is still 'Đường kẻ'; a Nabu poly keeps its own",
     [AS.labelOf({ kind: "poly", subtype: "Line" }), AS.labelOf({ kind: "poly" }) === AS.KIND_LABEL.poly], ["Đường kẻ", true]);

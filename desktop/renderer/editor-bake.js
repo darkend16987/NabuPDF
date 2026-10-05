@@ -770,19 +770,34 @@
         if (!bytes) return false;
         extra = { dataUrl: await stampProxyUrl(bytes) };
       }
-      const objs = F.toObjects(rec, (x, y) => vp.convertToViewportPoint(x, y), extra);
+      let objs = F.toObjects(rec, (x, y) => vp.convertToViewportPoint(x, y), extra);
       if (!Array.isArray(objs) || !objs.length) return false;
+      // A text box goes through deserializeManaged, so it carries every field a Nabu text box
+      // has (normTextStyle defaults) — the same object a re-opened Nabu box would be.
+      objs = objs.map((o) => {
+        if (o.kind !== "text") return o;
+        const n = deserializeManaged(Object.assign({ k: "text" }, o));
+        if (!n) return null;
+        // the partner's words wrapped into the partner's box, measured the way Nabu draws them
+        const mctx = measureCtx();
+        n.text = F.wrapText(n.text, n.w, (str) => layoutTextBox(str, n, mctx, n.fontSize, 1).width);
+        delete n.id;
+        delete n._managed;
+        return n;
+      });
+      if (objs.some((o) => !o)) return false;
       const sigs = [];
       for (const o of objs) {
         o.id = ed.seq++;
         o._foreign = { fileRef: rec.fileRef, subtype: rec.subtype, keep: rec.keep };
+        if (rec.subtype === "FreeText") o._foreign.ft = { fontRes: rec.fontRes, border: rec.border, origText: rec.text, wrapText: o.text };
         sigs.push(JSON.stringify(serializeManaged(o)));
       }
       const hide = window.AnnotHide.entryOf(PDFLib, raw, dict);
       for (const o of objs) annotsFor(i).push(o);
       ed._foreignImported.push({ key: rec.fileRef, hideId: hide.id, page: i, num: rec.num, gen: rec.gen,
                                  subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs,
-                                 stamp: rec.subtype === "Stamp", primaryId: objs[0].id });
+                                 stamp: rec.subtype === "Stamp", inplace: rec.subtype === "FreeText", primaryId: objs[0].id });
       if (!ed._owned.has(i)) ed._owned.set(i, []);
       ed._owned.get(i).push(hide);
       ed._managedPages.add(i);
@@ -791,6 +806,90 @@
       console.warn("foreign annotation left as it is:", err);
       return false;
     }
+  }
+
+  // Đợt 3c, group A of Q1: an edited partner text box is rewritten IN PLACE — the same
+  // /FreeText object, so Acrobat / Foxit can keep editing it. Its fields come from
+  // ForeignAnnot.freeTextFields; its appearance is drawn here, with the same text rasteriser a
+  // Nabu text box bakes with (Vietnamese needs no embedded font) and placed like one, over the
+  // partner's background (/C) and border. Form space is the box's display orientation; a
+  // turned page is handled by /Matrix + apRectFor exactly like the image branch (BI-59). /RD
+  // records where the box sits inside /Rect, so the next import reads the same box back.
+  // False → nothing changed (N2 did not recognise the original, or a page turned by a
+  // non-quarter angle); the caller then writes a Nabu text box instead.
+  async function writeFreeText(doc, page, entry, a, vp1) {
+    const F = window.ForeignAnnot;
+    const found = F.findOriginal(PDFLib, doc, entry);
+    if (!found) return false;
+    const angle = page.getRotation().angle;
+    if (!apRotatable(angle)) return false;
+    const ctx = doc.context;
+    const map = makeMap(vp1, "orig");
+    const style = Object.assign({}, a);
+    delete style.fill; // the background covers the whole BOX, drawn below — not just the glyphs
+    const { bytes, wPt, hPt, ox, oy } = renderTextPng(a.text, a.fontSize, a.color, style);
+    const img = await doc.embedPng(bytes);
+    const padPt = a.fontSize * 0.15;
+    const border = a._foreign && a._foreign.ft ? a._foreign.ft.border : null;
+    const bw = border ? border.width : 0;
+    const px0 = a.x - padPt + ox, py0 = a.y - padPt + oy; // the picture's top-left (display)
+    const ux0 = Math.min(a.x - bw / 2, px0), uy0 = Math.min(a.y - bw / 2, py0);
+    const ux1 = Math.max(a.x + a.w + bw / 2, px0 + wPt), uy1 = Math.max(a.y + a.h + bw / 2, py0 + hPt);
+    const UW = ux1 - ux0, UH = uy1 - uy0;
+    const bx = a.x - ux0, by = uy1 - (a.y + a.h); // the box's lower-left in form space (y up)
+    const res = { XObject: { NabuImg: img.ref } };
+    const ops = [];
+    if (a.fill && a.fill !== "none") {
+      const c = hexRgb(a.fill);
+      const op = a.fillOpacity != null ? +a.fillOpacity : 1;
+      if (op < 1) res.ExtGState = { NabuBg: { Type: "ExtGState", ca: op } };
+      ops.push(`q ${op < 1 ? "/NabuBg gs " : ""}${c.red.toFixed(4)} ${c.green.toFixed(4)} ${c.blue.toFixed(4)} rg ${f(bx)} ${f(by)} ${f(a.w)} ${f(a.h)} re f Q`);
+    }
+    ops.push(`q ${f(wPt)} 0 0 ${f(hPt)} ${f(px0 - ux0)} ${f(uy1 - (py0 + hPt))} cm /NabuImg Do Q`);
+    if (border) {
+      const c = hexRgb(border.color);
+      ops.push(`q ${f(bw)} w ${c.red.toFixed(4)} ${c.green.toFixed(4)} ${c.blue.toFixed(4)} RG ${f(bx)} ${f(by)} ${f(a.w)} ${f(a.h)} re S Q`);
+    }
+    const ap = { Type: "XObject", Subtype: "Form", FormType: 1, BBox: [0, 0, UW, UH], Resources: res };
+    if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
+    const apRef = ctx.register(PDFRawStream.of(ctx.obj(ap), strToBytes(ops.join("\n"))));
+    const [rx, ry] = map(ux0, uy1); // the union's lower-left, display → user
+    const R = apRectFor(angle, UW, UH, rx, ry);
+    const [b1x, b1y] = map(a.x, a.y);
+    const [b2x, b2y] = map(a.x + a.w, a.y + a.h);
+    const B = [Math.min(b1x, b2x), Math.min(b1y, b2y), Math.max(b1x, b2x), Math.max(b1y, b2y)];
+    const r4 = (v) => Math.max(0, Math.round(v * 10000) / 10000);
+    const d = found.dict;
+    const oldAp = F.apRefsOf(PDFLib, doc, d);
+    d.set(PDFName.of("Rect"), ctx.obj(R.map((v) => Math.round(v * 10000) / 10000)));
+    d.set(PDFName.of("RD"), ctx.obj([r4(B[0] - R[0]), r4(B[1] - R[1]), r4(R[2] - B[2]), r4(R[3] - B[3])]));
+    d.set(PDFName.of("AP"), ctx.obj({ N: apRef }));
+    F.freeUnusedAp(PDFLib, doc, oldAp);
+    F.freeTextFields(PDFLib, d, a, a._foreign.ft, new Date());
+    return true;
+  }
+  // Rewrite every planned group-A original in `doc`; returns the ids that could NOT be (they
+  // are then drawn as Nabu objects beside the untouched original — two copies beat a lost edit —
+  // and must not take its /NM).
+  async function applyInPlace(doc, list) {
+    const failed = new Set();
+    const pages = doc.getPages();
+    for (const { entry, a } of list) {
+      const vp1 = (await state.pdf.getPage(entry.page + 1)).getViewport({ scale: 1 });
+      let ok = false;
+      try {
+        if (entry.subtype === "FreeText") ok = await writeFreeText(doc, pages[entry.page], entry, a, vp1);
+      } catch (err) {
+        console.error("in-place rewrite failed:", entry.subtype, err);
+      }
+      if (!ok) {
+        failed.add(a.id);
+        const keep = bakeKeep && bakeKeep.get(a.id);
+        if (keep) delete keep.NM;
+      }
+    }
+    if (failed.size) toast(`${failed.size} chú thích của phần mềm khác không sửa được tại chỗ (file đã đổi?) — đã ghi bản sửa bên cạnh bản gốc.`, "warn");
+    return failed;
   }
 
   const STAMP_IMPORT_CAP = 200;
@@ -1200,10 +1299,12 @@
     stripManagedAnnots(doc); // drop the previous round-trip copies; re-added from ed.annots below
     removeForeign(doc, fp.remove);
     await applyStampRects(doc, fp.rects); // moved partner stamps: /Rect only (3b-2)
+    const failedInPlace = await applyInPlace(doc, fp.inplace); // edited partner text boxes, same /FreeText (3c)
     const share = new Map(); // one embed per distinct image across the whole bake
     const pages = doc.getPages();
     for (let i = 0; i < pages.length; i++) {
-      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id) && !fp.rectIds.has(a.id));
+      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id) && !fp.rectIds.has(a.id) &&
+        (!fp.inplaceIds.has(a.id) || failedInPlace.has(a.id)));
       if (!anns.length && !ed.watermark) continue;
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       await drawAnnots(doc, pages[i], anns, vp1, "orig", share);
@@ -1219,6 +1320,11 @@
     const fp = foreignPlan();
     removeForeign(src, fp.remove);
     await applyStampRects(src, fp.rects);
+    // In place only where the page is COPIED; a redacted page is rebuilt from a picture, so an
+    // edited partner text box there is drawn as a Nabu box instead (its original goes with the page).
+    const redactedPages = new Set();
+    for (let i = 0; i < state.numPages; i++) if (annotsFor(i).some((a) => a.kind === "redact")) redactedPages.add(i);
+    const failedInPlace = await applyInPlace(src, fp.inplace.filter((it) => !redactedPages.has(it.entry.page)));
     const out = await PDFDocument.create();
     const share = new Map(); // see bakeInPlace
     // Copied pages carry the old round-trip annots. They are unlinked page by page
@@ -1231,7 +1337,8 @@
       const redacts = all.filter((a) => a.kind === "redact");
       // A moved partner stamp normally just has its /Rect rewritten in `src` (above). On a page
       // rebuilt from a picture its original is gone with the page, so its stand-in is drawn instead.
-      const anns = redacts.length ? all : all.filter((a) => !fp.rectIds.has(a.id));
+      const anns = redacts.length ? all
+        : all.filter((a) => !fp.rectIds.has(a.id) && (!fp.inplaceIds.has(a.id) || failedInPlace.has(a.id)));
       const others = anns.filter((a) => a.kind !== "redact");
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       let page;

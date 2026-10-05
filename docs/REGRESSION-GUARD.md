@@ -2703,6 +2703,16 @@ _Ghi 2026-09-30 (v0.2.73)._
   được vẽ bằng ảnh đại diện (trang đó vốn là ảnh). Con dấu có `/Rotate` riêng ⇒ không nhập. ĐO trên file khách: ảnh đại
   diện của ảnh dán lệch trung bình **4,38/255** so với trang; kéo 60, −40 px ⇒ `/Rect` dời đúng 60, +40 pt, mọi khoá khác
   y nguyên; file không to thêm.
+- **Luật 7 — HỘP VĂN BẢN (Đợt 3c, nhóm A): sửa xong vẫn là CHÍNH `/FreeText` đó** (cùng số đối tượng, không `/NabuKind`) để
+  đối tác sửa tiếp trong Acrobat / Foxit. `writeFreeText` ghi `/Contents` (dòng `\r`), `/DA` (giữ tên font của họ, cỡ +
+  màu của Nabu), `/DS`, `/Q`, `/C` (nền), `/M`; **bỏ `/RC`** (nhiều kiểu → một kiểu — mất mát Q1 đã chấp nhận); vẽ `/AP` mới
+  bằng chính bộ dựng chữ PNG của Nabu (tiếng Việt không cần nhúng font) + nền + **viền của họ** (màu đọc từ `RG` trong `/AP`
+  gốc); khung = hộp, phần ảnh chữ tràn ra ghi vào `/RD` ⇒ lần nhập sau đọc lại đúng hộp; trang xoay qua `/Matrix` +
+  `apRectFor` như nhánh ảnh (BI-59). Hộp Nabu **không tự ngắt dòng** ⇒ lúc nhập chữ được ngắt theo bề rộng hộp (`wrapText`,
+  đo bằng `layoutTextBox`); nếu người dùng không gõ lại chữ, `/Contents` gốc được ghi lại **nguyên văn** (không thêm dấu xuống
+  dòng). Callout (`/CL`), hộp có `/Rotate` riêng, `/CA` < 1, hộp rỗng ⇒ không nhập. N2 không nhận ra bản gốc ⇒ bản gốc giữ
+  nguyên, bản sửa ghi thành hộp chữ Nabu bên cạnh (không mang `/NM`) + cảnh báo. ĐO trên file khách: gõ lại "size 50mm" qua ô
+  sửa chữ thật ⇒ `37 0 R` vẫn là `/FreeText`, `/DA` `/F1 10 Tf 1 0 0 rg`, `/RC` bỏ, viền đỏ còn; kéo `22 0 R` 30 pt ⇒ chữ y nguyên.
 - **Đếm vào `_importedManaged`** (BI-60): xoá hết hình của đối tác vẫn kích hoạt bake.
 - **Đã kiểm E2E trong Electron thật trên FILE CỦA KHÁCH** (CDP, 20/20 hai lần): vào Chú thích → 11 hình (3 mây, 2 mũi tên,
   6 đường kẻ) là đối tượng sống, tác giả `hang_`, bản gốc ẩn theo tên; danh sách 19 dòng (11 sống + 8 viền đứt); Xong không
@@ -2710,7 +2720,7 @@ _Ghi 2026-09-30 (v0.2.73)._
   giữ `hang_` + `/NM`, đường kẻ mất, **18 chú thích còn lại cùng số đối tượng, cùng dict**; copy + dán một khoanh mây → bản
   gốc y nguyên + một mây Nabu mới; Ctrl+Z → **đúng bytes gốc**. Bôi đen trang 1 → 11 hình ở trang 6–10 còn là chú thích của
   đối tác. Nhập mất 64–211 ms với file 10 MB.
-- **Vỡ khi:** kéo con dấu / ảnh dán của đối tác xong mà nó bị mờ / thành ảnh Nabu / file to ra · mở file của đối tác, vào Chú thích, không sửa gì mà Lưu ra file khác · đối tác mở lại thấy hình bị nhân đôi /
+- **Vỡ khi:** sửa hộp văn bản của đối tác xong mà Acrobat thấy nó là con dấu (không gõ được nữa) / mất tên người tạo / chữ bị ngắt dòng lạ sau khi chỉ kéo · kéo con dấu / ảnh dán của đối tác xong mà nó bị mờ / thành ảnh Nabu / file to ra · mở file của đối tác, vào Chú thích, không sửa gì mà Lưu ra file khác · đối tác mở lại thấy hình bị nhân đôi /
   mất tên người tạo / mất lời bình · xoá hình của đối tác mà Popup còn lại · hình trên trang xoay lệch chỗ sau khi sửa ·
   danh sách liệt kê một hình hai lần khi đang sửa.
 

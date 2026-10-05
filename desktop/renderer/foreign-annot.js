@@ -43,7 +43,7 @@
 (function () {
   const AS = typeof module !== "undefined" && module.exports ? require("./annot-scan.js") : window.AnnotScan;
 
-  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp"]);
+  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp", "FreeText"]);
   // /F bits we refuse: Hidden 2, NoRotate 16, NoView 32, ReadOnly 64, Locked 128.
   const FLAG_SKIP = 2 | 16 | 32 | 64 | 128;
   const ARROW_ENDS = new Set(["OpenArrow", "ClosedArrow"]);
@@ -75,6 +75,38 @@
       }
     }
     return out;
+  }
+
+  // A FreeText's border, as its own appearance draws it: width from /BS /W (or /Border, default
+  // 1), colour from the first stroke colour (`r g b RG`) of its /AP — Acrobat keeps the border
+  // colour nowhere else. No stroked rectangle in the /AP (or an /AP we cannot decode) → none.
+  function borderOf(PDFLib, doc, dict) {
+    const { PDFName, PDFDict, PDFArray, PDFNumber } = PDFLib;
+    const N = (s) => PDFName.of(s);
+    const num = (v) => (v instanceof PDFNumber ? v.asNumber() : NaN);
+    let width = NaN;
+    const bs = dict.lookup(N("BS"));
+    if (bs instanceof PDFDict) width = num(bs.lookup(N("W")));
+    if (!Number.isFinite(width)) {
+      const b = dict.lookup(N("Border"));
+      width = b instanceof PDFArray && b.size() >= 3 ? num(doc.context.lookup(b.get(2))) : 1;
+    }
+    if (!(width > 0)) return null;
+    const ap = dict.lookup(N("AP"));
+    const form = ap instanceof PDFDict ? ap.lookup(N("N")) : null;
+    if (!(form instanceof PDFLib.PDFRawStream)) return null;
+    let ops;
+    try {
+      const bytes = PDFLib.decodePDFRawStream(form).decode();
+      ops = "";
+      for (let k = 0; k < bytes.length; k++) ops += String.fromCharCode(bytes[k]);
+    } catch (_) {
+      return null;
+    }
+    const rg = /(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+RG\b/.exec(ops);
+    if (!rg || !/\bre\s+[BbSs]\b/.test(ops)) return null;
+    const color = AS.colorOf([+rg[1], +rg[2], +rg[3]]);
+    return color ? { width, color } : null;
   }
 
   function readForeign(PDFLib, doc, raw, dict, targets) {
@@ -138,6 +170,39 @@
       };
     }
     if (Number.isFinite(ca) && ca < 0.999) return skip("opacity");
+
+    if (subtype === "FreeText") {
+      // Group (A) of Q1: an edited text box stays THIS /FreeText (writeFreeText) so the partner
+      // can keep editing it in Acrobat / Foxit. A callout's leader (/CL) would have to move with
+      // the box — not this wave. A box turned by its own /Rotate is left alone too.
+      const it = nameOf(look("IT"));
+      if (it === "FreeTextCallout" || look("CL")) return skip("callout");
+      const rot = num(look("Rotate"));
+      if (Number.isFinite(rot) && rot % 360 !== 0) return skip("rotated");
+      const ds = textOf(look("DS")) || "";
+      const da = textOf(look("DA")) || "";
+      const text = (textOf(look("Contents")) || AS.plainFromRich(textOf(look("RC")) || "")).replace(/\r\n?/g, "\n");
+      if (!text.trim()) return skip("empty");
+      const sizeM = /font-size\s*:\s*([\d.]+)\s*pt/i.exec(ds) || /\bfont\s*:[^;]*?([\d.]+)\s*pt/i.exec(ds) || /([\d.]+)\s+Tf\b/.exec(da);
+      const size = sizeM && +sizeM[1] > 0 ? +sizeM[1] : 12;
+      const q = num(look("Q"));
+      const alignM = /text-align\s*:\s*(left|center|right|justify)/i.exec(ds);
+      const align = q === 1 ? "center" : q === 2 ? "right" : alignM ? alignM[1].toLowerCase() : "left";
+      const rd = nums(look("RD"));
+      return {
+        subtype, it, rect,
+        num: raw.objectNumber, gen: raw.generationNumber, fileRef: raw.toString(),
+        nm: textOf(look("NM")), keep: keepOf(),
+        rd: rd && rd.length === 4 && rd.every((v) => Number.isFinite(v) && v >= 0) ? rd : null,
+        text, size, align,
+        color: AS.freeTextColor(ds, da) || "#000000",
+        bold: /font-weight\s*:\s*bold/i.test(ds),
+        italic: /font-style\s*:\s*italic/i.test(ds),
+        fill: AS.colorOf(nums(look("C"))), // /C of a FreeText is its BACKGROUND
+        fontRes: (/\/([^\s/()<>[\]{}%]+)\s+[\d.]+\s+Tf\b/.exec(da) || [])[1] || "Helv",
+        border: borderOf(PDFLib, doc, dict),
+      };
+    }
 
     const color = AS.colorOf(nums(look("C")));
     if (!color) return skip("no-color");
@@ -264,6 +329,24 @@
       const o = withDash(style({ kind: "poly", pts, closed: s === "Polygon" }));
       return [s === "Polygon" ? withFill(o) : o];
     }
+    if (s === "FreeText") {
+      // The text AREA: /Rect minus /RD when given (Acrobat writes half the border there),
+      // else minus half the border width.
+      const h = rec.border ? rec.border.width / 2 : 0;
+      const rd = rec.rd || [h, h, h, h];
+      const x1 = rec.rect[0] + rd[0], y1 = rec.rect[1] + rd[1], x2 = rec.rect[2] - rd[2], y2 = rec.rect[3] - rd[3];
+      if (!(x2 > x1 && y2 > y1)) return { skip: "geometry" };
+      const p = pt(x1, y1);
+      const q = pt(x2, y2);
+      const o = { kind: "text", x: Math.min(p.x, q.x), y: Math.min(p.y, q.y), w: Math.abs(q.x - p.x), h: Math.abs(q.y - p.y),
+                  text: rec.text, font: "sans", fontSize: rec.size, color: rec.color,
+                  bold: rec.bold, italic: rec.italic, underline: false, align: rec.align };
+      if (rec.fill) {
+        o.fill = rec.fill;
+        o.fillOpacity = 1;
+      }
+      return [o];
+    }
     if (s === "Stamp") {
       // Shown as an image object (move / resize / delete — exactly what a /Rect can say); the
       // picture is only a stand-in drawn from its /AP, never written back for the original.
@@ -311,11 +394,15 @@
     // Stamps whose /Rect the bake rewrites in place (moved / resized; nothing else changes).
     const rects = [];
     const rectIds = new Set();
+    // Group-A originals rewritten in place, keeping their own /Subtype (Đợt 3c).
+    const inplace = [];
+    const inplaceIds = new Set();
     for (const e of entries || []) {
       const owners = byKey.get(e.key) || [];
-      if (e.stamp) {
-        // ONE object stands for a stamp: the one imported (primaryId). Anything else carrying the
-        // same original is a copy — written as a new Nabu image, never with the original's /NM.
+      if (e.stamp || e.inplace) {
+        // ONE object stands for a stamp / a group-A annotation: the one imported (primaryId).
+        // Anything else carrying the same original is a copy — written as a new Nabu object,
+        // never with the original's /NM.
         const prim = owners.find((o) => o.a.id === e.primaryId);
         for (const o of owners) {
           if (o === prim) continue;
@@ -329,11 +416,18 @@
         } else if (sigOf(prim.a) === e.sigs[0]) {
           skipIds.add(prim.a.id);
           keepIds.add(e.hideId);
-        } else {
+        } else if (e.stamp) {
           rects.push({ entry: e, a: prim.a });
           rectIds.add(prim.a.id);
           // Only drawn when its page is rebuilt from a picture (a redaction on that page): then
           // the Nabu image that stands in for it inherits everything, /NM included.
+          giveKeep([prim]);
+        } else {
+          // Group A (Đợt 3c): rewritten IN PLACE — same object, same /Subtype (writeFreeText…).
+          // keepFor is for the fallbacks that draw it as a Nabu object instead (a redacted page,
+          // an original N2 no longer recognises).
+          inplace.push({ entry: e, a: prim.a });
+          inplaceIds.add(prim.a.id);
           giveKeep([prim]);
         }
         continue;
@@ -352,7 +446,7 @@
         giveKeep(owners);
       }
     }
-    return { remove, skipIds, keepIds, keepFor, rects, rectIds };
+    return { remove, skipIds, keepIds, keepFor, rects, rectIds, inplace, inplaceIds };
   }
 
   // The imported original `e` ({ page, num, gen, subtype, rect, nm }) in `doc` — or null unless
@@ -396,6 +490,38 @@
     return true;
   }
 
+  // The appearance streams an annotation's /AP points at (N / R / D, and the states inside a
+  // state dict) — what removing or replacing that /AP may leave unreferenced.
+  function apRefsOf(PDFLib, doc, dict) {
+    const { PDFName, PDFDict, PDFRef } = PDFLib;
+    const out = [];
+    const ap = dict.lookup(PDFName.of("AP"));
+    if (!(ap instanceof PDFDict)) return out;
+    for (const k of ["N", "R", "D"]) {
+      const v = ap.get(PDFName.of(k));
+      if (v instanceof PDFRef) out.push(v);
+      const vd = doc.context.lookup(v);
+      if (vd instanceof PDFDict && !(vd instanceof PDFLib.PDFStream)) for (const [, x] of vd.entries()) if (x instanceof PDFRef) out.push(x);
+    }
+    return out;
+  }
+  // Free those of `refs` no annotation in the document still uses — some tools share one stream
+  // between identical marks, and that one must stay.
+  function freeUnusedAp(PDFLib, doc, refs) {
+    if (!refs.length) return;
+    const { PDFDict } = PDFLib;
+    const used = new Set();
+    for (const pg of doc.getPages()) {
+      const a2 = pg.node.Annots();
+      if (!a2) continue;
+      for (let k = 0; k < a2.size(); k++) {
+        const dd = doc.context.lookup(a2.get(k));
+        if (dd instanceof PDFDict) for (const r of apRefsOf(PDFLib, doc, dd)) used.add(r.toString());
+      }
+    }
+    for (const r of refs) if (!used.has(r.toString())) doc.context.delete(r);
+  }
+
   // Remove the imported original `e` from `doc`, with its /Popup. Returns false — and changes
   // nothing — unless findOriginal recognises it (N2).
   function removeOriginal(PDFLib, doc, e) {
@@ -405,18 +531,7 @@
     if (!found) return false;
     const { arr, at, ref, dict: d } = found;
 
-    // Appearance streams are freed only when no other annotation in the document uses them —
-    // some tools share one stream between identical marks.
-    const apRefs = [];
-    const ap = d.lookup(N("AP"));
-    if (ap instanceof PDFDict) {
-      for (const k of ["N", "R", "D"]) {
-        const v = ap.get(N(k));
-        if (v instanceof PDFRef) apRefs.push(v);
-        const vd = doc.context.lookup(v);
-        if (vd instanceof PDFDict && !(v instanceof PDFRef)) for (const [, s] of vd.entries()) if (s instanceof PDFRef) apRefs.push(s);
-      }
-    }
+    const apRefs = apRefsOf(PDFLib, doc, d);
     const popup = d.get(N("Popup"));
     arr.remove(at);
     if (popup instanceof PDFRef) {
@@ -427,24 +542,7 @@
       doc.context.delete(popup);
     }
     doc.context.delete(ref);
-    if (apRefs.length) {
-      const used = new Set();
-      for (const pg of doc.getPages()) {
-        const a2 = pg.node.Annots();
-        if (!a2) continue;
-        for (let k = 0; k < a2.size(); k++) {
-          const dd = doc.context.lookup(a2.get(k));
-          const ap2 = dd instanceof PDFDict ? dd.lookup(N("AP")) : null;
-          if (!(ap2 instanceof PDFDict)) continue;
-          for (const [, v] of ap2.entries()) {
-            if (v instanceof PDFRef) used.add(v.toString());
-            const vd = doc.context.lookup(v);
-            if (vd instanceof PDFDict) for (const [, s] of vd.entries()) if (s instanceof PDFRef) used.add(s.toString());
-          }
-        }
-      }
-      for (const a of apRefs) if (!used.has(a.toString())) doc.context.delete(a);
-    }
+    freeUnusedAp(PDFLib, doc, apRefs);
     return true;
   }
 
@@ -461,6 +559,74 @@
       if (d.get(PDFName.of(k)) === undefined) d.set(PDFName.of(k), PDFHexString.fromText(String(keep[k])));
     }
     return true;
+  }
+
+// A FreeText wraps its words inside its box; a Nabu text box breaks lines only at "\n". So the
+  // imported text is wrapped here, greedily by words (a word wider than the box by characters),
+  // with `measure(str)` = width in points as Nabu will draw it. Lines that already fit are left
+  // exactly as they are (+1 pt of slack), so text Nabu itself sized is never re-wrapped.
+  function wrapText(text, maxWidth, measure) {
+    if (!(maxWidth > 0)) return text;
+    const fits = (s) => measure(s) <= maxWidth + 1;
+    const out = [];
+    for (const para of String(text).split("\n")) {
+      if (fits(para)) { out.push(para); continue; }
+      let line = "";
+      for (const word of para.split(/(?<= )/)) { // each word keeps its trailing space
+        if (fits(line + word)) { line += word; continue; }
+        if (line) { out.push(line.replace(/ +$/, "")); line = ""; }
+        if (fits(word)) { line = word; continue; }
+        for (const ch of word) {
+          if (line && !fits(line + ch)) { out.push(line); line = ""; }
+          line += ch;
+        }
+      }
+      out.push(line.replace(/ +$/, ""));
+    }
+    return out.join("\n");
+  }
+
+  // PDF date string for /M ("D:YYYYMMDDHHmmSS+hh'mm'"), in the machine's local time.
+  function pdfDate(d) {
+    const p = (n) => String(n).padStart(2, "0");
+    const off = -d.getTimezoneOffset();
+    const sign = off >= 0 ? "+" : "-";
+    const a = Math.abs(off);
+    return `D:${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${sign}${p(Math.floor(a / 60))}'${p(a % 60)}'`;
+  }
+
+  // An edited text box keeps being a /FreeText (Q1, group A): what the partner's Acrobat / Foxit
+  // reads to show and to RE-EDIT it is set from the Nabu object — /Contents, /DA (their font
+  // resource kept, size + colour ours), /DS, /Q, /C (background), /M. /RC (rich text) is dropped:
+  // the box now has one style (the loss Q1 accepted), and a reader falls back to /Contents + /DS.
+  // The appearance itself is drawn by the caller (it needs the text rasteriser).
+  function freeTextFields(PDFLib, dict, a, ft, now) {
+    const fontRes = ft && ft.fontRes;
+    // Text the user did not retype goes back EXACTLY as the partner wrote it — without the line
+    // breaks the import added to fit the box (wrapText).
+    const text = ft && a.text === ft.wrapText ? ft.origText : a.text;
+    const { PDFName, PDFHexString, PDFString } = PDFLib;
+    const N = (k) => PDFName.of(k);
+    const hex = (c) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(c || "");
+      const v = m ? m[1] : "000000";
+      return [0, 2, 4].map((k) => parseInt(v.slice(k, k + 2), 16) / 255);
+    };
+    const f3 = (v) => (Math.round(v * 1000) / 1000).toString();
+    const [r, g, b] = hex(a.color);
+    const size = +a.fontSize || 12;
+    const align = a.align === "center" ? "center" : a.align === "right" ? "right" : "left";
+    dict.set(N("Contents"), PDFHexString.fromText(String(text || "").replace(/\n/g, "\r")));
+    dict.set(N("DA"), PDFString.of(`/${fontRes || "Helv"} ${f3(size)} Tf ${f3(r)} ${f3(g)} ${f3(b)} rg`));
+    const css = [`font: Helvetica ${f3(size)}pt`, `text-align:${align}`, `color:#${(/^#?([0-9a-f]{6})$/i.exec(a.color || "") || [0, "000000"])[1].toUpperCase()}`];
+    if (a.bold) css.push("font-weight:bold");
+    if (a.italic) css.push("font-style:italic");
+    dict.set(N("DS"), PDFHexString.fromText(css.join("; ")));
+    dict.set(N("Q"), dict.context.obj(align === "center" ? 1 : align === "right" ? 2 : 0));
+    if (a.fill && a.fill !== "none") dict.set(N("C"), dict.context.obj(hex(a.fill)));
+    else dict.delete(N("C"));
+    dict.delete(N("RC"));
+    dict.set(N("M"), PDFString.of(pdfDate(now || new Date())));
   }
 
   // A one-page PDF that shows exactly what the viewer shows for a stamp record: its appearance
@@ -499,7 +665,7 @@
   }
 
   const api = { SUBTYPES, FLAG_SKIP, normRect, sameRect, replyTargets, readForeign, toObjects, planForeign,
-                findOriginal, updateRect, removeOriginal, applyKeep, stampProxyPdf };
+                findOriginal, updateRect, removeOriginal, applyKeep, stampProxyPdf, apRefsOf, freeUnusedAp, freeTextFields, pdfDate, wrapText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.ForeignAnnot = api;
 })();
