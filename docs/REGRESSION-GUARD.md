@@ -2721,6 +2721,14 @@ _Ghi 2026-09-30 (v0.2.73)._
   Ghi chú có trả lời / là trả lời ⇒ không nhập. `/F 28` (NoZoom + NoRotate — Acrobat ghi cho MỌI ghi chú) được chấp nhận
   cho `/Text`; ghi chú bị khoá vẫn không nhập. ĐO trong Electron (file kiểu Acrobat, 18/18): "Sửa gốc" ⇒ cùng `/Text`, biểu
   tượng + Popup còn; "Thêm bình luận" ⇒ một `/Text /IRT` mới, lời của họ không đổi; luồng sẵn có y nguyên.
+- **Luật 9 — TÔ SÁNG (Đợt 3c-3): vẫn là CHÍNH `/Highlight` đó.** Nhập thành `texthl` (một hộp mỗi quad, độ mờ = `/CA` ×
+  `ca` trong ExtGState của `/AP` — bộ ghi của Nabu để alpha ở ĐÓ với `/CA 1`, nên phải đọc ở đó, không thì sửa lần hai âm thầm
+  đổi độ mờ). Ghi: `writeHighlight` nhờ chính bộ ghi `texthl` của Nabu (đã ra `/Highlight` thật, quad theo từng góc, Multiply)
+  tạo MỘT chú thích tạm, chuyển `/Rect /QuadPoints /C /CA /AP` sang dict GỐC, bỏ chú thích tạm (không để lại `/NabuKind`);
+  `/Contents` (chữ được tô) chỉ ghi khi đổi; `/M` mới. ĐO trên file khách: đổi màu `54 0 R` qua ô Màu thật ⇒ cùng
+  `/Highlight`, quad của họ y nguyên (±0,01 pt), chỉ `/AP /C /CA /M /Rect` đổi.
+- **Hiệu năng (ĐO):** vào Chú thích trên 400 trang / 2 000 chú thích nhập được (hình, đường, Ink, hộp chữ, tô sáng) ⇒ 2 000 đối
+  tượng sau ~0,5 s, một khung hở lớn nhất 267 ms (nạp pdf-lib — có từ trước). Con dấu có trần 200 ảnh đại diện mỗi lần vào.
 - **Đếm vào `_importedManaged`** (BI-60): xoá hết hình của đối tác vẫn kích hoạt bake.
 - **Đã kiểm E2E trong Electron thật trên FILE CỦA KHÁCH** (CDP, 20/20 hai lần): vào Chú thích → 11 hình (3 mây, 2 mũi tên,
   6 đường kẻ) là đối tượng sống, tác giả `hang_`, bản gốc ẩn theo tên; danh sách 19 dòng (11 sống + 8 viền đứt); Xong không

@@ -792,13 +792,14 @@
         o._foreign = { fileRef: rec.fileRef, subtype: rec.subtype, keep: rec.keep };
         if (rec.subtype === "FreeText") o._foreign.ft = { fontRes: rec.fontRes, border: rec.border, origText: rec.text, wrapText: o.text };
         if (rec.subtype === "Text") o._foreign.note = { color: rec.color };
+        if (rec.subtype === "Highlight") o._foreign.hl = { text: rec.text };
         sigs.push(JSON.stringify(serializeManaged(o)));
       }
       const hide = window.AnnotHide.entryOf(PDFLib, raw, dict);
       for (const o of objs) annotsFor(i).push(o);
       ed._foreignImported.push({ key: rec.fileRef, hideId: hide.id, page: i, num: rec.num, gen: rec.gen,
                                  subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs,
-                                 stamp: rec.subtype === "Stamp", inplace: rec.subtype === "FreeText" || rec.subtype === "Text", primaryId: objs[0].id });
+                                 stamp: rec.subtype === "Stamp", inplace: rec.subtype === "FreeText" || rec.subtype === "Text" || rec.subtype === "Highlight", primaryId: objs[0].id });
       if (!ed._owned.has(i)) ed._owned.set(i, []);
       ed._owned.get(i).push(hide);
       ed._managedPages.add(i);
@@ -892,6 +893,36 @@
     for (const r of a.replies || []) pushPageAnnot(doc, page, F.replyAnnot(PDFLib, doc, found.ref, rect, r, a.color));
     return true;
   }
+  // Đợt 3c-3: an edited partner highlight stays the same /Highlight. Nabu's own tô-sáng writer
+  // (addManagedAnnot "texthl") already writes a real /Highlight — /QuadPoints per quad mapped by
+  // its own corners (rotated pages for free), /C, and an /AP that pins the Multiply blend at the
+  // object's alpha. It is asked for one into the page, its geometry + appearance are moved onto
+  // the ORIGINAL dict, and the temporary annotation is dropped. /Contents (the marked words) is
+  // only rewritten when it was changed; author, /NM, popup stay the partner's.
+  async function writeHighlight(doc, page, entry, a, vp1) {
+    const F = window.ForeignAnnot;
+    const found = F.findOriginal(PDFLib, doc, entry);
+    if (!found) return false;
+    const arr = page.node.Annots();
+    const before = arr ? arr.size() : 0;
+    const done = await addManagedAnnot(doc, page, a, makeMap(vp1, "orig"), null);
+    const after = page.node.Annots();
+    if (!done || !after || after.size() !== before + 1) return false;
+    const tmpRef = after.get(after.size() - 1);
+    const tmp = doc.context.lookup(tmpRef);
+    after.remove(after.size() - 1);
+    const d = found.dict;
+    const oldAp = F.apRefsOf(PDFLib, doc, d);
+    for (const k of ["Rect", "QuadPoints", "C", "CA", "AP"]) {
+      const v = tmp.get(PDFName.of(k));
+      if (v !== undefined) d.set(PDFName.of(k), v);
+    }
+    if (a.text !== (a._foreign && a._foreign.hl ? a._foreign.hl.text : a.text)) d.set(PDFName.of("Contents"), PDFHexString.fromText(a.text || ""));
+    d.set(PDFName.of("M"), PDFLib.PDFString.of(F.pdfDate(new Date())));
+    doc.context.delete(tmpRef);
+    F.freeUnusedAp(PDFLib, doc, oldAp);
+    return true;
+  }
   // Rewrite every planned group-A original in `doc`; returns the ids that could NOT be (they
   // are then drawn as Nabu objects beside the untouched original — two copies beat a lost edit —
   // and must not take its /NM).
@@ -904,6 +935,7 @@
       try {
         if (entry.subtype === "FreeText") ok = await writeFreeText(doc, pages[entry.page], entry, a, vp1);
         else if (entry.subtype === "Text") ok = await writeTextNote(doc, pages[entry.page], entry, a, vp1);
+        else if (entry.subtype === "Highlight") ok = await writeHighlight(doc, pages[entry.page], entry, a, vp1);
       } catch (err) {
         console.error("in-place rewrite failed:", entry.subtype, err);
       }

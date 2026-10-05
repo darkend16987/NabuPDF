@@ -43,7 +43,7 @@
 (function () {
   const AS = typeof module !== "undefined" && module.exports ? require("./annot-scan.js") : window.AnnotScan;
 
-  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp", "FreeText", "Text"]);
+  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp", "FreeText", "Text", "Highlight"]);
   // /F bits we refuse: Hidden 2, NoRotate 16, NoView 32, ReadOnly 64, Locked 128.
   const FLAG_SKIP = 2 | 16 | 32 | 64 | 128;
   const ARROW_ENDS = new Set(["OpenArrow", "ClosedArrow"]);
@@ -109,6 +109,25 @@
     return color ? { width, color } : null;
   }
 
+  // The fill alpha an appearance applies through its graphics states (`ca` < 1), 1 if none.
+  // Nabu's own highlight writer keeps the wash's alpha THERE with /CA 1 (so the Multiply blend is
+  // pinned), and a highlight Nabu rewrote must read back with the alpha it was given.
+  function apAlpha(PDFLib, dict) {
+    const { PDFName, PDFDict, PDFNumber } = PDFLib;
+    const ap = dict.lookup(PDFName.of("AP"));
+    const n = ap instanceof PDFDict ? ap.lookup(PDFName.of("N")) : null;
+    const res = n && n.dict ? n.dict.lookup(PDFName.of("Resources")) : null;
+    const gs = res instanceof PDFDict ? res.lookup(PDFName.of("ExtGState")) : null;
+    if (!(gs instanceof PDFDict)) return 1;
+    let alpha = 1;
+    for (const [, v] of gs.entries()) {
+      const g = dict.context.lookup(v);
+      const ca = g instanceof PDFDict ? g.lookup(PDFName.of("ca")) : null;
+      if (ca instanceof PDFNumber && ca.asNumber() < alpha) alpha = Math.max(0, ca.asNumber());
+    }
+    return alpha;
+  }
+
   function readForeign(PDFLib, doc, raw, dict, targets) {
     const { PDFName, PDFDict, PDFArray, PDFNumber, PDFRef, PDFBool } = PDFLib;
     const N = (s) => PDFName.of(s);
@@ -170,6 +189,20 @@
         nm: textOf(look("NM")), keep: keepOf(),
         ap: n, bbox, matrix: m && m.length === 6 && m.every(Number.isFinite) ? m : [1, 0, 0, 1, 0, 0],
         ca: Number.isFinite(ca) ? Math.max(0, Math.min(1, ca)) : 1,
+      };
+    }
+    if (subtype === "Highlight") {
+      // Group A, Đợt 3c-3: an edited highlight stays THIS /Highlight (writeHighlight). Its words
+      // are its /QuadPoints; a Nabu tô sáng theo chữ carries exactly that, plus its own alpha.
+      const qp = nums(look("QuadPoints"));
+      if (!qp || !qp.length || qp.length % 8 || !qp.every(Number.isFinite)) return skip("geometry");
+      return {
+        subtype, it: nameOf(look("IT")), rect,
+        num: raw.objectNumber, gen: raw.generationNumber, fileRef: raw.toString(),
+        nm: textOf(look("NM")), keep: keepOf(),
+        quads: qp, color: AS.colorOf(nums(look("C"))) || "#ffff00",
+        opacity: Math.max(0.05, Math.min(1, (Number.isFinite(ca) ? ca : 1) * apAlpha(PDFLib, dict))),
+        text: textOf(look("Contents")) || "",
       };
     }
     if (Number.isFinite(ca) && ca < 0.999) return skip("opacity");
@@ -343,6 +376,18 @@
       // /IC on a PolyLine colours its line endings, not an interior — only a Polygon is filled.
       const o = withDash(style({ kind: "poly", pts, closed: s === "Polygon" }));
       return [s === "Polygon" ? withFill(o) : o];
+    }
+    if (s === "Highlight") {
+      const quads = [];
+      for (let k = 0; k + 7 < rec.quads.length; k += 8) {
+        const ps = [0, 2, 4, 6].map((o) => pt(rec.quads[k + o], rec.quads[k + o + 1]));
+        const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+        const x = Math.min(...xs), y = Math.min(...ys);
+        const w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+        if (w > 0 && h > 0) quads.push({ x, y, w, h });
+      }
+      if (!quads.length) return { skip: "geometry" };
+      return [{ kind: "texthl", quads, color: rec.color, opacity: rec.opacity, text: rec.text }];
     }
     if (s === "Text") {
       const p = pt(rec.rect[0], rec.rect[1]);

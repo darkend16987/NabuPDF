@@ -857,6 +857,102 @@ async function makeFixture() {
       live().some((l) => l.a._foreign && l.a._foreign.keep.NM === "n-b"), false);
   }
 
+  // ---- 6e. highlights (Đợt 3c-3): an edited partner highlight stays THAT /Highlight ------------
+  {
+    const hd = await PDFDocument.create();
+    const c = hd.context;
+    const k1 = hd.addPage([600, 800]);
+    const k2 = hd.addPage([600, 800]);
+    k2.node.set(PDFName.of("Rotate"), c.obj(90));
+    const S = (s) => PDFHexString.fromText(s);
+    const reg = (d) => c.register(c.obj(d));
+    const hlAp = () => c.register(c.stream("/GS0 gs 1 1 0 rg 0 0 100 20 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 100, 20],
+      Resources: { ExtGState: { GS0: { BM: PDFName.of("Multiply") } } } }));
+    // Acrobat's quad order: TL, TR, BL, BR — two lines of marked text
+    const HR = {};
+    HR.a = reg({ Type: "Annot", Subtype: "Highlight", Rect: [100, 680, 300, 720], F: 4, C: [1, 1, 0], CA: 1, NM: S("hl-a"), T: S("hang_"),
+      Contents: S("từ được tô"), QuadPoints: [100, 720, 300, 720, 100, 705, 300, 705, 100, 700, 200, 700, 100, 685, 200, 685], AP: { N: hlAp() } });
+    HR.half = reg({ Type: "Annot", Subtype: "Highlight", Rect: [100, 600, 200, 615], F: 4, C: [0, 1, 0], CA: 0.5, NM: S("hl-half"),
+      QuadPoints: [100, 615, 200, 615, 100, 600, 200, 600] });
+    HR.bad = reg({ Type: "Annot", Subtype: "Highlight", Rect: [0, 0, 1, 1], F: 4, C: [1, 1, 0], NM: S("hl-bad"), QuadPoints: [1, 2, 3] });
+    k1.node.set(PDFName.of("Annots"), c.obj(Object.values(HR)));
+    const HR2 = { c: reg({ Type: "Annot", Subtype: "Highlight", Rect: [100, 100, 200, 115], F: 4, C: [1, 0.5, 0], NM: S("hl-c"), QuadPoints: [100, 115, 200, 115, 100, 100, 200, 100] }) };
+    k2.node.set(PDFName.of("Annots"), c.obj(Object.values(HR2)));
+    const hbytes = await hd.save();
+
+    const hdoc = await PDFDocument.load(hbytes, { updateMetadata: false });
+    const hrec = (raw) => FA.readForeign(PDFLib, hdoc, raw, hdoc.context.lookup(raw), new Set());
+    check("highlight read: quads, colour, its own /CA as the wash's opacity, marked words",
+      [hrec(HR.a).quads.length, hrec(HR.a).color, hrec(HR.a).opacity, hrec(HR.half).opacity, hrec(HR.a).text], [16, "#ffff00", 1, 0.5, "từ được tô"]);
+    check("broken /QuadPoints → left alone", hrec(HR.bad).skip, "geometry");
+    check("highlight → tô sáng theo chữ, one view box per quad",
+      FA.toObjects(hrec(HR.a), (x, y) => [x, 800 - y]), [{ kind: "texthl", quads: [{ x: 100, y: 80, w: 200, h: 15 }, { x: 100, y: 100, w: 100, h: 15 }], color: "#ffff00", opacity: 1, text: "từ được tô" }]);
+
+    const hdict = async (bytes) => {
+      const d = await PDFDocument.load(bytes, { updateMetadata: false });
+      const m = new Map();
+      for (let i = 0; i < 2; i++) for (const raw of annotsOf(d, i)) {
+        const x = d.context.lookup(raw);
+        const nm = x.lookup(PDFName.of("NM"));
+        let key = (nm ? nm.decodeText() : raw.toString()) + "@" + i;
+        while (m.has(key)) key += "+";
+        const ent = {};
+        for (const [k, v] of x.entries()) ent[k.decodeText()] = v.toString();
+        const ap = x.lookup(PDFName.of("AP"));
+        const n = ap && ap.lookup(PDFName.of("N"));
+        let apOps = null;
+        if (n && n.contents) { try { apOps = Buffer.from(PDFLib.decodePDFRawStream(n).decode()).toString("latin1"); } catch (_) { apOps = "?"; } }
+        const qp = x.lookup(PDFName.of("QuadPoints"));
+        m.set(key, { ref: raw.toString(), ent, nabu: !!x.get(PDFName.of("NabuKind")) || !!x.get(PDFName.of("NabuData")), apOps,
+          apRes: n && n.dict && n.dict.lookup(PDFName.of("Resources")) ? n.dict.lookup(PDFName.of("Resources")).toString().replace(/\s+/g, " ") : null,
+          qp: qp ? qp.asArray().map((v) => Math.round(v.asNumber() * 100) / 100) : null, n: annotsOf(d, i).length,
+          Contents: x.lookup(PDFName.of("Contents")) ? x.lookup(PDFName.of("Contents")).decodeText() : null });
+      }
+      return m;
+    };
+    await openBytes(hbytes);
+    sandbox.state.numPages = 2;
+    await reimport();
+    check("partner highlights import as tô sáng theo chữ (A, the half-transparent one, C on the turned page; not the broken one)",
+      live().map((l) => [l.page, l.a.kind, l.a._foreign.keep.NM, l.a.opacity]), [[0, "texthl", "hl-a", 1], [0, "texthl", "hl-half", 0.5], [1, "texthl", "hl-c", 1]]);
+    const h0 = await hdict(hbytes);
+    ed.annots[0].push({ id: ed.seq++, kind: "box", x: 10, y: 10, w: 20, h: 20, color: "#00ff00", width: 2 });
+    await api.bakePending();
+    const h1 = await hdict(sandbox.state.bytes);
+    check("untouched highlights: same objects, same dicts", ["hl-a@0", "hl-half@0", "hl-bad@0", "hl-c@1"].filter((k) => JSON.stringify(h1.get(k).ent) !== JSON.stringify(h0.get(k).ent)), []);
+
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const findH = (nm) => live().find((l) => l.a._foreign && l.a._foreign.keep.NM === nm).a;
+    findH("hl-a").color = "#00ffff";
+    const Cq = findH("hl-c").quads.map((q) => ({ ...q }));
+    findH("hl-c").opacity = 0.3;
+    ed.annots[0] = ed.annots[0].filter((a) => !(a._foreign && a._foreign.keep.NM === "hl-half"));
+    const pre = await hdict(sandbox.state.bytes);
+    toasts.length = 0;
+    await api.bakePending();
+    const h2 = await hdict(sandbox.state.bytes);
+    const A = h2.get("hl-a@0"), PA = pre.get("hl-a@0");
+    check("recoloured highlight A: SAME /Highlight object, no NabuKind/NabuData, author + NM kept, words untouched",
+      [A.ref === PA.ref, A.ent.Subtype, A.nabu, A.ent.T === PA.ent.T, A.ent.NM === PA.ent.NM, A.Contents], [true, "/Highlight", false, true, true, "từ được tô"]);
+    check("…/C cyan, the SAME quads (Acrobat order), a new Multiply appearance, /M updated",
+      [A.ent.C.replace(/\s+/g, " "), A.qp, /Multiply/.test(A.apRes), A.ent.M !== undefined, A.ent.AP !== PA.ent.AP],
+      ["[ 0 1 1 ]", [100, 720, 300, 720, 100, 705, 300, 705, 100, 700, 200, 700, 100, 685, 200, 685], true, true, true]);
+    check("…no temporary annotation left behind (page 1 lost exactly the deleted one), old appearance freed",
+      [A.n, pre.get("hl-a@0").n - 1, (await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false })).context.lookup(PDFLib.PDFRef.of(+/\/N (\d+)/.exec(PA.ent.AP.replace(/\s+/g, " "))[1]))],
+      [pre.get("hl-a@0").n - 1, pre.get("hl-a@0").n - 1, undefined]);
+    check("deleted highlight is gone", h2.has("hl-half@0"), false);
+    check("highlight C (turned page): opacity 0.3 in its new appearance, same object", [h2.get("hl-c@1").ref === pre.get("hl-c@1").ref, /ca 0\.3/.test(h2.get("hl-c@1").apRes)], [true, true]);
+    check("no warning", toasts.filter((t) => t !== "Đã áp dụng chỉnh sửa."), []);
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const C2 = findH("hl-c");
+    check("re-import on the /Rotate 90 page: the same quads (BI-45), the new opacity",
+      [C2.quads.length === Cq.length && C2.quads.every((q, k) => near(q.x, Cq[k].x) && near(q.y, Cq[k].y) && near(q.w, Cq[k].w) && near(q.h, Cq[k].h)), C2.opacity],
+      [true, 0.3]);
+    check("…and the recoloured A reads back cyan at full strength (alpha read from its own appearance, /CA 1)", [findH("hl-a").color, findH("hl-a").opacity], ["#00ffff", 1]);
+  }
+
   // ---- 7. wiring pins (DOM side; the probe runs them for real) ----------------------------------
   const read = (f) => fs.readFileSync(path.join(R, f), "utf8");
   const ED = read("editor.js");
