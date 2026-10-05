@@ -265,18 +265,21 @@
     c.height = Math.floor(vp.height);
     const cx = c.getContext("2d");
     // A page that carries round-trip annots of ours must be rasterised WITHOUT
-    // annotations. importManaged lifted them into ed.annots and this bake writes them
+    // them. importManaged lifted them into ed.annots and this bake writes them
     // back as stamps, so burning their old appearance in as well would show every
     // text box / image on the page TWICE — and a round-trip object the user had just
-    // deleted would come back as un-removable pixels. Pages with none keep the old
-    // behaviour (annotations rendered), so a foreign annotation elsewhere in the
-    // document still survives redaction as pixels exactly as before.
-    const hadManaged = ed._managedPages.has(i);
-    await page.render({
-      canvasContext: cx,
-      viewport: vp,
-      annotationMode: hadManaged ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
-    }).promise;
+    // deleted would come back as un-removable pixels.
+    //
+    // Without THEM — not without every annotation (BI-99). This used to be DISABLE for
+    // the whole page whenever it held one of ours, and the page is rebuilt from this
+    // picture alone: a partner's FreeText / cloud / form value on the same page was not
+    // burned in and was not copied either — gone from the saved file (RESEARCH-2026-10-05
+    // §3.4-3). Now every other annotation becomes pixels, exactly as on a page with none
+    // of ours. ed._owned is the same list edit mode hides on screen; one that no longer
+    // matches this page plans "all" → DISABLE, the old behaviour.
+    const hide = await window.AnnotHide.plan(ed._owned.get(i) || null, page);
+    await window.AnnotHide.render(page, { canvasContext: cx, viewport: vp }, hide,
+      pdfjsLib.AnnotationMode, state.pdf.annotationStorage).promise;
     // Burn each box in *its own* colour so the original pixels are gone for good.
     for (const r of redacts) {
       cx.fillStyle = r.color || "#000";
