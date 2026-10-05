@@ -64,6 +64,7 @@ async function makeFixture() {
   R1.arrowRev = reg(base("Line", [99, 449, 301, 471], "ln-rev", { L: [100, 450, 300, 470], LE: ["ClosedArrow", "None"] }));
   R1.line = reg(base("Line", [99, 399, 201, 451], "ln-plain", { L: [100, 400, 200, 450] }));
   R1.ink = reg(base("Ink", [50, 100, 250, 200], "ink-2", { InkList: [[60, 110, 80, 130, 100, 120], [150, 150, 200, 190]] }));
+  R1.ink3 = reg(base("Ink", [50, 250, 250, 300], "ink-3", { InkList: [[60, 260, 80, 280], [150, 260, 200, 290]] }));
   R1.polygon = reg(base("Polygon", [300, 100, 400, 200], "pgon", { Vertices: [300, 100, 400, 100, 350, 200], IC: [0, 0, 1] }));
   R1.cloudPoly = reg(base("Polygon", [420, 100, 520, 200], "pgon-cloud", { Vertices: [420, 100, 520, 100, 470, 200], IT: "PolygonCloud" }));
   R1.polyline = reg(base("PolyLine", [300, 250, 400, 300], "pline", { Vertices: [300, 250, 350, 300, 400, 250], IC: [0, 1, 0] }));
@@ -182,6 +183,13 @@ async function makeFixture() {
     const inkE = [E("9 0 R", 0, [sig(s1), sig(s2)], "9R")];
     check("multi-stroke Ink, both strokes as imported (any order) → untouched", FA.planForeign(inkE, [{ page: 0, a: s2 }, { page: 0, a: s1 }], sig).remove.length, 0);
     check("…one stroke deleted → the original goes, the remaining stroke is written", FA.planForeign(inkE, [{ page: 0, a: s1 }], sig).remove.length, 1);
+    s1._foreign.keep = { T: "hang_", NM: "ink-x" };
+    s2._foreign.keep = { T: "hang_", NM: "ink-x" };
+    s1.x = 50; s2.x = 60;
+    const kp = FA.planForeign(inkE, [{ page: 0, a: s2 }, { page: 0, a: s1 }], sig).keepFor;
+    check("both strokes of one Ink edited → both written, author on both, the unique /NM on ONE (the first imported)",
+      [kp.get(3), kp.get(4)], [{ T: "hang_", NM: "ink-x" }, { T: "hang_" }]);
+    check("…and the plan never mutates the objects' own keep", s2._foreign.keep, { T: "hang_", NM: "ink-x" });
     check("objects without _foreign never touch the plan", FA.planForeign(entries, [{ page: 0, a }, { page: 0, a: { id: 9, kind: "box" } }], sig).remove.length, 0);
   }
 
@@ -279,12 +287,12 @@ async function makeFixture() {
   await openBytes(fx.bytes);
   const n = await reimport();
   const kinds = live().map((l) => l.a.kind);
-  check("import: 12 partner annotations become overlay objects (the Ink as 2 strokes)",
-    [n, kinds], [12, ["cloud", "box", "ellipse", "arrow", "arrow", "poly", "draw", "draw", "poly", "cloudpen", "poly", "box", "poly"].slice(0, kinds.length)]);
-  check("…13 objects in all, on the right pages", [live().filter((l) => l.page === 0).length, live().filter((l) => l.page === 1).length], [11, 2]);
+  check("import: 13 partner annotations become overlay objects (each 2-stroke Ink as 2 draws)",
+    [n, kinds], [13, ["cloud", "box", "ellipse", "arrow", "arrow", "poly", "draw", "draw", "draw", "draw", "poly", "cloudpen", "poly", "box", "poly"]]);
+  check("…15 objects in all, on the right pages", [live().filter((l) => l.page === 0).length, live().filter((l) => l.page === 1).length], [13, 2]);
   check("…each original recorded for the bake, and owned (hidden on screen while editing)",
-    [ed._foreignImported.length, (ed._owned.get(0) || []).length, (ed._owned.get(1) || []).length], [12, 10, 2]);
-  check("…the copies carry the original's reference and author", live().filter((l) => l.a._foreign.keep.T === "hang_").length, 13);
+    [ed._foreignImported.length, (ed._owned.get(0) || []).length, (ed._owned.get(1) || []).length], [13, 11, 2]);
+  check("…the copies carry the original's reference and author", live().filter((l) => l.a._foreign.keep.T === "hang_").length, 15);
 
   // A. bake with NOTHING changed (a Nabu object added elsewhere forces the bake to run)
   const before = await dictStr(fx.bytes);
@@ -311,13 +319,14 @@ async function makeFixture() {
   ed.annots[0] = ed.annots[0].filter((a) => !(a._foreign && a._foreign.keep.NM === "ln-plain"));
   const ink = find("ink-2");
   ed.annots[0] = ed.annots[0].filter((a) => a !== ink[1]);
+  for (const a of find("ink-3")) for (const p of a.pts) p.y += 10; // BOTH strokes of the other Ink
   const beforeB = await dictStr(sandbox.state.bytes);
   check("bake runs", await api.bakePending(), true);
   const afterB = await dictStr(sandbox.state.bytes);
   const popupKey = [...beforeB.keys()].find((k) => beforeB.get(k).sub === "/Popup");
-  const gone = ["sq-cloud@0", "rot-sq@1", "ln-plain@0", "ink-2@0", popupKey];
+  const gone = ["sq-cloud@0", "rot-sq@1", "ln-plain@0", "ink-2@0", "ink-3@0", popupKey];
   check("B: the edited / deleted originals are gone (with the cloud's popup)",
-    [gone.map((k) => afterB.has(k) && !afterB.get(k).nabu), [...afterB.values()].some((v) => v.sub === "/Popup")], [[false, false, false, false, false], false]);
+    [gone.map((k) => afterB.has(k) && !afterB.get(k).nabu), [...afterB.values()].some((v) => v.sub === "/Popup")], [[false, false, false, false, false, false], false]);
   check("B: every OTHER partner annotation is byte-for-byte the same dict at the same number",
     [...beforeB.keys()].filter((k) => !gone.includes(k) && !beforeB.get(k).nabu)
       .filter((k) => !afterB.has(k) || afterB.get(k).str !== beforeB.get(k).str || afterB.get(k).ref !== beforeB.get(k).ref), []);
@@ -326,6 +335,21 @@ async function makeFixture() {
   check("B: …and the cloud keeps its comment text", afterB.get("sq-cloud@0") && afterB.get("sq-cloud@0").C, "Sửa chỗ này");
   check("B: the plain line is gone entirely", afterB.has("ln-plain@0"), false);
   check("B: no warning", warns(), []);
+  {
+    const d = await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false });
+    const nms = [];
+    let draws = 0;
+    for (const raw of annotsOf(d, 0)) {
+      const x = d.context.lookup(raw);
+      if (String(x.get(PDFName.of("NabuKind"))) !== "/draw") continue;
+      const t = x.lookup(PDFName.of("T"));
+      if (t && t.decodeText() === "hang_") draws++;
+      const nm = x.lookup(PDFName.of("NM"));
+      if (nm) nms.push(nm.decodeText());
+    }
+    check("B: the 2-stroke Ink edited → 2 Nabu draws, both by hang_ (+1 kept stroke of ink-2)", draws, 3);
+    check("B: …but each /NM appears ONCE (the name is unique per annotation)", nms.sort(), ["ink-2", "ink-3"]);
+  }
 
   // C. re-import: the edited ones come back as Nabu objects, at the place they were edited to
   await openBytes(sandbox.state.bytes);
@@ -337,7 +361,7 @@ async function makeFixture() {
   const r2b = nabuOf(1, "box", "#0000ff")[0];
   check("C: on the /Rotate 90 page the recoloured square reads back exactly where the partner's was (BI-45)",
     r2b && [near(r2b.x, rotAt[0]), near(r2b.y, rotAt[1]), near(r2b.w, rotAt[2]), near(r2b.h, rotAt[3])], [true, true, true, true]);
-  check("C: untouched partner annotations are imported as partner annotations again (12 − 4)", ed._foreignImported.length, 8);
+  check("C: untouched partner annotations are imported as partner annotations again (13 − 5)", ed._foreignImported.length, 8);
 
   // D. a changed file (N2): the original no longer matches → kept, user told, Nabu copy still written
   {

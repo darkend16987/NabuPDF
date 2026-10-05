@@ -785,10 +785,15 @@
   // At bake time (BI-100): which imported originals stay exactly as they are (their overlay
   // copies are skipped) and which are removed (their copies — if any are left — get written as
   // Nabu annotations). See ForeignAnnot.planForeign.
+  // The plan also decides what each written copy inherits (planForeign keepFor — one /NM per
+  // original); drawAnnots reads it from `bakeKeep`, which every bake sets here first.
+  let bakeKeep = null;
   function foreignPlan() {
     const live = [];
     for (const k of Object.keys(ed.annots)) for (const a of ed.annots[k]) if (a._foreign) live.push({ page: +k, a });
-    return window.ForeignAnnot.planForeign(ed._foreignImported || [], live, (a) => JSON.stringify(serializeManaged(a)));
+    const plan = window.ForeignAnnot.planForeign(ed._foreignImported || [], live, (a) => JSON.stringify(serializeManaged(a)));
+    bakeKeep = plan.keepFor;
+    return plan;
   }
   // Remove the originals the plan gave up on. One that is no longer exactly what we imported is
   // left alone (N2) — the file then holds both it and the Nabu copy, and the user is told.
@@ -838,7 +843,8 @@
         if (isManagedKind(a.kind)) {
           const done = await addManagedAnnot(doc, page, a, map, share);
           // An edited partner annotation keeps its author / comment / NM (BI-100).
-          if (done && a._foreign) window.ForeignAnnot.applyKeep(PDFLib, doc, page, a._foreign.keep);
+          const keep = bakeKeep && bakeKeep.get(a.id);
+          if (done && keep) window.ForeignAnnot.applyKeep(PDFLib, doc, page, keep);
           if (done) continue;
         }
         await drawOneAnnot(doc, page, a, map);

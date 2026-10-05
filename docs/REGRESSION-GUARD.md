@@ -2691,7 +2691,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Luật 3 — N2: gỡ bản gốc chỉ khi trang đó, số đối tượng đó vẫn là đúng nó** (`/Subtype` + `/Rect` + `/NM`); lệch ⇒ giữ,
   toast cảnh báo, bản Nabu vẫn được ghi (hai bản còn hơn mất lời bình). Gỡ kèm `/Popup`; luồng `/AP` chỉ giải phóng khi
   không chú thích nào khác dùng chung.
-- **Luật 4 — bản sửa giữ người tạo**: `applyKeep` chép `/T /Contents /NM /Subj /CreationDate` lên chú thích Nabu vừa ghi
+- **Luật 4 — bản sửa giữ người tạo**: `applyKeep` chép `/T /Contents /NM /Subj /CreationDate` lên chú thích Nabu vừa ghi; `/NM` là tên DUY NHẤT nên một bản gốc thành nhiều bản Nabu (Ink nhiều nét) thì chỉ bản nhập đầu tiên mang `/NM` (`planForeign` → `keepFor`)
   (không đè khoá Nabu đã ghi). Danh sách vẫn hiện tên tác giả; mở lại vẫn cùng `/NM`.
 - **Luật 5 — đường bôi đen**: `removeForeign(src)` **trước** `copyPages`; bản gốc không đụng nằm trên trang bôi đen thì vẫn
   được vẽ vào ảnh (`keepIds` loại khỏi danh sách ẩn của `rasterRedacted`), như mọi chú thích khác của đối tác (BI-99 Luật 5).

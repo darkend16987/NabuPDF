@@ -252,6 +252,17 @@
     const remove = [];
     const skipIds = new Set();
     const keepIds = new Set(); // the pdf.js ids ("12R") of originals left in place
+    // What each written copy carries over from its original (applyKeep). /NM is an
+    // annotation's unique name, so of several copies of ONE original (a multi-stroke Ink, a
+    // stray clone) only the first — lowest id, i.e. the one imported first — takes it.
+    const keepFor = new Map();
+    const giveKeep = (owners) => {
+      owners.slice().sort((p, q) => p.a.id - q.a.id).forEach((o, k) => {
+        const keep = Object.assign({}, o.a._foreign.keep || {});
+        if (k > 0) delete keep.NM;
+        keepFor.set(o.a.id, keep);
+      });
+    };
     for (const e of entries || []) {
       const owners = byKey.get(e.key) || [];
       let untouched = owners.length === e.sigs.length && owners.every((o) => o.page === e.page);
@@ -265,9 +276,10 @@
         keepIds.add(e.hideId);
       } else {
         remove.push(e);
+        giveKeep(owners);
       }
     }
-    return { remove, skipIds, keepIds };
+    return { remove, skipIds, keepIds, keepFor };
   }
 
   // Remove the imported original `e` ({ page, num, gen, subtype, rect, nm }) from `doc`, with its
