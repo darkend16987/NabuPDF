@@ -6,8 +6,9 @@
  * bookmarks OR its comments; until v0.2.77 Nabu's column could only show thumbnails, so a
  * contract's table of contents was invisible here even though the file carried one.
  *
- * WHAT THIS FILE OWNS: the tab strip, the bookmark (outline) pane, and — from Đợt 2b — the
- * annotation list pane. It does NOT own the thumbnails: `#thumbs` keeps its own DOM, observer
+ * WHAT THIS FILE OWNS: the tab strip, the bookmark (outline) pane, and the annotation list
+ * pane "Chú thích" (Đợt 2b — it replaced the right-hand "Ghi chú" panel, which listed sticky
+ * notes only). It does NOT own the thumbnails: `#thumbs` keeps its own DOM, observer
  * and queue in app.js, untouched. A hidden thumbnail pane is `display:none`, so its
  * IntersectionObserver simply stops firing and the queue idles; nothing here needs to pause it.
  *
@@ -18,7 +19,7 @@
  * `module.exports` for node: test/side-panels.test.js runs it against mock pdf.js documents.
  */
 (function () {
-  const PANES = ["thumbs", "outline"];
+  const PANES = ["thumbs", "outline", "annots"];
   const PANE_KEY = "nabu-side-pane";
 
   // ---- pure: pdf.js outline → a tree with page indices ---------------------------------
@@ -89,7 +90,43 @@
     return Promise.all(raw.map((it) => resolveItem(pdf, it)));
   }
 
-  const pure = { resolveOutline, destTarget, PANES };
+  // ---- pure: what the Chú thích list shows -----------------------------------------------
+  //
+  // OUTSIDE the editor the list is the FILE: every item annot-scan.js read. INSIDE it, Nabu's
+  // own annotations live in the overlay (importManaged lifted them out of the file, and the
+  // overlay holds unsaved ones too), so the list is the overlay's live objects PLUS the file's
+  // items that are NOT Nabu's (kind == null) — listing the file's Nabu items as well would show
+  // every text box twice, and one of the two copies would be stale.
+  // `live` items come from Editor.listObjects(): { id, page, kind, text, color, top, replies }.
+  function composeItems(fileItems, liveItems, editing) {
+    if (!editing) return (fileItems || []).map((it) => ({ ...it, live: false }));
+    const foreign = (fileItems || []).filter((it) => !it.kind).map((it) => ({ ...it, live: false }));
+    return (liveItems || []).map((it) => ({ ...it, live: true })).concat(foreign);
+  }
+
+  // Group by page (ascending) and, within a page, top-to-bottom by `top(item)` — display units
+  // from the page's top edge, supplied by the caller (it needs the page's viewport). Stable:
+  // equal tops keep their input order (= /Annots order = the order they were drawn).
+  function groupByPage(items, top) {
+    const pages = new Map();
+    items.forEach((it, k) => {
+      if (!pages.has(it.page)) pages.set(it.page, []);
+      pages.get(it.page).push({ it, k, y: top(it) });
+    });
+    return [...pages.keys()]
+      .sort((a, b) => a - b)
+      .map((page) => ({
+        page,
+        items: pages.get(page).sort((p, q) => p.y - q.y || p.k - q.k).map((e) => e.it),
+      }));
+  }
+
+  // Filter by the label shown (type) and by author; "" = no filter on that axis.
+  function filterItems(items, labelOf, type, author) {
+    return items.filter((it) => (!type || labelOf(it) === type) && (!author || it.author === author));
+  }
+
+  const pure = { resolveOutline, destTarget, composeItems, groupByPage, filterItems, PANES };
   if (typeof module !== "undefined" && module.exports) module.exports = pure;
   if (typeof window === "undefined" || typeof document === "undefined") return;
 
@@ -112,6 +149,14 @@
     const co = $("outline-collapse");
     if (ex) ex.addEventListener("click", () => setAllOpen(true));
     if (co) co.addEventListener("click", () => setAllOpen(false));
+    for (const id of ["annots-ftype", "annots-fauthor"]) {
+      const sel = $(id);
+      if (sel) sel.addEventListener("change", () => {
+        an.filterType = $("annots-ftype").value;
+        an.filterAuthor = $("annots-fauthor").value;
+        refreshAnnots();
+      });
+    }
     let saved = null;
     try {
       saved = localStorage.getItem(PANE_KEY);
@@ -137,17 +182,24 @@
         /* the choice just won't be remembered */
       }
     }
+    // The toolbar "Ghi chú" button opens this tab (it used to open a right-hand panel), so it
+    // lights up exactly when the tab is showing.
+    const bc = $("btn-comments");
+    if (bc) bc.classList.toggle("active", name === "annots");
     if (name === "outline") ensureOutline();
+    if (name === "annots") refreshAnnots();
     // The thumbnail list was display:none — its "current page" highlight may have moved on
     // while hidden, and it could not scroll itself into view then (zero height).
     if (name === "thumbs" && deps && deps.onThumbsShown) deps.onThumbsShown();
   }
 
   // app.js calls this whenever state.pdf is replaced (renderAll, rerenderChanged). Cheap when
-  // the outline pane is not showing: it only marks the cached tree stale.
+  // the outline pane is not showing: it only marks the cached tree stale. The annotation scan
+  // runs regardless of the tab — the toolbar badge counts its result — but in a worker.
   function docChanged() {
     ol.pdf = null;
     if (current === "outline") ensureOutline();
+    scheduleScan();
   }
 
   function outlineMessage(text) {
@@ -273,5 +325,296 @@
     viewer.scrollTo({ top: viewer.scrollTop + (wr.top - vr.top) + fy * wr.height - 8, behavior: "smooth" });
   }
 
-  window.SidePanels = { init, show, docChanged, current: () => current };
+  // ---- Chú thích: the annotation list ------------------------------------------------------
+
+  // `bytes` is the state.bytes the cached `items` were read from: a different array (every
+  // edit makes a new one) means the list is stale and a scan is due. `gen` drops a scan that
+  // a newer one overtook.
+  const an = { bytes: null, items: null, err: null, gen: 0, scanTimer: null, renderTimer: null, filterType: "", filterAuthor: "" };
+
+  // One long-lived worker running annot-scan.js (see that file for why). If it cannot start
+  // or dies loading, every pending and later scan falls back to this thread — slower on a
+  // huge file, but a list rather than none.
+  let worker = null;
+  let workerBroken = false;
+  let reqSeq = 0;
+  const waiting = new Map();
+  const scanHere = (bytes) => window.AnnotScan.scanAnnots(window.PDFLib, bytes);
+  function failWorker(why) {
+    if (!workerBroken) console.warn("side-panels: annotation worker unavailable, scanning on the UI thread —", why);
+    workerBroken = true;
+    try {
+      if (worker) worker.terminate();
+    } catch (_) {
+      /* already gone */
+    }
+    worker = null;
+    for (const w of waiting.values()) scanHere(w.bytes).then(w.res, w.rej);
+    waiting.clear();
+  }
+  function scanBytes(bytes) {
+    if (!workerBroken) {
+      try {
+        if (!worker) {
+          worker = new Worker("annot-scan.js");
+          worker.onmessage = (e) => {
+            const m = e.data || {};
+            const w = waiting.get(m.id);
+            if (!w) return;
+            waiting.delete(m.id);
+            if (m.ok) w.res(m.items);
+            else w.rej(new Error(m.error || "scan failed"));
+          };
+          worker.onerror = (e) => failWorker((e && e.message) || "worker error");
+        }
+        return new Promise((res, rej) => {
+          const id = ++reqSeq;
+          // A COPY goes to the worker (and is transferred, not cloned twice): pdf-lib must
+          // never see the live state.bytes, and the copy's buffer is the worker's to keep.
+          const copy = bytes.slice();
+          waiting.set(id, { res, rej, bytes });
+          worker.postMessage({ id, bytes: copy.buffer }, [copy.buffer]);
+        });
+      } catch (err) {
+        failWorker(err && err.message);
+      }
+    }
+    return scanHere(bytes);
+  }
+
+  function scheduleScan() {
+    clearTimeout(an.scanTimer);
+    an.scanTimer = setTimeout(runScan, 200);
+  }
+  async function runScan() {
+    const bytes = deps && deps.getBytes();
+    if (!bytes) {
+      an.bytes = null;
+      an.items = [];
+      an.err = null;
+      refreshAnnots();
+      return;
+    }
+    if (bytes === an.bytes && an.items) return;
+    const gen = ++an.gen;
+    an.bytes = bytes;
+    an.items = null;
+    an.err = null;
+    refreshAnnots(); // "Đang đọc chú thích…"
+    try {
+      const items = await scanBytes(bytes);
+      if (gen !== an.gen) return;
+      an.items = items;
+    } catch (err) {
+      if (gen !== an.gen) return;
+      console.error("side-panels: annotation scan failed", err);
+      an.err = err;
+    }
+    refreshAnnots();
+  }
+
+  // editor.js → window.updateComments → here, after any overlay change (debounced: it fires
+  // on every syncOverlays, which includes zoom steps).
+  function annotsChanged() {
+    clearTimeout(an.renderTimer);
+    an.renderTimer = setTimeout(refreshAnnots, 120);
+  }
+
+  function editorNow() {
+    const ed = deps && deps.editor();
+    return ed && ed.active ? ed : null;
+  }
+
+  // The list as it should read right now, or null while the file is still being read.
+  function currentItems() {
+    const bytes = deps && deps.getBytes();
+    if (!bytes) return [];
+    if (bytes !== an.bytes) {
+      scheduleScan(); // a change we were not told about — never show a stale file
+      return null;
+    }
+    if (!an.items) return null;
+    const ed = editorNow();
+    return composeItems(an.items, ed && ed.listObjects ? ed.listObjects() : [], !!ed);
+  }
+
+  function refreshAnnots() {
+    const items = currentItems();
+    if (deps && deps.setBadge) deps.setBadge(items ? items.length : null);
+    if (current === "annots") renderAnnots(items);
+  }
+
+  const labelOf = (it) => window.AnnotScan.labelOf(it);
+
+  function fillSelect(sel, values, allLabel, keep) {
+    sel.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = allLabel;
+    sel.appendChild(all);
+    for (const v of values) {
+      const o = document.createElement("option");
+      o.value = v.value;
+      o.textContent = v.text;
+      sel.appendChild(o);
+    }
+    sel.value = values.some((v) => v.value === keep) ? keep : "";
+    sel.hidden = values.length < 2;
+    return sel.value;
+  }
+
+  // Display-space top of an item on its page (for top-to-bottom order): live items carry it;
+  // file items have a PDF /Rect, converted through the page's scale-1 viewport so a rotated
+  // page sorts by what the reader sees.
+  function topOf(it) {
+    if (it.live) return it.top || 0;
+    const m = deps.getPageMeta(it.page);
+    if (!m || !m.page) return 0;
+    const r = m.page.getViewport({ scale: 1 }).convertToViewportRectangle(it.rect);
+    return Math.min(r[1], r[3]);
+  }
+
+  function annotsMessage(text) {
+    const list = $("annots-list");
+    const empty = $("annots-empty");
+    if (list) list.innerHTML = "";
+    if (empty) {
+      empty.textContent = text;
+      empty.hidden = !text;
+    }
+  }
+
+  function renderAnnots(items) {
+    const count = $("annots-count");
+    const filters = $("annots-filters");
+    if (items == null) {
+      if (count) count.textContent = "";
+      if (filters) filters.hidden = true;
+      annotsMessage(an.err ? tr("Không đọc được danh sách chú thích của tài liệu này.") : tr("Đang đọc chú thích…"));
+      return;
+    }
+    if (!deps.getBytes()) {
+      if (count) count.textContent = "";
+      if (filters) filters.hidden = true;
+      annotsMessage(tr("Chưa có tài liệu."));
+      return;
+    }
+    // Filters offer only what this document has; a choice that no longer exists falls back
+    // to "all" instead of showing an empty list with no visible reason.
+    const types = [...new Set(items.map(labelOf))].sort().map((l) => ({ value: l, text: tr(l) }));
+    const authors = [...new Set(items.map((it) => it.author).filter(Boolean))].sort().map((a) => ({ value: a, text: a }));
+    an.filterType = fillSelect($("annots-ftype"), types, tr("Mọi loại"), an.filterType);
+    an.filterAuthor = fillSelect($("annots-fauthor"), authors, tr("Mọi người"), an.filterAuthor);
+    filters.hidden = types.length < 2 && authors.length < 2;
+    const shown = filterItems(items, labelOf, an.filterType, an.filterAuthor);
+    count.textContent = shown.length === items.length ? `(${items.length})` : `(${shown.length}/${items.length})`;
+    if (!items.length) {
+      annotsMessage(
+        editorNow()
+          ? tr("Chưa có chú thích nào. Dùng các công cụ trên thanh Chú thích để thêm.")
+          : tr("Tài liệu này chưa có chú thích nào.")
+      );
+      return;
+    }
+    annotsMessage("");
+    const list = $("annots-list");
+    const editing = !!editorNow();
+    for (const g of groupByPage(shown, topOf)) {
+      const head = document.createElement("div");
+      head.className = "an-page-head";
+      head.textContent = tr("Trang {n}", { n: g.page + 1 }) + " · " + g.items.length;
+      list.appendChild(head);
+      for (const it of g.items) list.appendChild(annotRow(it, editing));
+    }
+  }
+
+  function annotRow(it, editing) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "comment-item";
+    const meta = document.createElement("div");
+    meta.className = "cmt-meta";
+    const dot = document.createElement("span");
+    dot.className = "cmt-dot";
+    if (it.color) dot.style.background = it.color;
+    else dot.classList.add("none");
+    const kind = document.createElement("span");
+    kind.className = "cmt-kind";
+    kind.textContent = tr(labelOf(it));
+    meta.append(dot, kind);
+    if (it.author) {
+      const a = document.createElement("span");
+      a.className = "cmt-author";
+      a.textContent = it.author;
+      meta.appendChild(a);
+    }
+    if (it.replies) {
+      const r = document.createElement("span");
+      r.className = "cmt-replies";
+      r.textContent = tr("{n} trả lời", { n: it.replies });
+      meta.appendChild(r);
+    }
+    el.appendChild(meta);
+    if (it.text) {
+      const txt = document.createElement("div");
+      txt.className = "cmt-text";
+      txt.textContent = it.text;
+      el.appendChild(txt);
+    }
+    const tip = [];
+    if (it.date) tip.push(it.date.split("-").reverse().join("/"));
+    // In the editor, other software's annotations are shown but not yet editable (Đợt 3).
+    if (editing && !it.live) {
+      el.classList.add("foreign");
+      tip.push(tr("Chú thích từ phần mềm khác — chưa sửa được trong Nabu."));
+    }
+    if (tip.length) el.title = tip.join(" · ");
+    el.addEventListener("click", () => {
+      const prev = document.querySelector("#annots-list .comment-item.current");
+      if (prev) prev.classList.remove("current");
+      el.classList.add("current");
+      const ed = editorNow();
+      if (it.live && ed && ed.focusObject && ed.focusObject(it.id)) return;
+      if (it.live) return deps.scrollToPage(it.page);
+      goToRect(it.page, it.rect);
+    });
+    return el;
+  }
+
+  // Scroll a file annotation into view and outline it for a moment. Same live-box arithmetic
+  // as goTo(); the flash is a plain absolutely-positioned box in the page-wrap, sized in % so
+  // a zoom during its 1.6 s keeps it on target.
+  function goToRect(i, rect) {
+    const m = deps.getPageMeta(i);
+    const viewer = deps.viewer();
+    if (!m || !m.page || !m.wrap || !viewer) return deps.scrollToPage(i);
+    const vp1 = m.page.getViewport({ scale: 1 });
+    const r = vp1.convertToViewportRectangle(rect);
+    const fx0 = Math.max(0, Math.min(r[0], r[2]) / vp1.width);
+    const fy0 = Math.max(0, Math.min(r[1], r[3]) / vp1.height);
+    const fx1 = Math.min(1, Math.max(r[0], r[2]) / vp1.width);
+    const fy1 = Math.min(1, Math.max(r[1], r[3]) / vp1.height);
+    const wr = m.wrap.getBoundingClientRect();
+    const vr = viewer.getBoundingClientRect();
+    if (deps.renderPage) deps.renderPage(i);
+    // Put the annotation a third of the way down the view; sideways only if it is out of view.
+    const top = viewer.scrollTop + (wr.top - vr.top) + fy0 * wr.height - vr.height / 3;
+    const x0 = wr.left - vr.left + fx0 * wr.width;
+    const x1 = wr.left - vr.left + fx1 * wr.width;
+    let left = viewer.scrollLeft;
+    if (x0 < 0 || x1 > vr.width) left += x0 - Math.max(16, (vr.width - (x1 - x0)) / 2);
+    viewer.scrollTo({ top, left, behavior: "smooth" });
+    const old = m.wrap.querySelector(".annot-flash");
+    if (old) old.remove();
+    const f = document.createElement("div");
+    f.className = "annot-flash";
+    f.style.left = fx0 * 100 + "%";
+    f.style.top = fy0 * 100 + "%";
+    f.style.width = Math.max(0, fx1 - fx0) * 100 + "%";
+    f.style.height = Math.max(0, fy1 - fy0) * 100 + "%";
+    m.wrap.appendChild(f);
+    setTimeout(() => f.remove(), 1600);
+  }
+
+  window.SidePanels = { init, show, docChanged, annotsChanged, current: () => current };
 })();

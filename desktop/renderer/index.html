@@ -172,7 +172,7 @@
         <!-- Ghi chú sống ở HÀNG 1 (không phải hàng công cụ): hàng công cụ bị ẩn khi
              vào chế độ Chú thích/Sửa nội dung, mà panel ghi chú lại cố ý dùng được
              ngay trong lúc chú thích — xem updateToolbar() trong app.js. -->
-        <button id="btn-comments" class="ghost icon-only" disabled title="Danh sách ghi chú — xem mọi comment trong tài liệu, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg><span id="btn-comments-count" class="btn-badge" hidden></span></button>
+        <button id="btn-comments" class="ghost icon-only" disabled title="Danh sách chú thích — mở tab Chú thích ở cột trái: mọi ghi chú, hộp chữ, hình vẽ, bấm để nhảy tới"><svg class="ic"><use href="#ic-message"/></svg><span id="btn-comments-count" class="btn-badge" hidden></span></button>
         <!-- Hướng dẫn sử dụng. Also on the native menu (Trợ giúp) and F1, but it needs
              a door ON the interface: the per-tool instruction lines that used to sit in
              the Chú thích bar were removed in favour of this page, and a native menu
@@ -431,6 +431,7 @@
         <div class="side-tabs" role="tablist" aria-label="Chế độ cột trái">
           <button id="side-tab-thumbs" class="side-tab active" type="button" role="tab" aria-selected="true" data-pane="thumbs" title="Trang — hình thu nhỏ các trang"><svg class="ic"><use href="#ic-pages"/></svg></button>
           <button id="side-tab-outline" class="side-tab" type="button" role="tab" aria-selected="false" data-pane="outline" title="Dấu trang (mục lục) của tài liệu"><svg class="ic"><use href="#ic-bookmark"/></svg></button>
+          <button id="side-tab-annots" class="side-tab" type="button" role="tab" aria-selected="false" data-pane="annots" title="Chú thích — mọi ghi chú, hộp chữ, hình vẽ trong tài liệu, kể cả do phần mềm khác tạo"><svg class="ic"><use href="#ic-message"/></svg></button>
           <span class="side-tabs-fill"></span>
           <button id="btn-sidebar" class="link sidebar-toggle" title="Ẩn danh sách trang (F4)"><svg class="ic chev-left"><use href="#ic-chevron"/></svg></button>
         </div>
@@ -453,6 +454,17 @@
           </div>
           <div class="outline-tree" id="outline-tree" role="tree"></div>
           <div class="side-empty" id="outline-empty" hidden></div>
+        </div>
+        <div class="side-pane" id="pane-annots" data-pane="annots" role="tabpanel" hidden>
+          <div class="sidebar-head">
+            <span>Chú thích <span id="annots-count" class="comments-count"></span></span>
+          </div>
+          <div class="annots-filters" id="annots-filters" hidden>
+            <select id="annots-ftype" title="Lọc theo loại chú thích"></select>
+            <select id="annots-fauthor" title="Lọc theo người tạo"></select>
+          </div>
+          <div class="annots-list" id="annots-list"></div>
+          <div class="side-empty" id="annots-empty" hidden></div>
         </div>
       </aside>
       <!-- Kéo để đổi bề rộng danh sách trang; bấm đúp để về mặc định. Là phần tử
@@ -513,16 +525,6 @@
         <pre id="ext-raw-out"></pre>
       </details>
     </div>
-
-      <!-- Comments/notes list panel (toggled by the toolbar "Ghi chú" button). -->
-      <aside class="comments-panel" id="comments-panel" hidden>
-        <div class="comments-head">
-          <b>Ghi chú <span id="comments-count" class="comments-count"></span></b>
-          <button id="comments-close" class="link">Đóng</button>
-        </div>
-        <div class="comments-list" id="comments-list"></div>
-        <div class="comments-empty" id="comments-empty" hidden>Tài liệu chưa có ghi chú nào.<br />Vào <b>Chú thích</b> → công cụ <b>Ghi chú</b> để thêm.</div>
-      </aside>
 
       <!-- Text-box Format panel (shown in the annotation editor when the Text tool
            is active or a text box is selected). Wired in editor.js. -->
@@ -1624,8 +1626,12 @@
          (which reads window.PageVault while rendering thumbnails). Publishes ONE
          global and no bare names — the page-range.js tier. -->
     <script src="page-vault.js"></script>
-    <!-- side-panels.js: the left column's modes (Trang / Dấu trang). BEFORE app.js, which
-         calls window.SidePanels.init(...) at load time and hands it everything it needs —
+    <!-- annot-scan.js: reads every annotation for the Chú thích list. Loaded here for its
+         labels + the fallback scan (window.AnnotScan); the SAME file is also started as a
+         Worker by side-panels.js, where it does the actual scan off the UI thread. -->
+    <script src="annot-scan.js"></script>
+    <!-- side-panels.js: the left column's modes (Trang / Dấu trang / Chú thích). BEFORE app.js,
+         which calls window.SidePanels.init(...) at load time and hands it everything it needs —
          it reads no app.js global by bare name (BI-14). -->
     <script src="side-panels.js"></script>
     <script src="app.js"></script>

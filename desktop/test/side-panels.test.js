@@ -163,7 +163,40 @@ const ref = (n) => ({ num: n, gen: 0 });
   ]);
   await pdf.destroy();
 
-  // ---- 4. wiring that can only be checked as text ------------------------------------
+  // ---- 4. the Chú thích list: composition, order, filters ---------------------------------
+
+  const file = [
+    { page: 0, kind: null, subtype: "FreeText", author: "hang_", text: "đối tác" },
+    { page: 0, kind: "text", subtype: "Stamp", author: "", text: "Nabu đã lưu" },
+    { page: 2, kind: null, subtype: "Square", author: "tuyetpta", text: "" },
+  ];
+  const live = [{ id: 5, page: 1, kind: "box", text: "", top: 40 }, { id: 6, page: 0, kind: "text", text: "Nabu đang sửa", top: 10 }];
+  const sum = (xs) => xs.map((x) => [x.page, x.live, x.kind, x.text]);
+  check("view mode: the list IS the file (live objects ignored)", sum(SP.composeItems(file, live, false)), [
+    [0, false, null, "đối tác"], [0, false, "text", "Nabu đã lưu"], [2, false, null, ""],
+  ]);
+  check("edit mode: overlay objects + ONLY other software's file items (no double Nabu copy)", sum(SP.composeItems(file, live, true)), [
+    [1, true, "box", ""], [0, true, "text", "Nabu đang sửa"], [0, false, null, "đối tác"], [2, false, null, ""],
+  ]);
+  check("composeItems copies, never mutates its inputs", [file[0].live, live[0].live], [undefined, undefined]);
+  check("nothing scanned + nothing live → empty", SP.composeItems(null, null, true), []);
+
+  const its = [
+    { page: 3, n: "c", y: 50 }, { page: 1, n: "a", y: 90 }, { page: 1, n: "b", y: 10 },
+    { page: 3, n: "d", y: 50 }, { page: 0, n: "e", y: 0 },
+  ];
+  check("groupByPage: pages ascending, top-to-bottom inside, stable on ties",
+    SP.groupByPage(its, (it) => it.y).map((g) => [g.page, g.items.map((x) => x.n)]),
+    [[0, ["e"]], [1, ["b", "a"]], [3, ["c", "d"]]]);
+
+  const lab = (it) => it.l;
+  const pool = [{ l: "Ghi chú", author: "A" }, { l: "Mũi tên", author: "B" }, { l: "Ghi chú", author: "B" }, { l: "Ghi chú" }];
+  check("filter: none", SP.filterItems(pool, lab, "", "").length, 4);
+  check("filter: by type", SP.filterItems(pool, lab, "Ghi chú", "").length, 3);
+  check("filter: by author (no author ≠ match)", SP.filterItems(pool, lab, "", "B").length, 2);
+  check("filter: both", SP.filterItems(pool, lab, "Ghi chú", "B").length, 1);
+
+  // ---- 5. wiring that can only be checked as text ------------------------------------
 
   const R_DIR = path.join(__dirname, "..", "renderer");
   const src = fs.readFileSync(path.join(R_DIR, "side-panels.js"), "utf8");
@@ -174,10 +207,22 @@ const ref = (n) => ({ num: n, gen: 0 });
   check("side-panels.js has tr() strings to check (sanity)", keys.length > 5, true);
   check("every tr() key exists in the i18n dictionary", keys.filter((k) => !i18n.includes(`"${k}":`)), []);
   check(
-    "outline-tree / outline-empty are in SKIP_IDS (BI-10)",
-    ["outline-tree", "outline-empty"].filter((id) => !new RegExp(`SKIP_IDS[\\s\\S]{0,4000}"${id}"`).test(i18n)),
+    "runtime-rewritten ids are in SKIP_IDS (BI-10)",
+    ["outline-tree", "outline-empty", "annots-count", "annots-list", "annots-empty", "annots-ftype", "annots-fauthor"]
+      .filter((id) => !new RegExp(`SKIP_IDS[\\s\\S]{0,4000}"${id}"`).test(i18n)),
     []
   );
+  check("the right-hand 'Ghi chú' panel is gone (Q2: one list, in the left column)", /id="comments-panel"/.test(html), false);
+  const appSrc = fs.readFileSync(path.join(R_DIR, "app.js"), "utf8");
+  check("app.js still publishes window.updateComments (editor.js calls it)", /window\.updateComments = updateComments;/.test(appSrc), true);
+  const edSrc = fs.readFileSync(path.join(R_DIR, "editor.js"), "utf8");
+  check("Editor exposes listObjects + focusObject, not the notes-only pair",
+    [/\blistObjects,/.test(edSrc), /\bfocusObject,/.test(edSrc), /\bgetComments,/.test(edSrc), /\bfocusNote,/.test(edSrc)],
+    [true, true, false, false]);
+  // renderLayer, NOT syncOverlays: the 2b probe drew a box in the real editor and the list did
+  // not change — drawing repaints its page with renderLayer and never calls syncOverlays.
+  const rl = edSrc.slice(edSrc.indexOf("function renderLayer("), edSrc.indexOf("function noteThreadText("));
+  check("renderLayer tells the list (the one place every model change passes)", /window\.updateComments\(\)/.test(rl), true);
   const tabs = [...html.matchAll(/class="side-tab[^"]*"[^>]*data-pane="([a-z]+)"/g)].map((m) => m[1]);
   const panes = [...html.matchAll(/class="side-pane"[^>]*data-pane="([a-z]+)"/g)].map((m) => m[1]);
   check("one tab per pane, same order as PANES", [tabs, panes], [SP.PANES, SP.PANES]);

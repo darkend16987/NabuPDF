@@ -745,6 +745,12 @@
         if (caret) { try { focused.setSelectionRange(caret[0], caret[1]); } catch (_) {} }
       }
     }
+    // Every model change — draw, delete, move, restyle, retype, undo/redo — ends in a repaint
+    // of its page HERE (syncOverlays calls this per page too), so this is the one place the
+    // "Chú thích" list (side-panels.js) can hear about all of them. Measured, not assumed:
+    // drawing a box never calls syncOverlays. The other side debounces — this runs per
+    // mousemove during a drag.
+    if (window.updateComments) window.updateComments();
   }
 
   // Flatten a note + its replies into one text block (tooltip + PDF Contents).
@@ -4501,24 +4507,43 @@
 
   // ---- public surface (consumed by app.js) ---------------------------------
 
-  // Live overlay notes (comments) for the Comments panel — reflects unsaved edits
-  // too. Sorted by page so the panel reads top-to-bottom.
-  function getComments() {
+  // Every live overlay object — unsaved ones included — for the left column's "Chú thích"
+  // list (side-panels.js). Until Đợt 2b this was getComments() and returned notes only.
+  // `top` is the object's highest point in page units (from the top edge), so the list can
+  // read top-to-bottom; `text` is what a reader would call its words.
+  function listObjects() {
     const out = [];
     for (const k of Object.keys(ed.annots)) {
       for (const a of ed.annots[k]) {
-        if (a.kind === "note") out.push({ id: a.id, page: +k, text: a.text || "", replies: a.replies || [], color: a.color });
+        const ys = [];
+        if (Number.isFinite(a.y)) ys.push(a.y);
+        if (Number.isFinite(a.y1)) ys.push(a.y1, a.y2);
+        for (const p of a.pts || []) ys.push(p.y);
+        for (const q of a.quads || []) ys.push(q.y);
+        let top = 0;
+        for (let n = 0; n < ys.length; n++) if (n === 0 || ys[n] < top) top = ys[n];
+        out.push({
+          id: a.id,
+          page: +k,
+          kind: a.kind,
+          text: a.kind === "arrow" || a.kind === "dim" ? a.label || "" : a.text || "",
+          color: a.color || null,
+          replies: (a.replies || []).length,
+          top,
+        });
       }
     }
-    return out.sort((p, q) => p.page - q.page);
+    return out;
   }
-  // Panel click → select the note and scroll it into view (user double-clicks to
-  // edit). Returns false if the id isn't a live note on any page.
-  function focusNote(id) {
+  // List click → select the object and bring it into view (double-click edits it, as on the
+  // page). Returns false if the id is not a live object on any page.
+  function focusObject(id) {
     const hit = findAnnot(id);
-    if (!hit || hit.a.kind !== "note") return false;
-    if (typeof scrollToPage === "function") scrollToPage(hit.page);
+    if (!hit) return false;
     select(id);
+    const el = document.querySelector(`#viewer .page-wrap[data-index="${hit.page}"] .an[data-id="${id}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    else if (typeof scrollToPage === "function") scrollToPage(hit.page);
     return true;
   }
 
@@ -4538,8 +4563,8 @@
     pagePointFromClient,
     undo: edUndo, // annotation-level (pre-bake) — routed from Ctrl+Z while active
     redo: edRedo,
-    getComments, // Comments panel data source while editing
-    focusNote, // Comments panel → jump to + select a note
+    listObjects, // "Chú thích" list (side-panels.js) — every live object while editing
+    focusObject, // "Chú thích" list → select + bring into view
     // Cài đặt → Màu chú thích mặc định. The preference is READ and WRITTEN only here, so
     // app.js never grows a second copy of the storage key or the hex validation.
     getDefaultColor: () => ed.color,

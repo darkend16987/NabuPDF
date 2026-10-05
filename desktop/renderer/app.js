@@ -1194,110 +1194,27 @@ function showNotePopup(text, cx, cy) {
   pop.style.top = Math.min(cy + 8, window.innerHeight - 140) + "px";
 }
 
-// ---- comments / notes panel ----------------------------------------------
-
-// Every note in the document. While the overlay editor is active, its live notes
-// are the source (unsaved comments included); otherwise the baked PDF Text
-// annotations are read per page (their /Contents already folds in replies).
-async function collectComments() {
-  if (window.Editor && window.Editor.active && window.Editor.getComments) {
-    return window.Editor.getComments();
-  }
-  const out = [];
-  if (!state.pdf) return out;
-  for (let i = 0; i < state.numPages; i++) {
-    let anns;
-    try {
-      anns = await (await state.pdf.getPage(i + 1)).getAnnotations();
-    } catch (_) {
-      continue;
-    }
-    for (const a of anns || []) {
-      if (a.subtype !== "Text") continue;
-      const text = (a.contentsObj && a.contentsObj.str) || a.contents || "";
-      if (!text) continue;
-      const col = a.color;
-      out.push({
-        id: a.id,
-        page: i,
-        text,
-        color: col && col.length >= 3 ? `rgb(${col[0] | 0},${col[1] | 0},${col[2] | 0})` : null,
-      });
-    }
-  }
-  return out;
+// ---- comments / annotations list ------------------------------------------
+//
+// The list itself lives in the left column now — tab "Chú thích", side-panels.js (Đợt 2b
+// of docs/RESEARCH-2026-10-05-…). It lists EVERY annotation, Nabu's and other software's,
+// where the right-hand panel this replaced listed sticky notes only. The name stays:
+// editor.js calls window.updateComments after note changes and on every overlay repaint.
+function updateComments() {
+  if (window.SidePanels) window.SidePanels.annotsChanged();
 }
-
-function renderCommentsList(items) {
-  const list = $("comments-list");
-  const emptyEl = $("comments-empty");
-  const countEl = $("comments-count");
-  if (!list) return;
-  list.innerHTML = "";
-  if (countEl) countEl.textContent = items.length ? `(${items.length})` : "";
-  if (emptyEl) emptyEl.hidden = items.length > 0;
-  for (const it of items) {
-    const el = document.createElement("button");
-    el.className = "comment-item";
-    el.type = "button";
-    const meta = document.createElement("div");
-    meta.className = "cmt-meta";
-    if (it.color) {
-      const d = document.createElement("span");
-      d.className = "cmt-dot";
-      d.style.background = it.color;
-      meta.appendChild(d);
-    }
-    const pg = document.createElement("span");
-    pg.className = "cmt-page";
-    pg.textContent = "Trang " + (it.page + 1);
-    meta.appendChild(pg);
-    const rc = (it.replies || []).length;
-    if (rc) {
-      const r = document.createElement("span");
-      r.className = "cmt-replies";
-      r.textContent = rc + " trả lời";
-      meta.appendChild(r);
-    }
-    el.appendChild(meta);
-    const txt = document.createElement("div");
-    txt.className = "cmt-text";
-    txt.textContent = it.text || "(ghi chú trống)";
-    el.appendChild(txt);
-    el.onclick = () => {
-      if (window.Editor && window.Editor.active && window.Editor.focusNote) window.Editor.focusNote(it.id);
-      else scrollToPage(it.page);
-    };
-    list.appendChild(el);
-  }
-}
-
-// Refresh the toolbar count badge and, if the panel is open, its list. Cheap to
-// call after any note change / doc load (pdf.js caches getAnnotations per page).
-async function updateComments() {
-  const items = await collectComments();
-  const bb = $("btn-comments-count");
-  if (bb) {
-    bb.hidden = !items.length;
-    bb.textContent = String(items.length);
-  }
-  const panel = $("comments-panel");
-  if (panel && !panel.hidden) renderCommentsList(items);
-}
-// editor.js calls this (via window) after a note is added/edited/baked.
 window.updateComments = updateComments;
 
-function toggleComments(force) {
-  const panel = $("comments-panel");
-  const btn = $("btn-comments");
-  if (!panel) return;
-  const show = force !== undefined ? force : panel.hidden;
-  panel.hidden = !show;
-  if (btn) btn.classList.toggle("active", show);
-  if (show) {
-    if (!$("ext-panel").hidden) $("ext-panel").hidden = true; // don't stack the two right panels
-    updateComments();
+// Toolbar "Ghi chú" button: open the Chú thích tab (un-collapsing the column if it was
+// put away); pressed again while that tab is showing, go back to the page thumbnails.
+function toggleComments() {
+  const ws = document.querySelector(".workspace");
+  if (ws && ws.classList.contains("sidebar-collapsed")) {
+    toggleSidebar(false);
+    window.SidePanels.show("annots");
+    return;
   }
+  window.SidePanels.show(window.SidePanels.current() === "annots" ? "thumbs" : "annots");
 }
 
 // ---- find in document (Ctrl+F) -------------------------------------------
@@ -5309,18 +5226,26 @@ $("page-input").addEventListener("keydown", (e) => {
 });
 $("page-input").addEventListener("blur", syncPageInput);
 
-// Comments/notes list panel.
+// Toolbar "Ghi chú" → the left column's Chú thích tab (side-panels.js).
 $("btn-comments").onclick = () => toggleComments();
-$("comments-close").onclick = () => toggleComments(false);
 
 // Thumbnail sidebar collapse/expand (button + F4).
 $("btn-sidebar").onclick = () => toggleSidebar(true);
 $("sidebar-expand").onclick = () => toggleSidebar(false);
 
-// Left column modes — Trang / Dấu trang (side-panels.js). Everything it needs is handed
-// in here rather than read as a bare global (BI-14).
+// Left column modes — Trang / Dấu trang / Chú thích (side-panels.js). Everything it needs
+// is handed in here rather than read as a bare global (BI-14).
 window.SidePanels.init({
   getPdf: () => state.pdf,
+  getBytes: () => state.bytes,
+  editor: () => window.Editor || null,
+  // The toolbar "Ghi chú" badge counts what the Chú thích list shows (null = still reading).
+  setBadge: (n) => {
+    const bb = $("btn-comments-count");
+    if (!bb) return;
+    bb.hidden = !n;
+    bb.textContent = n ? String(n) : "";
+  },
   getPageMeta: (i) => (state.pageMetas ? state.pageMetas[i] : null),
   viewer: () => $("viewer"),
   scrollToPage,

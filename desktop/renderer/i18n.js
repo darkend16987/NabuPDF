@@ -329,6 +329,48 @@
     "(không tên)": "(untitled)",
     "Liên kết ra ngoài: {u}": "External link: {u}",
     "Dấu trang này trỏ tới một trang không còn trong tài liệu.": "This bookmark points to a page that is no longer in the document.",
+    // Chú thích tab (Đợt 2b). Deliberately NO key for the bare word "Chú thích": it would
+    // also re-translate the toolbar's "Chú thích" button, which the app keeps as a name.
+    "Chú thích — mọi ghi chú, hộp chữ, hình vẽ trong tài liệu, kể cả do phần mềm khác tạo":
+      "Annotations — every note, text box and drawing in the document, including ones made in other software",
+    "Danh sách chú thích — mở tab Chú thích ở cột trái: mọi ghi chú, hộp chữ, hình vẽ, bấm để nhảy tới":
+      "Annotation list — opens the Chú thích tab in the left column: every note, text box and drawing; click one to jump to it",
+    "Lọc theo loại chú thích": "Filter by annotation type",
+    "Lọc theo người tạo": "Filter by author",
+    "Mọi loại": "All types",
+    "Mọi người": "Everyone",
+    "Đang đọc chú thích…": "Reading annotations…",
+    "Không đọc được danh sách chú thích của tài liệu này.": "Couldn't read this document's annotations.",
+    "Tài liệu này chưa có chú thích nào.": "This document has no annotations yet.",
+    "Chưa có chú thích nào. Dùng các công cụ trên thanh Chú thích để thêm.": "No annotations yet. Use the tools on the Chú thích bar to add some.",
+    "{n} trả lời": "{n} replies",
+    "Chú thích từ phần mềm khác — chưa sửa được trong Nabu.": "Made in other software — not editable in Nabu yet.",
+    // annotation type labels (annot-scan.js KIND_LABEL / SUBTYPE_LABEL / EXTRA_LABEL)
+    "Ghi chú": "Note",
+    "Ảnh / chữ ký": "Image / signature",
+    "Mũi tên": "Arrow",
+    "Hình chữ nhật": "Rectangle",
+    "Hình elip": "Ellipse",
+    "Khoanh mây": "Revision cloud",
+    "Khoanh mây tự do": "Freehand cloud",
+    "Nét vẽ tay": "Freehand",
+    "Hình tự do": "Polygon (freehand)",
+    "Tô sáng chữ": "Text highlight",
+    "Dấu ✓": "Tick ✓",
+    "Dấu ✗": "Cross ✗",
+    "Tô sáng vùng": "Area highlight",
+    "Vùng bôi đen": "Redaction",
+    "Đo kích thước": "Dimension",
+    "Đường kẻ": "Line",
+    "Đa giác": "Polygon",
+    "Đường gấp khúc": "Polyline",
+    "Gạch lượn sóng": "Squiggly underline",
+    "Con dấu / ảnh": "Stamp / image",
+    "Dấu chèn": "Caret",
+    "Tệp đính kèm": "File attachment",
+    "Âm thanh": "Sound",
+    "Vùng chờ bôi đen": "Pending redaction",
+    "Hộp văn bản có mũi tên": "Callout",
     "Mở một file PDF để bắt đầu": "Open a PDF file to get started",
     "Kéo–thả file vào đây, hoặc bấm": "Drag & drop a file here, or click",
     "Gộp nhiều PDF thành một file…": "Combine several PDFs into one file…",
@@ -899,6 +941,9 @@
     // Left column (side-panels.js): the bookmark tree is built from the document, and its
     // message line ("Đang đọc dấu trang…" / "không có dấu trang") is rewritten per document.
     "outline-tree", "outline-empty",
+    // …and the Chú thích list: count, list, message line and the two filters are all
+    // rebuilt per document / per edit.
+    "annots-count", "annots-list", "annots-empty", "annots-ftype", "annots-fauthor",
   ]);
 
   let lang = "vi";

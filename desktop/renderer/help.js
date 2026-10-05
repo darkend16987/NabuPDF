@@ -173,8 +173,8 @@
           ul: [
             T("`F4` ẩn / hiện cột trang. Kéo mép cột để đổi bề rộng, bấm đúp mép để về mặc định.", "`F4` hides / shows the page list. Drag its edge to resize, double-click the edge to reset."),
             T(
-              "Hai biểu tượng trên đầu cột đổi chế độ: **Trang** (thumbnail) và **Dấu trang** — mục lục mà file mang theo (làm bằng Word, Acrobat, Foxit…). Bấm một dấu trang để nhảy tới đúng chỗ; dấu trang trỏ tới trang đã bị xoá hiện **mờ**. Kéo đổi thứ tự trang **không** làm mất dấu trang.",
-              "The two icons at the top of the column switch its mode: **Pages** (thumbnails) and **Bookmarks** — the table of contents the file carries (made in Word, Acrobat, Foxit…). Click a bookmark to jump to it; one that points at a deleted page is shown **dimmed**. Reordering pages does **not** lose the bookmarks."
+              "Ba biểu tượng trên đầu cột đổi chế độ: **Trang** (thumbnail), **Dấu trang** — mục lục mà file mang theo (làm bằng Word, Acrobat, Foxit…) — và **Chú thích** (danh sách mọi chú thích). Bấm một dấu trang để nhảy tới đúng chỗ; dấu trang trỏ tới trang đã bị xoá hiện **mờ**. Kéo đổi thứ tự trang **không** làm mất dấu trang.",
+              "The three icons at the top of the column switch its mode: **Pages** (thumbnails), **Bookmarks** — the table of contents the file carries (made in Word, Acrobat, Foxit…) — and **Chú thích** (a list of every annotation). Click a bookmark to jump to it; one that points at a deleted page is shown **dimmed**. Reordering pages does **not** lose the bookmarks."
             ),
             T(
               "`F11` — **toàn màn hình**, trọn trang trong màn hình, ẩn thanh công cụ. `Esc` để thoát. Trong chế độ này, rê chuột vào **mép trái** thì dải trang trượt ra; `F4` để ghim nó lại.",
@@ -659,8 +659,8 @@
       blocks: [
         {
           p: T(
-            "Nút **Ghi chú** (biểu tượng 💬 trên thanh trên cùng) mở bảng liệt kê **mọi ghi chú trong tài liệu**; bấm một dòng để nhảy tới đúng chỗ. Bảng này dùng được **ngay trong lúc đang chú thích**, và nó phản ánh cả những ghi chú chưa Lưu.",
-            "The **Ghi chú** button (the 💬 icon on the top row) opens a panel listing **every note in the document**; click a row to jump to it. The panel works **while you are annotating**, and it reflects unsaved notes too."
+            "Nút **Ghi chú** (biểu tượng 💬 trên thanh trên cùng) mở tab **Chú thích** ở cột trái: **mọi** chú thích trong tài liệu — ghi chú, hộp chữ, hình, nét vẽ, tô sáng, con dấu — **kể cả do Acrobat, Foxit, PDF-XChange tạo**, xếp theo trang, kèm tên người tạo. Lọc được theo loại và theo người. Bấm một dòng để nhảy tới, chỗ đó nháy sáng. Danh sách dùng được **ngay trong lúc đang chú thích** và phản ánh cả những gì chưa Lưu; chú thích của phần mềm khác hiện viền đứt — xem được, **chưa sửa được** trong Nabu.",
+            "The **Ghi chú** button (the 💬 icon on the top row) opens the **Chú thích** tab in the left column: **every** annotation in the document — notes, text boxes, shapes, ink, highlights, stamps — **including ones made in Acrobat, Foxit or PDF-XChange**, by page, with the author's name. Filter by type and by author. Click a row to jump there; the spot flashes. The list works **while you are annotating** and reflects unsaved changes; other software's annotations show a dashed border — visible, **not yet editable** in Nabu."
           ),
         },
         {
