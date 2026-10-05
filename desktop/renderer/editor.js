@@ -396,6 +396,10 @@
     // that must REMOVE it from the PDF was gated on there being something to ADD — so
     // the box silently came back on repaint. See BI-60.
     _importedManaged: 0,
+    // page index → the file annotations the overlay owns there ({id, subtype, rect}, see
+    // annot-hide.js). Filled by importManaged from the bytes it read; renderPageCanvas and
+    // the redaction raster hide exactly these and keep everyone else's annotations (BI-99).
+    _owned: new Map(),
   };
 
   // ---- model helpers -------------------------------------------------------
@@ -3631,10 +3635,11 @@
     updateToolbar();
     // Pull previously-applied text boxes / notes back in as editable objects, then
     // repaint so their baked appearance (rendered by pdf.js) is hidden while the
-    // live overlay owns them. No managed annots → nothing to hide, common fast path.
+    // live overlay owns them. Nothing owned → nothing to hide, common fast path: pages
+    // already on screen are right as they are (other programs' annotations stay — BI-99).
     const n = await importManaged();
     ed._importedManaged = n; // a later "delete them all" still owes the file a bake — BI-60
-    if (n && window.repaintRenderedPages) await window.repaintRenderedPages();
+    if (ed._owned.size && window.repaintRenderedPages) await window.repaintRenderedPages();
     syncOverlays();
     syncUndoBtns();
     loadSystemFonts();
@@ -3691,6 +3696,7 @@
     clearTaHooks();
     ed._managedPages = new Set();
     ed._importedManaged = 0;
+    ed._owned = new Map();
     clearEdHistory();
   }
 
@@ -4565,6 +4571,9 @@
     redo: edRedo,
     listObjects, // "Chú thích" list (side-panels.js) — every live object while editing
     focusObject, // "Chú thích" list → select + bring into view
+    // renderPageCanvas: the file annotations on page i whose baked copy the overlay
+    // replaces — hidden while editing, and nothing else is (BI-99, annot-hide.js).
+    ownedAnnots: (i) => ed._owned.get(i) || null,
     // Cài đặt → Màu chú thích mặc định. The preference is READ and WRITTEN only here, so
     // app.js never grows a second copy of the storage key or the hex validation.
     getDefaultColor: () => ed.color,

@@ -828,7 +828,7 @@ function readManaged(doc) {
      "VECTOR_KINDS", "apMatrixFor", "apRectFor", "apRotatable",
      "collectManagedChain", "freeManagedTrash", "isManagedKind", "isVectorKind", "makeMap",
      "managedSrcBytes", "managedSrcDataUrl", "normAngle", "pageRotate", "pushPageAnnot",
-     "serializeManaged", "shapeAppearance", "sniffImage", "strToBytes",
+     "replacedOnBake", "serializeManaged", "shapeAppearance", "sniffImage", "strToBytes",
      "stripManagedAnnots", "stripManagedFromPage"]);
   check("the /Nabu* keys are PDFName objects, not strings",
     [NABU_KIND, NABU_DATA, NABU_SRC, NABU_IMG, P_ANNOTS].map((k) => String(k)),

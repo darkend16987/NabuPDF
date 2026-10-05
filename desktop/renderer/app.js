@@ -987,9 +987,16 @@ async function renderPageCanvas(i) {
   // While the editor is open, the round-trip text boxes / notes are lifted into
   // the live overlay, so hide their baked PDF appearance here (and let the overlay
   // own the note markers) to avoid drawing them twice.
+  //
+  // Hide THOSE and only those (BI-99). This used to be AnnotationMode.DISABLE, which
+  // also wiped every other program's annotation and every form value off the page the
+  // moment "Chú thích" was pressed. `hide` is null (nothing of ours on this page →
+  // ordinary ENABLE), the verified ids to hide, or "all" when the overlay's list does not
+  // match this page — then it is DISABLE, the old behaviour (annot-hide.js).
   const editing = !!(window.Editor && window.Editor.active);
   let off = null;
   try {
+    const hide = editing ? await window.AnnotHide.plan(window.Editor.ownedAnnots(i), page) : null;
     // Rasterise into an OFF-SCREEN canvas first, then blit onto the visible one
     // only after render succeeds. Assigning canvas.width clears the canvas, so
     // painting the visible canvas up-front and then failing (e.g. a transient
@@ -999,12 +1006,14 @@ async function renderPageCanvas(i) {
     off.width = pw;
     off.height = ph;
     // Keep the task: cancelPageRender needs it when the page leaves the render band.
-    const task = page.render({
+    const params = {
       canvasContext: off.getContext("2d"),
       viewport: vp,
       transform: rd !== 1 ? [rd, 0, 0, rd, 0, 0] : undefined,
-      annotationMode: editing ? pdfjsLib.AnnotationMode.DISABLE : pdfjsLib.AnnotationMode.ENABLE,
-    });
+    };
+    const task = hide
+      ? window.AnnotHide.render(page, params, hide, pdfjsLib.AnnotationMode, state.pdf.annotationStorage)
+      : page.render(Object.assign(params, { annotationMode: pdfjsLib.AnnotationMode.ENABLE }));
     m.renderTask = task;
     await task.promise;
     canvas.width = pw;

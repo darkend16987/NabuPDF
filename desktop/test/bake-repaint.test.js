@@ -9,8 +9,10 @@
 // real text box: 3 page rasters → 1, identical canvas pixels on all three pages).
 //
 // Removing it is only sound because of a premise that lives in ANOTHER file: renderPageCanvas
-// paints with annotations DISABLED whenever Editor.active, so rerenderChanged (run while the
-// editor is still active) already hides the baked copy of the annots the overlay owns again.
+// hides the overlay's own annots whenever Editor.active (DISABLE until BI-99; since then only
+// the ones importManaged recorded in ed._owned, re-read BEFORE rerenderChanged), so
+// rerenderChanged (run while the editor is still active) already hides the baked copy of the
+// annots the overlay owns again.
 // If either side changes the other must be re-thought, so both are pinned here. These are
 // pins on text because the editor needs a DOM; the behaviour itself was verified by the
 // real-Electron probe quoted in the commit.
@@ -57,20 +59,33 @@ const enter = body(EDITOR, "async function enter()");
 const render = body(APP, "async function renderPageCanvas(");
 
 // the mid-session branch
-const mid = bake.slice(bake.indexOf("if (ed.active && !ed._exiting)"));
+const mid = bake.slice(bake.indexOf("const midSession = ed.active && !ed._exiting;"));
 check("bakePending repaints the changed pages through rerenderChanged", /await rerenderChanged\(changed\)/.test(bake), true);
 check("…while it still re-reads the managed annots and re-syncs the overlay", /importManaged\(\)/.test(mid) && /syncOverlays\(\)/.test(mid), true);
+// BI-99: what renderPageCanvas hides while editing is ed._owned, which importManaged rebuilds
+// from the bytes it reads. The bake writes the annots under new numbers, so the re-read must come
+// BEFORE rerenderChanged paints the new file — after it, the repaint uses the pre-bake list: empty
+// on a session that began without Nabu annots, and the box just baked is painted under its own
+// overlay copy (measured in Electron, probe_hide: drawn twice); stale otherwise → hide everything.
+check("…and re-reads them BEFORE rerenderChanged paints the new bytes (BI-99)",
+  mid.indexOf("await importManaged()") >= 0 && mid.indexOf("await importManaged()") < mid.indexOf("await rerenderChanged(changed)"), true);
+check("…only when the session goes on (not while exiting)", /if \(midSession\) ed\._importedManaged = await importManaged\(\);/.test(mid), true);
 check("bakePending has no executable call to repaintRenderedPages at all (a comment may mention it)",
   /^[^/\n]*repaintRenderedPages\(\)/m.test(bake), false);
 
 // the places that MUST still repaint, because the same bytes are shown with annotations toggled
 check("enter() repaints after importing managed annots (hides their baked copies)", /repaintRenderedPages\(\)/.test(enter), true);
+check("…whenever the overlay owns something on the file (ed._owned), the set renderPageCanvas hides",
+  /if \(ed\._owned\.size && window\.repaintRenderedPages\) await window\.repaintRenderedPages\(\);/.test(enter), true);
 check("exit() repaints so baked text/notes show again in view mode", /repaintRenderedPages\(\)/.test(exit), true);
 check("discardExit() repaints for the same reason", /repaintRenderedPages\(\)/.test(discard), true);
 
 // the premise
 check("renderPageCanvas derives `editing` from Editor.active", /const editing = !!\(window\.Editor && window\.Editor\.active\);/.test(render), true);
-check("…and turns annotations off when editing", /annotationMode: editing \? pdfjsLib\.AnnotationMode\.DISABLE/.test(render), true);
+// BI-99 changed HOW the baked copies are hidden (only ours, via AnnotHide — test:annothide),
+// not WHETHER: a page painted while Editor.active still hides the annots the overlay owns.
+check("…and hides the overlay's own annots when editing (AnnotHide.plan on Editor.ownedAnnots)",
+  /editing \? await window\.AnnotHide\.plan\(window\.Editor\.ownedAnnots\(i\), page\) : null/.test(render), true);
 check("Editor.active stays true through a mid-session bake (bakePending never clears ed.active)", /ed\.active\s*=\s*false/.test(bake), false);
 
 console.log(`\nbake-repaint: ${pass} pass, ${fail} fail`);

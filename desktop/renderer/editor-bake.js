@@ -37,7 +37,9 @@
  *                       managedSrcBytes managedSrcDataUrl makeMap isManagedKind pageRotate
  *                       stripManagedAnnots stripManagedFromPage freeManagedTrash
  *     app.js            state pdfjsLib toast showOverlay hideOverlay rerenderChanged   (used when CALLED, not at load)
- *   and window.desktop / window.DocHistory / window.repaintRenderedPages at call time.
+ *   and window.desktop / window.DocHistory / window.repaintRenderedPages at call time,
+ *   plus window.ManagedCodec.replacedOnBake and window.AnnotHide (annot-hide.js) — what the
+ *   overlay owns in the file, hidden while editing (BI-99).
  *
  * ORDER OF CONSTRUCTION. editor.js calls create() once, at the spot the block used to occupy.
  * Every name it passes is declared above that spot (function declarations are hoisted; the two
@@ -687,6 +689,9 @@
   // Parse managed annotations out of the current document into live overlay
   // objects (per page) so they can be edited again. Read-only w.r.t. the PDF.
   async function importManaged() {
+    // What the overlay owns is re-learnt from the bytes read here, never carried over: a
+    // bake renumbers objects, so yesterday's ids would hide the wrong thing (BI-99).
+    ed._owned = new Map();
     if (!state.bytes) return 0;
     let doc;
     try { doc = await PDFDocument.load(state.bytes); } catch (_) { return 0; }
@@ -698,6 +703,12 @@
       for (let j = 0; j < arr.size(); j++) {
         const dict = doc.context.lookup(arr.get(j));
         if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
+        // Owned = what the next bake replaces (the same rule stripManagedFromPage uses), so
+        // edit mode hides exactly the baked copies the overlay stands in for.
+        if (window.ManagedCodec.replacedOnBake(doc, dict)) {
+          if (!ed._owned.has(i)) ed._owned.set(i, []);
+          ed._owned.get(i).push(window.AnnotHide.entryOf(PDFLib, arr.get(j), dict));
+        }
         const dataObj = dict.get(NABU_DATA);
         if (!dataObj || typeof dataObj.decodeText !== "function") continue;
         let parsed;
@@ -1152,18 +1163,28 @@
       ed.sel = null;
       ed._dirty = false;
       clearEdHistory(); // baked annotations can't be un-done at annotation level anymore
-      await rerenderChanged(changed);
       // Mid-session save (still editing): pull the managed annots back in so text
       // boxes / notes stay editable and their baked copies stay hidden.
-      if (ed.active && !ed._exiting) {
-        ed._importedManaged = await importManaged(); // re-read: the count must track the FILE
+      //
+      // BEFORE rerenderChanged, not after (BI-99). renderPageCanvas hides, while editing,
+      // exactly the annotations importManaged recorded as owned (ed._owned) — and the bake
+      // just wrote new ones under new object numbers. Re-read afterwards, the repaint below
+      // would use the list from BEFORE the bake: empty for a session that began with no Nabu
+      // annotation, so the box just baked was painted by pdf.js under its own overlay copy
+      // (MEASURED in Electron: drawn twice); stale numbers otherwise, which match nothing and
+      // hide every annotation on the page. importManaged only READS state.bytes, which is
+      // already the new file here.
+      const midSession = ed.active && !ed._exiting;
+      if (midSession) ed._importedManaged = await importManaged(); // re-read: the count must track the FILE
+      await rerenderChanged(changed);
+      if (midSession) {
         // No repaintRenderedPages() here (R8, docs/REVIEW-2026-10-01). It used to follow, and
         // re-rasterised every page on screen a SECOND time - the changed ones had just been
         // repainted by rerenderChanged, the unchanged ones were already right. The reason it
         // existed (hide the baked copy of the annots the overlay now owns again) is met by
-        // rerenderChanged itself: renderPageCanvas paints with annotations DISABLED whenever
-        // Editor.active, and Editor.active is still true here. importManaged only READS the
-        // file; it changes nothing a page shows.
+        // rerenderChanged itself: renderPageCanvas hides the owned annots whenever
+        // Editor.active, Editor.active is still true here, and ed._owned already describes
+        // the new bytes (re-read above).
         syncOverlays();
       }
       toast("Đã áp dụng chỉnh sửa.", "good");

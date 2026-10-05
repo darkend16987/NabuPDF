@@ -20,6 +20,7 @@
     "test:pages": "node test/page-range.test.js",
     "test:side": "node test/side-panels.test.js",
     "test:annotscan": "node test/annot-scan.test.js",
+    "test:annothide": "node test/annot-hide.test.js",
     "test:nup": "node test/page-nup.test.js",
     "test:thumbs": "node test/thumb-queue.test.js",
     "test:raster": "node test/raster-cap.test.js",

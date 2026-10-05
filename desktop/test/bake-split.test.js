@@ -116,6 +116,9 @@ function makeContext() {
   const run = (file, abs) => vm.runInContext(fs.readFileSync(abs || path.join(R, file), "utf8"), ctx, { filename: file });
   run("pdf-lib.min.js", path.join(R, "vendor", "pdf-lib.min.js"));
   for (const f of ["wire.js", "annot-text.js", "annot-geom.js", "managed-codec.js"]) run(f);
+  // annot-hide.js: read through window.AnnotHide when importManaged RUNS (BI-99), never at load —
+  // which the load check below still proves, since it runs editor-bake.js before this matters.
+  run("annot-hide.js");
   return { ctx, run, sandbox };
 }
 
@@ -218,6 +221,12 @@ function makeContext() {
   const back = (ed.annots[0] || [])[0] || {};
   check("…as the same box, in the injected annotsFor's store", [back.kind, Math.round(back.x), Math.round(back.y), Math.round(back.w), Math.round(back.h)], ["box", 20, 30, 100, 60]);
   check("…and the page is remembered in ed._managedPages", [...ed._managedPages], [0]);
+  // BI-99: the re-read also records what the overlay now owns in the file, which renderPageCanvas
+  // hides while editing — exactly the one annotation the bake wrote, named by its object number.
+  const ref0 = baked2.getPage(0).node.Annots().get(0);
+  check("…and ed._owned names that one annotation (object number, subtype, rect) for page 0",
+    [[...ed._owned.keys()], (ed._owned.get(0) || []).map((e) => [e.id, e.subtype, e.rect && e.rect.length])],
+    [[0], [[`${ref0.objectNumber}R`, "Stamp", 4]]]);
 
   finished = true;
   console.log(`\nbake-split: ${pass} pass, ${fail} fail`);

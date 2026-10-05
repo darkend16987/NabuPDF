@@ -671,6 +671,19 @@
   // embedJpg hand out a FRESH ref per call (they never dedupe by content), and
   // /NabuImg is a resource name nothing else writes, so once the annot is gone
   // nothing can still point at its appearance.
+  // Is `dict` an annotation the next bake REPLACES (unlinks, then re-writes from ed.annots)?
+  // The one rule both sides read: stripManagedFromPage below, and importManaged, which
+  // records exactly these as "owned by the overlay" so edit mode hides their baked copy and
+  // nothing else (BI-99). Two copies of the rule could drift into a hidden-but-kept or a
+  // shown-twice annotation.
+  function replacedOnBake(doc, dict) {
+    if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) return false;
+    // A managed image whose source bytes we can't read is not ours to replace:
+    // importManaged skipped it too, so ed.annots holds no copy and removing it
+    // would delete the user's image outright.
+    if (String(dict.get(NABU_KIND)) === "/image" && !managedSrcBytes(doc, dict)) return false;
+    return true;
+  }
   function stripManagedFromPage(doc, page, trash) {
     const arr = page.node.Annots();
     if (!arr) return 0;
@@ -679,11 +692,7 @@
     for (let i = arr.size() - 1; i >= 0; i--) {
       const ref = arr.get(i);
       const dict = doc.context.lookup(ref);
-      if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
-      // A managed image whose source bytes we can't read is not ours to replace:
-      // importManaged skipped it too, so ed.annots holds no copy and removing it
-      // would delete the user's image outright.
-      if (String(dict.get(NABU_KIND)) === "/image" && !managedSrcBytes(doc, dict)) continue;
+      if (!replacedOnBake(doc, dict)) continue;
       arr.remove(i);
       collectManagedChain(doc, dict, ref, bin);
       removed++;
@@ -712,7 +721,7 @@
     isManagedKind, isVectorKind, sniffImage, strToBytes, makeMap, pageRotate,
     normAngle, apRotatable, apMatrixFor, apRectFor, shapeAppearance,
     serializeManaged, pushPageAnnot, managedSrcBytes, managedSrcDataUrl,
-    collectManagedChain, freeManagedTrash, stripManagedFromPage, stripManagedAnnots,
+    collectManagedChain, freeManagedTrash, replacedOnBake, stripManagedFromPage, stripManagedAnnots,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = _SURFACE;
   if (typeof window !== "undefined") {
