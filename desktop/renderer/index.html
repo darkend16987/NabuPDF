@@ -1633,6 +1633,9 @@
     <!-- annot-hide.js: which annotations a page is painted without while editing (BI-99).
          One global (window.AnnotHide), read by app.js / editor-bake.js only when they run. -->
     <script src="annot-hide.js"></script>
+    <!-- foreign-annot.js: another program's shapes as editable overlay objects (BI-100). AFTER
+         annot-scan.js — it takes window.AnnotScan's colour reader at load time. One global. -->
+    <script src="foreign-annot.js"></script>
     <!-- side-panels.js: the left column's modes (Trang / Dấu trang / Chú thích). BEFORE app.js,
          which calls window.SidePanels.init(...) at load time and hands it everything it needs —
          it reads no app.js global by bare name (BI-14). -->

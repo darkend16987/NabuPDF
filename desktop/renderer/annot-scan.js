@@ -59,7 +59,12 @@
   const EXTRA_LABEL = { callout: "Hộp văn bản có mũi tên", arrow: "Mũi tên", cloud: "Khoanh mây" };
 
   function labelOf(item) {
-    if (item.kind) return KIND_LABEL[item.kind] || item.kind;
+    if (item.kind) {
+      // A partner's plain Line lives in the editor as a 2-point open `poly` (Nabu has no line
+      // kind, BI-100) — the list still calls it what the partner drew.
+      if (item.kind === "poly" && item.subtype === "Line") return SUBTYPE_LABEL.Line;
+      return KIND_LABEL[item.kind] || item.kind;
+    }
     if (item.subtype === "FreeText" && item.it === "FreeTextCallout") return EXTRA_LABEL.callout;
     if ((item.subtype === "Line" || item.subtype === "PolyLine") && item.arrow) return EXTRA_LABEL.arrow;
     if ((item.subtype === "Square" || item.subtype === "Circle" || item.subtype === "Polygon") && item.cloudy) return EXTRA_LABEL.cloud;

@@ -262,8 +262,9 @@ const S = (id, subtype = "Stamp", rect = [100, 100, 150, 120]) => ({ id, subtype
   // §3.4-3: the redaction raster is the page's ONLY content afterwards, so whatever it does not
   // paint is gone from the file — it must hide our owned annots and paint everyone else's.
   const raster = body(BAKE, "async function rasterRedacted(");
-  check("rasterRedacted plans from ed._owned for the page it rasterises",
-    /const hide = await window\.AnnotHide\.plan\(ed\._owned\.get\(i\) \|\| null, page\);/.test(raster), true);
+  check("rasterRedacted plans from ed._owned for the page it rasterises (minus untouched partner originals, BI-100)",
+    /const owned = \(ed\._owned\.get\(i\) \|\| \[\]\)\.filter\(\(e\) => !\(keepIds && keepIds\.has\(e\.id\)\)\);/.test(raster) &&
+    /const hide = await window\.AnnotHide\.plan\(owned, page\);/.test(raster), true);
   check("…and paints through AnnotHide.render with the document's storage",
     /window\.AnnotHide\.render\(page, \{ canvasContext: cx, viewport: vp \}, hide,\s*pdfjsLib\.AnnotationMode, state\.pdf\.annotationStorage\)\.promise/.test(raster), true);
   check("…and no longer drops every annotation on a page that holds one of ours",

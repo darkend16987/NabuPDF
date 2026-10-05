@@ -39,7 +39,8 @@
  *     app.js            state pdfjsLib toast showOverlay hideOverlay rerenderChanged   (used when CALLED, not at load)
  *   and window.desktop / window.DocHistory / window.repaintRenderedPages at call time,
  *   plus window.ManagedCodec.replacedOnBake and window.AnnotHide (annot-hide.js) — what the
- *   overlay owns in the file, hidden while editing (BI-99).
+ *   overlay owns in the file, hidden while editing (BI-99), and window.ForeignAnnot
+ *   (foreign-annot.js) — another program's shapes imported / kept / replaced (BI-100).
  *
  * ORDER OF CONSTRUCTION. editor.js calls create() once, at the spot the block used to occupy.
  * Every name it passes is declared above that spot (function declarations are hoisted; the two
@@ -256,7 +257,7 @@
     return { bytes: dataUrlToBytes(c.toDataURL("image/png")), wPt: bw / RS, hPt: bh / RS };
   }
 
-  async function rasterRedacted(i, redacts, vp1) {
+  async function rasterRedacted(i, redacts, vp1, keepIds) {
     const page = await state.pdf.getPage(i + 1);
     const RS = 2; // ~144 dpi
     const vp = page.getViewport({ scale: RS });
@@ -277,7 +278,10 @@
     // §3.4-3). Now every other annotation becomes pixels, exactly as on a page with none
     // of ours. ed._owned is the same list edit mode hides on screen; one that no longer
     // matches this page plans "all" → DISABLE, the old behaviour.
-    const hide = await window.AnnotHide.plan(ed._owned.get(i) || null, page);
+    // `keepIds`: imported partner annotations the user left alone (BI-100) — they stay in the
+    // picture like any other partner annotation; only edited / deleted ones are left out.
+    const owned = (ed._owned.get(i) || []).filter((e) => !(keepIds && keepIds.has(e.id)));
+    const hide = await window.AnnotHide.plan(owned, page);
     await window.AnnotHide.render(page, { canvasContext: cx, viewport: vp }, hide,
       pdfjsLib.AnnotationMode, state.pdf.annotationStorage).promise;
     // Burn each box in *its own* colour so the original pixels are gone for good.
@@ -695,17 +699,25 @@
     // What the overlay owns is re-learnt from the bytes read here, never carried over: a
     // bake renumbers objects, so yesterday's ids would hide the wrong thing (BI-99).
     ed._owned = new Map();
+    ed._foreignImported = []; // same reason: the bake must match these against THIS file (BI-100)
     if (!state.bytes) return 0;
     let doc;
     try { doc = await PDFDocument.load(state.bytes); } catch (_) { return 0; }
     const pages = doc.getPages();
     let count = 0;
+    const fctx = { pageCount: pages.length, targets: null, vps: new Map() };
     for (let i = 0; i < pages.length; i++) {
       const arr = pages[i].node.Annots();
       if (!arr) continue;
       for (let j = 0; j < arr.size(); j++) {
         const dict = doc.context.lookup(arr.get(j));
-        if (!(dict instanceof PDFDict) || !dict.get(NABU_KIND)) continue;
+        if (!(dict instanceof PDFDict)) continue;
+        if (!dict.get(NABU_KIND)) {
+          // Another program's annotation: lifted into the overlay when it has a faithful Nabu
+          // counterpart (BI-100). Counted with ours, so "delete them all" still owes a bake (BI-60).
+          if (await importForeignAnnot(doc, i, arr.get(j), dict, fctx)) count++;
+          continue;
+        }
         // Owned = what the next bake replaces (the same rule stripManagedFromPage uses), so
         // edit mode hides exactly the baked copies the overlay stands in for.
         if (window.ManagedCodec.replacedOnBake(doc, dict)) {
@@ -726,6 +738,65 @@
       }
     }
     return count;
+  }
+
+  // One foreign annotation → overlay objects (foreign-annot.js has the rules). What the bake
+  // needs later is recorded in ed._foreignImported: where the original is, how to recognise it
+  // (N2), and the serialised form of each copy as imported — the bake compares against that to
+  // know the user left it alone (N1). Its pdf.js id goes into ed._owned, so edit mode paints
+  // the overlay copy instead of the original (BI-99). Never throws: one odd annotation must not
+  // stop the editor from opening.
+  async function importForeignAnnot(doc, i, raw, dict, fctx) {
+    try {
+      const F = window.ForeignAnnot;
+      if (!fctx.targets) fctx.targets = F.replyTargets(PDFLib, doc);
+      const rec = F.readForeign(PDFLib, doc, raw, dict, fctx.targets);
+      if (rec.skip) return false;
+      // The mapping is the page's pdf.js viewport — the same one the bake writes through. A
+      // document whose page count pdf.js disagrees with is not one we can map safely.
+      if (!state.pdf || state.pdf.numPages !== fctx.pageCount) return false;
+      let vp = fctx.vps.get(i);
+      if (!vp) {
+        vp = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
+        fctx.vps.set(i, vp);
+      }
+      const objs = F.toObjects(rec, (x, y) => vp.convertToViewportPoint(x, y));
+      if (!Array.isArray(objs) || !objs.length) return false;
+      const sigs = [];
+      for (const o of objs) {
+        o.id = ed.seq++;
+        o._foreign = { fileRef: rec.fileRef, subtype: rec.subtype, keep: rec.keep };
+        sigs.push(JSON.stringify(serializeManaged(o)));
+      }
+      const hide = window.AnnotHide.entryOf(PDFLib, raw, dict);
+      for (const o of objs) annotsFor(i).push(o);
+      ed._foreignImported.push({ key: rec.fileRef, hideId: hide.id, page: i, num: rec.num, gen: rec.gen,
+                                 subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs });
+      if (!ed._owned.has(i)) ed._owned.set(i, []);
+      ed._owned.get(i).push(hide);
+      ed._managedPages.add(i);
+      return true;
+    } catch (err) {
+      console.warn("foreign annotation left as it is:", err);
+      return false;
+    }
+  }
+
+  // At bake time (BI-100): which imported originals stay exactly as they are (their overlay
+  // copies are skipped) and which are removed (their copies — if any are left — get written as
+  // Nabu annotations). See ForeignAnnot.planForeign.
+  function foreignPlan() {
+    const live = [];
+    for (const k of Object.keys(ed.annots)) for (const a of ed.annots[k]) if (a._foreign) live.push({ page: +k, a });
+    return window.ForeignAnnot.planForeign(ed._foreignImported || [], live, (a) => JSON.stringify(serializeManaged(a)));
+  }
+  // Remove the originals the plan gave up on. One that is no longer exactly what we imported is
+  // left alone (N2) — the file then holds both it and the Nabu copy, and the user is told.
+  function removeForeign(doc, list) {
+    let kept = 0;
+    for (const e of list) if (!window.ForeignAnnot.removeOriginal(PDFLib, doc, e)) kept++;
+    if (kept) toast(`${kept} chú thích của phần mềm khác không gỡ được bản gốc (file đã đổi?) — bản gốc được giữ lại bên cạnh bản đã sửa.`, "warn");
+    return kept;
   }
 
   // Pages with a /Rotate entry (common in scans) display rotated, but pdf-lib
@@ -766,6 +837,8 @@
         // drops through to flatten.
         if (isManagedKind(a.kind)) {
           const done = await addManagedAnnot(doc, page, a, map, share);
+          // An edited partner annotation keeps its author / comment / NM (BI-100).
+          if (done && a._foreign) window.ForeignAnnot.applyKeep(PDFLib, doc, page, a._foreign.keep);
           if (done) continue;
         }
         await drawOneAnnot(doc, page, a, map);
@@ -1073,11 +1146,13 @@
 
   async function bakeInPlace() {
     const doc = await PDFDocument.load(state.bytes);
+    const fp = foreignPlan(); // BI-100: untouched partner annotations are not written at all
     stripManagedAnnots(doc); // drop the previous round-trip copies; re-added from ed.annots below
+    removeForeign(doc, fp.remove);
     const share = new Map(); // one embed per distinct image across the whole bake
     const pages = doc.getPages();
     for (let i = 0; i < pages.length; i++) {
-      const anns = annotsFor(i);
+      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id));
       if (!anns.length && !ed.watermark) continue;
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       await drawAnnots(doc, pages[i], anns, vp1, "orig", share);
@@ -1088,6 +1163,10 @@
 
   async function bakeWithRedaction() {
     const src = await PDFDocument.load(state.bytes);
+    // BI-100: edited / deleted partner originals leave `src` BEFORE pages are copied out of it;
+    // untouched ones are copied (or, on a redacted page, burned in) exactly as they are.
+    const fp = foreignPlan();
+    removeForeign(src, fp.remove);
     const out = await PDFDocument.create();
     const share = new Map(); // see bakeInPlace
     // Copied pages carry the old round-trip annots. They are unlinked page by page
@@ -1096,14 +1175,14 @@
     const trash = [];
     const n = state.numPages;
     for (let i = 0; i < n; i++) {
-      const anns = annotsFor(i);
+      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id));
       const redacts = anns.filter((a) => a.kind === "redact");
       const others = anns.filter((a) => a.kind !== "redact");
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       let page;
       let mode;
       if (redacts.length) {
-        const png = await rasterRedacted(i, redacts, vp1);
+        const png = await rasterRedacted(i, redacts, vp1, fp.keepIds);
         const img = await out.embedPng(png);
         page = out.addPage([vp1.width, vp1.height]);
         page.drawImage(img, { x: 0, y: 0, width: vp1.width, height: vp1.height });

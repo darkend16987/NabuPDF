@@ -400,6 +400,9 @@
     // annot-hide.js). Filled by importManaged from the bytes it read; renderPageCanvas and
     // the redaction raster hide exactly these and keep everyone else's annotations (BI-99).
     _owned: new Map(),
+    // Another program's annotations importManaged lifted into the overlay (BI-100): where each
+    // original is and how its copies looked on import — the bake leaves an untouched one alone.
+    _foreignImported: [],
   };
 
   // ---- model helpers -------------------------------------------------------
@@ -1691,6 +1694,7 @@
       const a = cloneAnnot(src);
       delete a.id; // the paste mints a fresh one from ed.seq
       delete a._managed; // "came back from /NabuData" is about the ORIGINAL, not the copy
+      delete a._foreign; // same: the copy is a new Nabu object, it does not stand for the partner's original (BI-100)
       return a;
     });
     const srcPage = findAnnot(ed.sel).page;
@@ -3697,6 +3701,7 @@
     ed._managedPages = new Set();
     ed._importedManaged = 0;
     ed._owned = new Map();
+    ed._foreignImported = [];
     clearEdHistory();
   }
 
@@ -4532,10 +4537,16 @@
           id: a.id,
           page: +k,
           kind: a.kind,
-          text: a.kind === "arrow" || a.kind === "dim" ? a.label || "" : a.text || "",
+          text: (a.kind === "arrow" || a.kind === "dim" ? a.label || "" : a.text || "") ||
+            (a._foreign && a._foreign.keep.Contents) || "",
           color: a.color || null,
           replies: (a.replies || []).length,
           top,
+          // A partner annotation lifted into the overlay (BI-100): the file row it stands for
+          // (side-panels drops that row) and who wrote it.
+          fileRef: a._foreign ? a._foreign.fileRef : null,
+          subtype: a._foreign ? a._foreign.subtype : null,
+          author: a._foreign ? a._foreign.keep.T || "" : "",
         });
       }
     }

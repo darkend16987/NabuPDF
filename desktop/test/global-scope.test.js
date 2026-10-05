@@ -122,6 +122,7 @@ const INDEX_RULES = [
   ["page-vault.js", "app.js", "app.js reads window.PageVault while rendering thumbnails"],
   ["side-panels.js", "app.js", "app.js calls window.SidePanels.init(...) at load time"],
   ["annot-scan.js", "side-panels.js", "side-panels.js renders labels with window.AnnotScan.labelOf"],
+  ["annot-scan.js", "foreign-annot.js", "foreign-annot.js takes window.AnnotScan (colorOf) at load time (BI-100)"],
   ["wire.js", "app.js", "bare pdfJsonBody / b64ToU8"],
   ["wire.js", "text-edit.js", "bare pdfJsonBody / b64ToU8"],
   ["wire.js", "compare.js", "bare pdfJsonBody / b64ToU8"],

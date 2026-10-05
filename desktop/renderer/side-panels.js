@@ -100,7 +100,10 @@
   // `live` items come from Editor.listObjects(): { id, page, kind, text, color, top, replies }.
   function composeItems(fileItems, liveItems, editing) {
     if (!editing) return (fileItems || []).map((it) => ({ ...it, live: false }));
-    const foreign = (fileItems || []).filter((it) => !it.kind).map((it) => ({ ...it, live: false }));
+    // A partner annotation the editor imported (BI-100) is a live row now; its file row would
+    // list it twice. Matched by object reference ("12 0 R").
+    const lifted = new Set((liveItems || []).map((it) => it.fileRef).filter(Boolean));
+    const foreign = (fileItems || []).filter((it) => !it.kind && !(it.ref && lifted.has(it.ref))).map((it) => ({ ...it, live: false }));
     return (liveItems || []).map((it) => ({ ...it, live: true })).concat(foreign);
   }
 

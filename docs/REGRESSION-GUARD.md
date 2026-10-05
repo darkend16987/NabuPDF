@@ -2670,6 +2670,42 @@ _Ghi 2026-09-30 (v0.2.73)._
   mờ lệch dưới overlay) sau Ctrl+S giữa phiên · xoá hộp chữ Nabu rồi cuộn đi cuộn lại thấy nó hiện lại · bôi đen trang có hộp chữ Nabu
   mà chú thích của đối tác trên trang đó biến mất, hoặc hộp chữ vừa xoá hiện lại thành pixel.
 
+### BI-100 · Hình của phần mềm khác **sửa được** trong Chú thích — **không đụng thì không ghi**, gỡ bản gốc chỉ khi chắc chắn
+- `renderer/foreign-annot.js` (`window.ForeignAnnot`: `readForeign` / `toObjects` / `planForeign` / `removeOriginal` /
+  `applyKeep`) · `editor-bake.js` `importManaged` → `importForeignAnnot` (ghi `ed._foreignImported` + `ed._owned`),
+  `foreignPlan` / `removeForeign` trong **cả hai** đường bake, `applyKeep` trong `drawAnnots` · `editor.js` `copySelected`
+  bỏ `_foreign`, `listObjects` trả `fileRef` / `author` / `subtype` · `side-panels.js` `composeItems` bỏ dòng file đã nhập ·
+  `annot-scan.js` `labelOf` (Line nhập thành `poly` vẫn là "Đường kẻ"). Lưới `npm run test:foreign`.
+- **Nhập (nhóm B của Q1):** Square → `box` / `cloud` (`/BE /S /C`), Circle → `ellipse`, Line có MỘT đầu mũi tên → `arrow`
+  (đầu ở `x2,y2`), Line trơn → `poly` hở 2 điểm, Polygon → `poly` kín (`PolygonCloud` → `cloudpen`), PolyLine → `poly` hở,
+  Ink n nét → n `draw` (MỘT bản gốc). Toạ độ qua `convertToViewportPoint` của viewport scale-1 — nghịch đảo đúng cái map
+  bake ghi ra (trang xoay đúng sẵn, BI-45; test: sửa màu trên trang `/Rotate 90` → đọc lại đúng chỗ).
+  **Chưa nhập** (vẫn vẽ bởi pdf.js, viền đứt trong danh sách): FreeText / Text / Highlight (nhóm A, Đợt 3c), Stamp.
+- **Luật 1 — N3: thứ Nabu không nói được thì KHÔNG nhập**, chứ không nhập rồi làm sai: `/CA` < 1, viền 0 hoặc không `/C`,
+  cờ Hidden / NoRotate / NoView / ReadOnly / Locked, `/OC`, có trả lời hoặc là trả lời (`/IRT`), đường kích thước, `/LL`,
+  `/Cap`, mũi tên hai đầu, PolyLine có đầu mũi tên, Circle mây, dict nội tuyến (không số đối tượng).
+- **Luật 2 — N1 quyết bằng GIÁ TRỊ, không bằng theo dõi thao tác.** Lúc nhập lưu `JSON.stringify(serializeManaged(a))` của
+  từng bản sao; lúc bake: bản gốc "không đụng" ⇔ đúng ngần ấy bản sao, đúng trang đó, giá trị y như lúc nhập (không kể thứ
+  tự). Không đụng ⇒ bake **bỏ qua** bản sao, **không** gỡ bản gốc ⇒ dict giữ nguyên số đối tượng và nội dung. Kéo rồi Ctrl+Z
+  về chỗ cũ = không đụng. `copySelected` bỏ `_foreign` ⇒ bản dán là đối tượng Nabu mới, bản gốc yên.
+- **Luật 3 — N2: gỡ bản gốc chỉ khi trang đó, số đối tượng đó vẫn là đúng nó** (`/Subtype` + `/Rect` + `/NM`); lệch ⇒ giữ,
+  toast cảnh báo, bản Nabu vẫn được ghi (hai bản còn hơn mất lời bình). Gỡ kèm `/Popup`; luồng `/AP` chỉ giải phóng khi
+  không chú thích nào khác dùng chung.
+- **Luật 4 — bản sửa giữ người tạo**: `applyKeep` chép `/T /Contents /NM /Subj /CreationDate` lên chú thích Nabu vừa ghi
+  (không đè khoá Nabu đã ghi). Danh sách vẫn hiện tên tác giả; mở lại vẫn cùng `/NM`.
+- **Luật 5 — đường bôi đen**: `removeForeign(src)` **trước** `copyPages`; bản gốc không đụng nằm trên trang bôi đen thì vẫn
+  được vẽ vào ảnh (`keepIds` loại khỏi danh sách ẩn của `rasterRedacted`), như mọi chú thích khác của đối tác (BI-99 Luật 5).
+- **Đếm vào `_importedManaged`** (BI-60): xoá hết hình của đối tác vẫn kích hoạt bake.
+- **Đã kiểm E2E trong Electron thật trên FILE CỦA KHÁCH** (CDP, 20/20 hai lần): vào Chú thích → 11 hình (3 mây, 2 mũi tên,
+  6 đường kẻ) là đối tượng sống, tác giả `hang_`, bản gốc ẩn theo tên; danh sách 19 dòng (11 sống + 8 viền đứt); Xong không
+  sửa → file **y từng byte**; kéo khoanh mây bằng chuột (40, 20 px) + xoá một đường kẻ → Xong: mây thành MỘT chú thích Nabu
+  giữ `hang_` + `/NM`, đường kẻ mất, **18 chú thích còn lại cùng số đối tượng, cùng dict**; copy + dán một khoanh mây → bản
+  gốc y nguyên + một mây Nabu mới; Ctrl+Z → **đúng bytes gốc**. Bôi đen trang 1 → 11 hình ở trang 6–10 còn là chú thích của
+  đối tác. Nhập mất 64–211 ms với file 10 MB.
+- **Vỡ khi:** mở file của đối tác, vào Chú thích, không sửa gì mà Lưu ra file khác · đối tác mở lại thấy hình bị nhân đôi /
+  mất tên người tạo / mất lời bình · xoá hình của đối tác mà Popup còn lại · hình trên trang xoay lệch chỗ sau khi sửa ·
+  danh sách liệt kê một hình hai lần khi đang sửa.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2750,6 +2786,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Cột trái nhiều chế độ (`side-panels.js`, `.side-tab`, `#pane-outline`, `SidePanels.init/docChanged`) | `cd desktop ; npm run test:side ; npm run test:scope` · file **có dấu trang** (xuất từ Word có Heading, hoặc Acrobat) → tab Dấu trang → cây đúng cấp, nhánh đóng/mở như Acrobat · bấm mục → nhảy đúng chỗ (cả khi đang **zoom 300%** và trên trang **xoay 90°**) · **xoá** trang có dấu trang → mục đó **mờ**, không lỗi console · kéo đổi thứ tự trang khi đang xem dấu trang → cây cập nhật · về tab Trang → thumbnail vẫn vẽ, trang hiện tại sáng · F4, F11 + rê mép trái · đổi EN/VI · file **không** có dấu trang → "Tài liệu này không có dấu trang." (BI-97) |
 | Danh sách Chú thích (`annot-scan.js`, `side-panels.js` phần `annots`, `Editor.listObjects/focusObject`, móc ở `renderLayer`, `#btn-comments`) | `cd desktop ; npm run test:annotscan ; npm run test:side ; npm run test:scope` · mở file **có chú thích của Acrobat/Foxit/PDF-XChange** → nút 💬 → tab Chú thích: đủ mục, đúng trang, đúng tác giả, màu chữ hộp văn bản **không trắng** · lọc loại / người · bấm mục → nháy đúng chỗ (cả trang **xoay**, cả khi **zoom 300%**) · vào **Chú thích**: mục của phần mềm khác viền đứt; **vẽ / xoá / hoàn tác** một hình → danh sách + badge đổi ngay · Xong → danh sách đọc lại từ file, hộp chữ Nabu **không** hiện hai lần · mở file **vài trăm trang** → cửa sổ không khựng khi danh sách đang đọc · EN/VI (BI-98) |
 | Ẩn chú thích khi đang sửa (`annot-hide.js`, `renderPageCanvas` nhánh `editing`, `importManaged` → `ed._owned`, `replacedOnBake`, thứ tự `importManaged`/`rerenderChanged` trong `bakePending`, `Editor.ownedAnnots`) | `cd desktop ; npm run test:annothide ; npm test -- bake-repaint bake-split managed-image render-race render-cancel` · mở file **có chú thích của Acrobat/Foxit** + **file có ô form đã điền** → vào **Chú thích** → chữ/hình của đối tác và giá trị form **vẫn trên trang**, cuộn tới trang chưa vẽ cũng thế · vẽ hộp chữ + khung → **Ctrl+S khi vẫn đang sửa** → không có bản thứ hai mờ dưới overlay · Xong → hiện đúng một bản · vào lại → sửa được, không hai bản · **xoá** hộp chữ Nabu → cuộn xa rồi quay lại → không hiện lại · Hủy bỏ → hộp chữ trong file hiện lại · **bôi đen** một vùng trên trang có cả hộp chữ Nabu và chú thích của đối tác → Xong → chú thích của đối tác còn (thành pixel), hộp chữ còn và sửa được; xoá hộp chữ rồi bôi đen → hộp chữ **không** còn dấu · trang **xoay 90°** cũng vậy · in / thumbnail sau khi sửa: đủ mọi chú thích (BI-99) |
+| Hình của phần mềm khác trong Chú thích (`foreign-annot.js`, `importForeignAnnot` / `foreignPlan` / `removeForeign` / `applyKeep` ở `editor-bake.js`, `_foreign` trong `editor.js`, `composeItems`) | `cd desktop ; npm run test:foreign ; npm run test:annothide ; npm test -- bake-split side-panels annot-scan` · mở file có hình của **Acrobat / Foxit / PDF-XChange** → Chú thích → hình chữ nhật, mây, mũi tên, đường kẻ, nét vẽ tay **chọn / kéo / đổi màu / xoá** được, nhìn gần giống bản gốc · **không sửa gì → Xong → so file: y nguyên** · sửa một cái → Lưu → mở bằng **Acrobat/Foxit**: còn đúng một bản, **còn tên người tạo + lời bình**, các cái khác y nguyên · xoá một cái có ghi chú bật lên (Popup) → không còn rác · trang **xoay 90/180/270** → sửa xong vẫn đúng chỗ · copy + dán một hình của đối tác → bản gốc yên · Ctrl+Z sau Xong → đúng file cũ · hình **trong suốt / bị khoá / có trả lời** → vẫn viền đứt, không sửa được (đúng) · danh sách không có dòng trùng (BI-100) |
 | Sắp xếp trang bằng kéo–thả trong cột trang (`thumbGapAt`, `showThumbGapCue`, `gapToReorderIndex`, `gapIsNoOp`, `.thumb.insert-*`, `reorderPage`, `PageRange.movePageInDoc`) | `npm run test:geom ; npm run test:pages` · file **có dấu trang + form** → kéo một trang → Lưu → mở bằng **Foxit/Acrobat**: dấu trang còn, bấm vào nhảy đúng trang đã dời, form còn (BI-96) · file có trang **xoay / khổ khác** → kéo → trang giữ đúng khổ & hướng · kéo trang 1 xuống **giữa trang 3 và 4** → thấy **hai vạch** ở đúng khe đó, thả ra thì trang nằm đúng giữa 3 và 4 · kéo rồi thả **đúng chỗ cũ** → con trỏ báo “không cho phép”, tài liệu **không** bẩn (không có ●) · kéo–thả **1 PDF từ ngoài** vào giữa dải → vẫn chèn đúng khe (BI-33) · Ctrl+Z sau khi sắp xếp · đang kéo thì cột **không** tự cuộn (BI-39) |
 | Chọn nhiều mục / clipboard vật thể (`ed.selMore`, `selIds`, `toggleSelect`, `gripsFor`, `clip`, `copySelected`, `pasteClip`, menu bấm phải trong Chú thích) | `npm run test:cloud` · **giữ Ctrl bấm 3 mục** → cả 3 có viền chọn, **không** hiện tay nắm · kéo một mục trong nhóm → **cả nhóm** đi cùng, Esc giữa lúc kéo → **cả nhóm** về chỗ cũ · đổi Màu / Nét → **cả nhóm** đổi · Delete → mất cả nhóm, **một** Ctrl+Z lấy lại hết · Ctrl+C rồi sang trang khác Ctrl+V → dán đúng vị trí cũ, còn nguyên khoảng cách giữa các mục · dán **lại** trên cùng trang → lệch dần chứ không đè lên nhau · dán vào trang **nhỏ hơn** → cả nhóm bị kéo vào trong trang mà **không rời ra** · **copy → Áp dụng → Ctrl+V** vẫn dán được (BI-46) · bấm phải lên một mục → menu Sao chép/Dán/Xoá · bấm phải lên **giấy trắng** khi chưa copy gì → vẫn ra menu **ảnh** cũ · copy một ảnh từ app khác rồi Ctrl+V → vẫn là đường dán ảnh của `capture.js` (BI-30) |
 | Sửa mũi tên (`drag.type === "point"`, `snapLineEnd`, `.handle.h-pt`, `reverseSelectedArrow`) | `npm run test:cloud` · chọn mũi tên → thấy **2 nút tròn** ở hai đầu · kéo một đầu → mũi tên xoay/dài ra, đầu kia **đứng yên** · giữ Shift → khoá góc 15°, **độ dài không đổi** · Esc giữa lúc kéo → về đúng cũ, không để lại bước undo rỗng · "Đảo chiều" → mũi nhọn **và nhãn** sang đầu kia · **Áp dụng → mở lại → Chỉnh sửa** → vẫn kéo/đảo/sửa nhãn được (arrow round-trip qua `/NabuData`) |

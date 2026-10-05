@@ -119,6 +119,9 @@ function makeContext() {
   // annot-hide.js: read through window.AnnotHide when importManaged RUNS (BI-99), never at load —
   // which the load check below still proves, since it runs editor-bake.js before this matters.
   run("annot-hide.js");
+  // annot-scan.js + foreign-annot.js: window.ForeignAnnot, read by importManaged / the bakes when they RUN (BI-100).
+  run("annot-scan.js");
+  run("foreign-annot.js");
   return { ctx, run, sandbox };
 }
 
