@@ -124,7 +124,7 @@ async function makeFixture() {
   const inlineRaw = annotsOf(doc, 0).find((r) => !(r instanceof PDFRef));
   check("inline annotation dict → left alone (no object number to find it by, N2)",
     FA.readForeign(PDFLib, doc, inlineRaw, inlineRaw, targets).skip, "inline");
-  check("the reply itself (/IRT) → left alone", FA.readForeign(PDFLib, doc, fx.left.reply, doc.context.lookup(fx.left.reply), targets).skip, "subtype");
+  check("the reply itself (/IRT) → left alone", FA.readForeign(PDFLib, doc, fx.left.reply, doc.context.lookup(fx.left.reply), targets).skip, "reply");
   const nabu = doc.context.obj({ Type: "Annot", Subtype: "Square", Rect: [0, 0, 1, 1], C: [0, 0, 0], NabuKind: PDFName.of("box") });
   check("a Nabu annotation is never 'foreign'", FA.readForeign(PDFLib, doc, doc.context.register(nabu), nabu, targets).skip, "nabu");
 
@@ -735,6 +735,126 @@ async function makeFixture() {
       [f4.get("ft-a@0").Contents, [...f4.values()].filter((v) => v.nabu && /text/.test(v.ent.NabuKind)).map((v) => v.ent.NM), toasts.filter((t) => /không sửa được tại chỗ/.test(t)).length],
       ["Đã sửa trong Nabu\rhai dòng", [undefined], 1]);
     sandbox.document.createElement = realCreate;
+  }
+
+  // ---- 6d. sticky notes (Đợt 3c-2): an edited partner note stays THAT /Text -------------------
+  {
+    const nd = await PDFDocument.create();
+    const c = nd.context;
+    const h1 = nd.addPage([600, 800]);
+    const h2 = nd.addPage([600, 800]);
+    h2.node.set(PDFName.of("Rotate"), c.obj(90));
+    const S = (s) => PDFHexString.fromText(s);
+    const reg = (d) => c.register(c.obj(d));
+    const icon = () => c.register(c.stream("1 1 0 rg 0 0 20 20 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 20, 20] }));
+    const note = (rect, nm, extra) => reg(Object.assign({ Type: "Annot", Subtype: "Text", Rect: rect, F: 28, NM: S(nm), T: S("tuyetpta"), Name: PDFName.of("Comment"), Subj: S("Sticky Note") }, extra));
+    const NR = {};
+    NR.a = note([100, 700, 120, 720], "n-a", { C: [1, 1, 0], Contents: S("Ghi chú\rdòng 2"), AP: { N: icon() } });
+    NR.popup = reg({ Type: "Annot", Subtype: "Popup", Rect: [130, 600, 330, 700], Parent: NR.a, Open: false });
+    c.lookup(NR.a).set(PDFName.of("Popup"), NR.popup);
+    NR.b = note([200, 700, 220, 720], "n-b", { C: [0, 0.5, 1], Contents: S("không có /AP") });
+    NR.parent = note([300, 700, 320, 720], "n-thread", { C: [1, 0, 0], Contents: S("có trả lời") });
+    NR.reply = reg({ Type: "Annot", Subtype: "Text", Rect: [300, 700, 320, 720], IRT: NR.parent, Contents: S("đồng ý"), T: S("hang_") });
+    h1.node.set(PDFName.of("Annots"), c.obj(Object.values(NR)));
+    const NR2 = { c: note([100, 100, 120, 120], "n-c", { C: [0, 1, 0], Contents: S("xoay") }) };
+    h2.node.set(PDFName.of("Annots"), c.obj(Object.values(NR2)));
+    const nbytes = await nd.save();
+
+    const ndoc = await PDFDocument.load(nbytes, { updateMetadata: false });
+    const ntargets = FA.replyTargets(PDFLib, ndoc);
+    const nrec = (raw) => FA.readForeign(PDFLib, ndoc, raw, ndoc.context.lookup(raw), ntargets);
+    check("note read: words (\\r → \\n), colour, author kept", [nrec(NR.a).text, nrec(NR.a).color, nrec(NR.a).keep.T], ["Ghi chú\ndòng 2", "#ffff00", "tuyetpta"]);
+    check("a note with a reply thread → left alone, and so is the reply", [nrec(NR.parent).skip, nrec(NR.reply).skip], ["has-replies", "reply"]);
+    {
+      const rg = (d) => ndoc.context.register(ndoc.context.obj(d));
+      const locked = rg({ Type: "Annot", Subtype: "Text", Rect: [0, 0, 20, 20], F: 28 | 128, C: [1, 1, 0], Contents: S("x") });
+      const sqNoRot = rg({ Type: "Annot", Subtype: "Square", Rect: [0, 0, 20, 20], F: 4 | 16, C: [1, 0, 0] });
+      check("Acrobat's /F 28 (NoZoom + NoRotate) is fine for a NOTE — but a LOCKED note is still left alone, and NoRotate still excludes a shape",
+        [nrec(NR.a).skip, FA.readForeign(PDFLib, ndoc, locked, ndoc.context.lookup(locked), ntargets).skip, FA.readForeign(PDFLib, ndoc, sqNoRot, ndoc.context.lookup(sqNoRot), ntargets).skip],
+        [undefined, "flags", "flags"]);
+    }
+    check("note → note object over its icon /Rect", FA.toObjects(nrec(NR.a), (x, y) => [x, 800 - y]), [{ kind: "note", x: 100, y: 80, w: 20, h: 20, text: "Ghi chú\ndòng 2", color: "#ffff00", replies: [] }]);
+
+    const ndict = async (bytes) => {
+      const d = await PDFDocument.load(bytes, { updateMetadata: false });
+      const m = new Map();
+      for (let i = 0; i < 2; i++) for (const raw of annotsOf(d, i)) {
+        const x = d.context.lookup(raw);
+        const nm = x.lookup(PDFName.of("NM"));
+        let key = (nm ? nm.decodeText() : raw.toString()) + "@" + i;
+        while (m.has(key)) key += "+";
+        const ent = {};
+        for (const [k, v] of x.entries()) ent[k.decodeText()] = v.toString();
+        const t = (k) => { const v = x.lookup(PDFName.of(k)); return v && v.decodeText ? v.decodeText() : null; };
+        m.set(key, { ref: raw.toString(), ent, nabu: !!x.get(PDFName.of("NabuKind")), Contents: t("Contents"),
+          rect: x.lookup(PDFName.of("Rect")).asArray().map((v) => Math.round(v.asNumber() * 100) / 100) });
+      }
+      return m;
+    };
+    await openBytes(nbytes);
+    sandbox.state.numPages = 2;
+    await reimport();
+    const nl = live();
+    check("partner notes import as Nabu notes (A, B; C on the turned page) — not the one with a thread",
+      nl.map((l) => [l.page, l.a.kind, l.a._foreign.keep.NM]), [[0, "note", "n-a"], [0, "note", "n-b"], [1, "note", "n-c"]]);
+    check("…recorded for an in-place rewrite", ed._foreignImported.map((e) => [e.subtype, e.inplace]), [["Text", true], ["Text", true], ["Text", true]]);
+
+    const n0 = await ndict(nbytes);
+    ed.annots[0].push({ id: ed.seq++, kind: "box", x: 10, y: 10, w: 20, h: 20, color: "#00ff00", width: 2 });
+    await api.bakePending();
+    const n1 = await ndict(sandbox.state.bytes);
+    check("untouched notes (and the thread) are the same objects, the same dicts", [...n0.keys()].filter((k) => !n1.has(k) || JSON.stringify(n1.get(k).ent) !== JSON.stringify(n0.get(k).ent)), []);
+
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const findN = (nm) => live().find((l) => l.a._foreign && l.a._foreign.keep.NM === nm).a;
+    findN("n-a").text = "Đã sửa\nhai dòng";       // retyped, same colour → icon kept
+    const B = findN("n-b");
+    B.x += 50; B.color = "#ff0000";                  // moved + recoloured → icon dropped (none here anyway)
+    findN("n-c").x += 10;                            // moved on the turned page
+    const pre = await ndict(sandbox.state.bytes);
+    toasts.length = 0;
+    await api.bakePending();
+    const n2 = await ndict(sandbox.state.bytes);
+    const na = n2.get("n-a@0"), nb = n2.get("n-b@0");
+    check("retyped note A: SAME /Text object, new /Contents (\\r lines), its icon appearance and /Popup kept, author kept",
+      [na.ref === pre.get("n-a@0").ref, na.nabu, na.ent.Subtype, na.Contents, na.ent.AP === pre.get("n-a@0").ent.AP, na.ent.Popup === pre.get("n-a@0").ent.Popup, na.ent.T === pre.get("n-a@0").ent.T, na.ent.Name],
+      [true, false, "/Text", "Đã sửa\rhai dòng", true, true, true, "/Comment"]);
+    check("…and its /Rect did not move", na.rect, pre.get("n-a@0").rect);
+    check("moved + recoloured note B: same object, /Rect 50 pt right, /C red, /M updated",
+      [nb.ref === pre.get("n-b@0").ref, nb.rect, nb.ent.C.replace(/\s+/g, " "), nb.ent.M !== undefined], [true, [250, 700, 270, 720], "[ 1 0 0 ]", true]);
+    check("the thread (parent + reply) is untouched", ["n-thread@0"].every((k) => JSON.stringify(n2.get(k).ent) === JSON.stringify(pre.get(k).ent)), true);
+    check("no warning, nothing Nabu-tagged but the green box", [toasts.filter((t) => t !== "Đã áp dụng chỉnh sửa."), [...n2.values()].filter((v) => v.nabu).length], [[], 1]);
+    // recolour A → its icon appearance goes (viewers redraw the icon in the new colour)
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const cAt = (() => { const a = findN("n-c"); return [a.x, a.y]; })();
+    findN("n-a").color = "#00ff00";
+    const preA = await ndict(sandbox.state.bytes);
+    await api.bakePending();
+    const n3 = await ndict(sandbox.state.bytes);
+    check("recoloured note A: /C green, the old yellow icon /AP dropped and freed",
+      [n3.get("n-a@0").ent.C.replace(/\s+/g, " "), n3.get("n-a@0").ent.AP, (await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false })).context.lookup(PDFLib.PDFRef.of(+/\/N (\d+)/.exec(preA.get("n-a@0").ent.AP.replace(/\s+/g, " "))[1]))],
+      ["[ 0 1 0 ]", undefined, undefined]);
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const C2 = findN("n-c");
+    check("note on the /Rotate 90 page reads back where it was moved to (BI-45)", [near(C2.x, cAt[0]), near(C2.y, cAt[1])], [true, true]);
+    // a reply typed in Nabu → a REAL reply (/IRT), the partner's words untouched
+    findN("n-b").replies = [{ text: "trả lời trong Nabu", ts: Date.UTC(2026, 9, 5, 3, 0, 0) }];
+    await api.bakePending();
+    const n4 = await ndict(sandbox.state.bytes);
+    const parentRef = n4.get("n-b@0").ref;
+    const replies = [...n4.values()].filter((v) => v.ent.IRT === parentRef);
+    check("a reply typed in Nabu is its own /Text with /IRT → the note (a thread Acrobat / Foxit show), the note's /Contents untouched",
+      [n4.get("n-b@0").ref === n3.get("n-b@0").ref, n4.get("n-b@0").Contents, replies.length, replies[0] && replies[0].Contents, replies[0] && replies[0].ent.Subtype],
+      [true, "không có /AP", 1, "trả lời trong Nabu", "/Text"]);
+    check("…with a fresh unique /NM and a date, and no invented author",
+      [!!replies[0] && /^\(|^</.test(replies[0].ent.NM) && replies[0].ent.NM !== n4.get("n-b@0").ent.NM, !!(replies[0] && replies[0].ent.M), replies[0] && replies[0].ent.T], [true, true, undefined]);
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    check("…and from then on that note is a thread: left alone by the next import (like any partner thread)",
+      live().some((l) => l.a._foreign && l.a._foreign.keep.NM === "n-b"), false);
   }
 
   // ---- 7. wiring pins (DOM side; the probe runs them for real) ----------------------------------

@@ -791,13 +791,14 @@
         o.id = ed.seq++;
         o._foreign = { fileRef: rec.fileRef, subtype: rec.subtype, keep: rec.keep };
         if (rec.subtype === "FreeText") o._foreign.ft = { fontRes: rec.fontRes, border: rec.border, origText: rec.text, wrapText: o.text };
+        if (rec.subtype === "Text") o._foreign.note = { color: rec.color };
         sigs.push(JSON.stringify(serializeManaged(o)));
       }
       const hide = window.AnnotHide.entryOf(PDFLib, raw, dict);
       for (const o of objs) annotsFor(i).push(o);
       ed._foreignImported.push({ key: rec.fileRef, hideId: hide.id, page: i, num: rec.num, gen: rec.gen,
                                  subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs,
-                                 stamp: rec.subtype === "Stamp", inplace: rec.subtype === "FreeText", primaryId: objs[0].id });
+                                 stamp: rec.subtype === "Stamp", inplace: rec.subtype === "FreeText" || rec.subtype === "Text", primaryId: objs[0].id });
       if (!ed._owned.has(i)) ed._owned.set(i, []);
       ed._owned.get(i).push(hide);
       ed._managedPages.add(i);
@@ -868,6 +869,29 @@
     F.freeTextFields(PDFLib, d, a, a._foreign.ft, new Date());
     return true;
   }
+  // Đợt 3c-2: an edited partner sticky note stays the same /Text. Its icon keeps its size; the
+  // /Rect follows the note's box through the page's map (corners mapped one by one, so a turned
+  // page is right for free — BI-45). A reply typed in Nabu is written as a real /IRT reply
+  // beside it (ForeignAnnot.replyAnnot) — the partner's /Contents keep the partner's words.
+  async function writeTextNote(doc, page, entry, a, vp1) {
+    const F = window.ForeignAnnot;
+    const found = F.findOriginal(PDFLib, doc, entry);
+    if (!found) return false;
+    const map = makeMap(vp1, "orig");
+    const [x1, y1] = map(a.x, a.y);
+    const [x2, y2] = map(a.x + a.w, a.y + a.h);
+    const r4 = (v) => Math.round(v * 10000) / 10000;
+    const d = found.dict;
+    const was = a._foreign && a._foreign.note ? a._foreign.note.color : null;
+    const colorChanged = String(a.color || "").toLowerCase() !== String(was || "").toLowerCase();
+    const oldAp = colorChanged ? F.apRefsOf(PDFLib, doc, d) : [];
+    d.set(PDFName.of("Rect"), doc.context.obj([Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)].map(r4)));
+    F.textNoteFields(PDFLib, d, a.text, a.color, colorChanged, new Date());
+    F.freeUnusedAp(PDFLib, doc, oldAp);
+    const rect = d.lookup(PDFName.of("Rect"));
+    for (const r of a.replies || []) pushPageAnnot(doc, page, F.replyAnnot(PDFLib, doc, found.ref, rect, r, a.color));
+    return true;
+  }
   // Rewrite every planned group-A original in `doc`; returns the ids that could NOT be (they
   // are then drawn as Nabu objects beside the untouched original — two copies beat a lost edit —
   // and must not take its /NM).
@@ -879,6 +903,7 @@
       let ok = false;
       try {
         if (entry.subtype === "FreeText") ok = await writeFreeText(doc, pages[entry.page], entry, a, vp1);
+        else if (entry.subtype === "Text") ok = await writeTextNote(doc, pages[entry.page], entry, a, vp1);
       } catch (err) {
         console.error("in-place rewrite failed:", entry.subtype, err);
       }

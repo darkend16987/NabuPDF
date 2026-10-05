@@ -43,7 +43,7 @@
 (function () {
   const AS = typeof module !== "undefined" && module.exports ? require("./annot-scan.js") : window.AnnotScan;
 
-  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp", "FreeText"]);
+  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp", "FreeText", "Text"]);
   // /F bits we refuse: Hidden 2, NoRotate 16, NoView 32, ReadOnly 64, Locked 128.
   const FLAG_SKIP = 2 | 16 | 32 | 64 | 128;
   const ARROW_ENDS = new Set(["OpenArrow", "ClosedArrow"]);
@@ -125,7 +125,10 @@
     // Found again at bake time by object number — an inline dict has none (N2).
     if (!(raw instanceof PDFRef)) return skip("inline");
     const flags = num(look("F"));
-    if (Number.isFinite(flags) && flags & FLAG_SKIP) return skip("flags");
+    // A sticky note's icon is NoZoom + NoRotate by convention (Acrobat writes /F 28): that is how a
+    // Nabu note marker behaves too, so for /Text only, NoRotate is no reason to leave it alone.
+    const mask = subtype === "Text" ? FLAG_SKIP & ~16 : FLAG_SKIP;
+    if (Number.isFinite(flags) && flags & mask) return skip("flags");
     if (dict.get(N("OC"))) return skip("optional-content");
     if (dict.get(N("IRT"))) return skip("reply");
     if (targets && targets.has(raw.toString())) return skip("has-replies");
@@ -171,6 +174,18 @@
     }
     if (Number.isFinite(ca) && ca < 0.999) return skip("opacity");
 
+    if (subtype === "Text") {
+      // A sticky note (group A, Đợt 3c-2): stays THIS /Text when edited (writeTextNote). One that
+      // has replies was already left alone above (has-replies) — a thread is not a Nabu note's
+      // reply list, and rewriting the parent would orphan it.
+      return {
+        subtype, it: nameOf(look("IT")), rect,
+        num: raw.objectNumber, gen: raw.generationNumber, fileRef: raw.toString(),
+        nm: textOf(look("NM")), keep: keepOf(),
+        text: (textOf(look("Contents")) || "").replace(/\r\n?/g, "\n"),
+        color: AS.colorOf(nums(look("C"))) || "#ffd54a",
+      };
+    }
     if (subtype === "FreeText") {
       // Group (A) of Q1: an edited text box stays THIS /FreeText (writeFreeText) so the partner
       // can keep editing it in Acrobat / Foxit. A callout's leader (/CL) would have to move with
@@ -328,6 +343,12 @@
       // /IC on a PolyLine colours its line endings, not an interior — only a Polygon is filled.
       const o = withDash(style({ kind: "poly", pts, closed: s === "Polygon" }));
       return [s === "Polygon" ? withFill(o) : o];
+    }
+    if (s === "Text") {
+      const p = pt(rec.rect[0], rec.rect[1]);
+      const q = pt(rec.rect[2], rec.rect[3]);
+      return [{ kind: "note", x: Math.min(p.x, q.x), y: Math.min(p.y, q.y), w: Math.abs(q.x - p.x), h: Math.abs(q.y - p.y),
+                text: rec.text, color: rec.color, replies: [] }];
     }
     if (s === "FreeText") {
       // The text AREA: /Rect minus /RD when given (Acrobat writes half the border there),
@@ -561,7 +582,7 @@
     return true;
   }
 
-// A FreeText wraps its words inside its box; a Nabu text box breaks lines only at "\n". So the
+  // A FreeText wraps its words inside its box; a Nabu text box breaks lines only at "\n". So the
   // imported text is wrapped here, greedily by words (a word wider than the box by characters),
   // with `measure(str)` = width in points as Nabu will draw it. Lines that already fit are left
   // exactly as they are (+1 pt of slack), so text Nabu itself sized is never re-wrapped.
@@ -629,6 +650,44 @@
     dict.set(N("M"), PDFString.of(pdfDate(now || new Date())));
   }
 
+  // An edited sticky note stays this /Text (Q1, group A): its words, colour and place (a reply
+  // typed in Nabu becomes a separate /IRT reply — replyAnnot). The
+  // icon appearance is the partner's: kept when the colour is unchanged (it fits the moved /Rect),
+  // dropped when it is not, so Acrobat / Foxit draw their icon in the new colour (and Nabu's view
+  // marks every /Text with its own marker anyway). The /Rect is set by the caller.
+  function textNoteFields(PDFLib, dict, contents, color, colorChanged, now) {
+    const { PDFName, PDFHexString, PDFString } = PDFLib;
+    const N = (k) => PDFName.of(k);
+    const m = /^#?([0-9a-f]{6})$/i.exec(color || "");
+    const v = m ? m[1] : "ffd54a";
+    dict.set(N("Contents"), PDFHexString.fromText(String(contents || "").replace(/\n/g, "\r")));
+    dict.set(N("C"), dict.context.obj([0, 2, 4].map((k) => parseInt(v.slice(k, k + 2), 16) / 255)));
+    if (colorChanged) dict.delete(N("AP"));
+    dict.set(N("M"), PDFString.of(pdfDate(now || new Date())));
+  }
+
+// A reply typed in Nabu under a partner's note becomes a REAL reply: its own /Text with /IRT
+  // pointing at the note — how Acrobat / Foxit store a thread, so the partner sees it as one —
+  // not words folded into their note's /Contents. Fresh /NM; no /T (Nabu has no author name).
+  function newNM() {
+    const c = typeof globalThis !== "undefined" && globalThis.crypto;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    const h = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+    return `${h()}${h()}-${h()}-4${h().slice(1)}-${h()}-${h()}${h()}${h()}`;
+  }
+  function replyAnnot(PDFLib, doc, parentRef, rect, reply, color) {
+    const { PDFName, PDFHexString, PDFString } = PDFLib;
+    const m = /^#?([0-9a-f]{6})$/i.exec(color || "");
+    const v = m ? m[1] : "ffd54a";
+    const when = PDFString.of(pdfDate(reply && reply.ts ? new Date(reply.ts) : new Date()));
+    return doc.context.register(doc.context.obj({
+      Type: "Annot", Subtype: "Text", Rect: rect, F: 28, Name: PDFName.of("Comment"), Open: false,
+      IRT: parentRef, C: [0, 2, 4].map((k) => parseInt(v.slice(k, k + 2), 16) / 255),
+      Contents: PDFHexString.fromText(String((reply && reply.text) || "").replace(/\n/g, "\r")),
+      NM: PDFHexString.fromText(newNM()), M: when, CreationDate: when,
+    }));
+  }
+
   // A one-page PDF that shows exactly what the viewer shows for a stamp record: its appearance
   // form fitted into /Rect the way the spec says (the form's /BBox through its /Matrix, mapped
   // onto /Rect), with /CA as a graphics state, turned by the page's /Rotate. The caller renders
@@ -665,7 +724,7 @@
   }
 
   const api = { SUBTYPES, FLAG_SKIP, normRect, sameRect, replyTargets, readForeign, toObjects, planForeign,
-                findOriginal, updateRect, removeOriginal, applyKeep, stampProxyPdf, apRefsOf, freeUnusedAp, freeTextFields, pdfDate, wrapText };
+                findOriginal, updateRect, removeOriginal, applyKeep, stampProxyPdf, apRefsOf, freeUnusedAp, freeTextFields, textNoteFields, replyAnnot, newNM, pdfDate, wrapText };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.ForeignAnnot = api;
 })();

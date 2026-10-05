@@ -2713,6 +2713,14 @@ _Ghi 2026-09-30 (v0.2.73)._
   dòng). Callout (`/CL`), hộp có `/Rotate` riêng, `/CA` < 1, hộp rỗng ⇒ không nhập. N2 không nhận ra bản gốc ⇒ bản gốc giữ
   nguyên, bản sửa ghi thành hộp chữ Nabu bên cạnh (không mang `/NM`) + cảnh báo. ĐO trên file khách: gõ lại "size 50mm" qua ô
   sửa chữ thật ⇒ `37 0 R` vẫn là `/FreeText`, `/DA` `/F1 10 Tf 1 0 0 rg`, `/RC` bỏ, viền đỏ còn; kéo `22 0 R` 30 pt ⇒ chữ y nguyên.
+- **Luật 8 — GHI CHÚ DÁN (Đợt 3c-2): vẫn là CHÍNH `/Text` đó.** `writeTextNote` ghi `/Contents`, `/Rect` (theo hộp, từng góc qua
+  map — trang xoay đúng sẵn), `/C`, `/M`; biểu tượng `/AP` của họ **giữ** khi màu không đổi, **bỏ** khi đổi màu (Acrobat / Foxit
+  vẽ lại theo màu mới; chế độ xem của Nabu luôn có dấu ghi chú riêng). `/Popup`, `/Name`, tác giả giữ nguyên. **Trả lời gõ
+  trong Nabu = một `/Text` RIÊNG có `/IRT`** (`replyAnnot`: `/NM` mới, `/M` theo giờ gõ, không bịa `/T`) — đúng cách Acrobat
+  lưu luồng, chứ không nhồi vào `/Contents` của họ; từ đó ghi chú là một luồng ⇒ lần nhập sau để yên (như mọi luồng).
+  Ghi chú có trả lời / là trả lời ⇒ không nhập. `/F 28` (NoZoom + NoRotate — Acrobat ghi cho MỌI ghi chú) được chấp nhận
+  cho `/Text`; ghi chú bị khoá vẫn không nhập. ĐO trong Electron (file kiểu Acrobat, 18/18): "Sửa gốc" ⇒ cùng `/Text`, biểu
+  tượng + Popup còn; "Thêm bình luận" ⇒ một `/Text /IRT` mới, lời của họ không đổi; luồng sẵn có y nguyên.
 - **Đếm vào `_importedManaged`** (BI-60): xoá hết hình của đối tác vẫn kích hoạt bake.
 - **Đã kiểm E2E trong Electron thật trên FILE CỦA KHÁCH** (CDP, 20/20 hai lần): vào Chú thích → 11 hình (3 mây, 2 mũi tên,
   6 đường kẻ) là đối tượng sống, tác giả `hang_`, bản gốc ẩn theo tên; danh sách 19 dòng (11 sống + 8 viền đứt); Xong không
