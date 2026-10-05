@@ -84,6 +84,7 @@ async function renderThumbCanvas(i) {
 }
 const refreshThumb = lift("refreshThumb");
 const rerenderChanged = lift("rerenderChanged");
+const repaintPage = lift("repaintPage"); // rerenderChanged repaints on-screen pages through it
 
 /** Wait until the queue has nothing pending and no pump in flight — deterministic, unlike
  *  a fixed sleep (a "1 ms" timer is ~15 ms on Windows). */

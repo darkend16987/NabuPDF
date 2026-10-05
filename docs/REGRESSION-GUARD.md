@@ -2706,6 +2706,17 @@ _Ghi 2026-09-30 (v0.2.73)._
   mất tên người tạo / mất lời bình · xoá hình của đối tác mà Popup còn lại · hình trên trang xoay lệch chỗ sau khi sửa ·
   danh sách liệt kê một hình hai lần khi đang sửa.
 
+### BI-101 · Vẽ lại trang "ngay bây giờ" phải chờ lần vẽ đang dở — không bao giờ để trang kẹt `rendered=0` với bitmap cũ
+- `app.js` `repaintPage(i)` — dùng bởi `repaintRenderedPages` (vào / ra Chú thích) và `rerenderChanged`. Lưới
+  `npm test -- render-race thumb-refresh`.
+- Kiểu cũ "đặt `rendered=0` rồi gọi `renderPageCanvas`" hỏng khi trang đang vẽ dở: `renderPageCanvas` từ chối trang
+  `m.rendering`, mà lần vẽ dở đã đặt `rendered=1` TRƯỚC khi bị xoá ⇒ không ai đặt lại ⇒ trang giữ bitmap của chế độ vừa
+  rời và không được vẽ lại cho tới khi cuộn đi cuộn lại. ĐO trên file khách (probe_hide, 3/3 lần): ra khỏi Chú thích khi
+  trang 1 còn đang vẽ cho chế độ sửa ⇒ ở chế độ XEM con dấu của đối tác và khung Nabu vẫn bị ẩn. Lỗi có từ trước; Đợt 3b
+  làm nó dễ xảy ra hơn (vào Chú thích lâu hơn vì vẽ ảnh đại diện con dấu).
+- Luật: chờ lần vẽ dở xong (tối đa ~5 s), rồi mới đặt cờ và vẽ lại; trang đang vẽ dở được coi là "đang hiện".
+- **Vỡ khi:** ra khỏi Chú thích mà hình / con dấu / hộp chữ còn ẩn trên trang đầu tiên cho tới khi cuộn.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |

@@ -94,6 +94,8 @@ const pageFarFromViewport = lift("pageFarFromViewport");
 const applyScaleToDom = lift("applyScaleToDom");
 const commitScale = lift("commitScale");
 const scheduleScaleCommit = lift("scheduleScaleCommit");
+const repaintPage = lift("repaintPage");
+const repaintRenderedPages = lift("repaintRenderedPages");
 
 /** A pdf.js page whose render() stays pending until `release(n)` is called for that render. */
 function makePage(i) {
@@ -201,6 +203,37 @@ process.on("exit", () => {
 
     freePageCanvas(0);
     check("…so it CAN be released later (this is the leak the old code had)", [m.canvas.width, m.canvas.height, m.wrap.dataset.rendered], [0, 0, "0"]);
+  }
+
+  // ---- 1b. repaintRenderedPages while the page is mid-render (leaving "Chú thích") ---------
+  // The old loop set rendered=0 and called renderPageCanvas, which refused the busy page; the
+  // render in flight had already set rendered=1 BEFORE that, so the page ended "not rendered"
+  // with the bitmap of the mode just left, and nothing repainted it (probe_hide, 3/3 runs).
+  {
+    setup({ pages: 1, scale: 1 });
+    state.numPages = 1;
+    const m = state.pageMetas[0];
+    const first = renderPageCanvas(0); // e.g. the edit-mode paint, still in flight
+    await flush();
+    const rep = repaintRenderedPages(); // e.g. exit() repainting for view mode
+    await flush();
+    check("repaint does not start a second render while one is in flight", m.page.renders.length, 1);
+    m.page.renders[0].release();
+    await first;
+    for (let n = 0; n < 200 && m.page.renders.length < 2; n++) await sleep(5);
+    check("…it waits for that render to land, then paints the page AGAIN", m.page.renders.length, 2);
+    m.page.renders[1].release();
+    await rep;
+    check("…and the page ends flagged rendered (not stuck at 0 with a stale bitmap)", [m.wrap.dataset.rendered, m.rendering], ["1", false]);
+  }
+  {
+    setup({ pages: 2, scale: 1, painted: [1] });
+    state.numPages = 2;
+    const rep = repaintRenderedPages();
+    for (let n = 0; n < 200 && !state.pageMetas[1].page.renders.length; n++) await sleep(5);
+    check("idle case unchanged: only the painted page is repainted, once", [state.pageMetas[0].page.renders.length, state.pageMetas[1].page.renders.length], [0, 1]);
+    state.pageMetas[1].page.renders[0].release();
+    await rep;
   }
 
   // ---- 2. the zoom lands and the render finishes BEFORE commitScale ever runs ----------------

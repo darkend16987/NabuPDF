@@ -1441,12 +1441,13 @@ async function rerenderChanged(changed) {
       m.page = await state.pdf.getPage(i + 1); // refresh ref so later lazy redraws use new doc
       m.vp = m.page.getViewport({ scale: state.scale });
       if (changed && !changed.has(i)) continue; // unchanged: keep its bitmap as-is
-      m.wrap.dataset.rendered = "0";
       // Repaint only pages that were on screen (within the window). Off-screen
       // changed pages keep the refreshed m.page and lazy-repaint when scrolled
       // to — this is what stops a watermark-all (changed=null) from rasterising
-      // every page of a large document at once.
-      if (wasRendered) await renderPageCanvas(i);
+      // every page of a large document at once. A page still being painted counts as on
+      // screen, and is repainted after that render lands (repaintPage).
+      if (wasRendered || m.rendering) await repaintPage(i);
+      else m.wrap.dataset.rendered = "0";
       refreshThumb(i); // marks + queues; NOT awaited — see refreshThumb
     }
     if (window.Editor) window.Editor.syncOverlays();
@@ -1466,13 +1467,28 @@ async function repaintRenderedPages() {
   if (!state.pageMetas) return;
   for (let i = 0; i < state.numPages; i++) {
     const m = state.pageMetas[i];
-    if (m && m.wrap && m.wrap.dataset.rendered === "1") {
-      m.wrap.dataset.rendered = "0";
-      await renderPageCanvas(i);
-    }
+    if (m && m.wrap && (m.wrap.dataset.rendered === "1" || m.rendering)) await repaintPage(i);
   }
 }
 window.repaintRenderedPages = repaintRenderedPages;
+
+// Paint page i again from scratch, also when a render of it is still in flight.
+//
+// "Set rendered=0, call renderPageCanvas" is NOT that: renderPageCanvas refuses a page that is
+// mid-render (m.rendering), and the in-flight render had set rendered=1 BEFORE we cleared it,
+// so nothing set it back — the page was left flagged "not rendered" holding the OLD bitmap, and
+// nothing painted it again until it scrolled out of the band and back. Measured on the
+// customer's file (probe, 3 runs out of 3): leaving "Chú thích" while page 1 was still being
+// painted for edit mode kept the edit-mode bitmap — the partner's stamps and the Nabu box hidden
+// — in VIEW mode. So: let the render in flight land, then paint with what is true now. Bounded
+// (~5 s) so a render that never settles cannot hang the caller.
+async function repaintPage(i) {
+  const m = state.pageMetas && state.pageMetas[i];
+  if (!m || !m.wrap) return;
+  for (let t = 0; m.rendering && t < 300; t++) await new Promise((r) => setTimeout(r, 16));
+  m.wrap.dataset.rendered = "0";
+  await renderPageCanvas(i);
+}
 
 // Mark a thumbnail stale after the targeted re-render above, and hand its repaint to the
 // thumbnail queue. It used to be `await renderThumbCanvas(i)` for EVERY changed page, in
