@@ -161,6 +161,124 @@ async function mk(n, base) {
 }
 const widths = async (d) => (await PDFDocument.load(await d.save())).getPages().map((p) => Math.round(p.getWidth()));
 
+// ---- movePageInDoc (reorderPage, Đợt 1 of docs/RESEARCH-2026-10-05-…) ----------
+//
+// reorderPage used to rebuild the document (create() + copyPages) and lost everything on
+// the catalog — bookmarks first of all. These cases run the in-place move on REAL pdf-lib
+// documents, save → reload, and read the result back from the file.
+
+const { PDFName, PDFString, PDFArray } = require("pdf-lib");
+
+// Two bookmarks — "A" → page index 0, "B" → page index 3 — and an (empty) form, written
+// the plain way a PDF producer does it: /Outlines with /First /Last, items linked by
+// /Next /Prev, each with an explicit /Dest [pageRef /Fit].
+function addOutline(doc) {
+  const ctx = doc.context;
+  const pages = doc.getPages();
+  const rootRef = ctx.nextRef();
+  const aRef = ctx.nextRef();
+  const bRef = ctx.nextRef();
+  const item = (title, page, extra) =>
+    ctx.obj({ Title: PDFString.of(title), Parent: rootRef, Dest: [pages[page].ref, "Fit"], ...extra });
+  ctx.assign(aRef, item("A", 0, { Next: bRef }));
+  ctx.assign(bRef, item("B", 3, { Prev: aRef }));
+  ctx.assign(rootRef, ctx.obj({ Type: "Outlines", First: aRef, Last: bRef, Count: 2 }));
+  doc.catalog.set(PDFName.of("Outlines"), rootRef);
+  doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [] }));
+}
+
+// Where each bookmark points, as the WIDTH of its target page and that page's index —
+// read from the saved file, so a dangling or stale ref cannot pass.
+async function outlineTargets(d) {
+  const re = await PDFDocument.load(await d.save());
+  const outlines = re.catalog.lookup(PDFName.of("Outlines"));
+  if (!outlines) return null;
+  const refs = re.getPages().map((p) => p.ref);
+  const out = [];
+  for (let it = outlines.lookup(PDFName.of("First")); it; it = it.lookup(PDFName.of("Next"))) {
+    const dest = it.lookup(PDFName.of("Dest"), PDFArray);
+    const idx = refs.indexOf(dest.get(0));
+    out.push([it.lookup(PDFName.of("Title")).decodeText(), idx, idx >= 0 ? Math.round(re.getPage(idx).getWidth()) : null]);
+  }
+  return out;
+}
+
+// A NESTED page tree: root → [p0, mid → [p1, p2], p3], where `mid` carries
+// /MediaBox [0 0 333 222] and /Rotate 90 that p1, p2 do NOT have themselves (they
+// inherit them). p0, p3 keep their own MediaBox and have no /Rotate anywhere. Reloaded,
+// so pdf-lib parses the tree from bytes like it would a real file.
+async function nestedDoc() {
+  const d = await mk(4, 100);
+  const ctx = d.context;
+  const [p0, p1, p2, p3] = d.getPages();
+  const rootRef = d.catalog.get(PDFName.of("Pages"));
+  const midRef = ctx.register(
+    ctx.obj({ Type: "Pages", Kids: [p1.ref, p2.ref], Count: 2, Parent: rootRef, MediaBox: [0, 0, 333, 222], Rotate: 90 })
+  );
+  for (const p of [p1, p2]) {
+    p.node.delete(PDFName.of("MediaBox"));
+    p.node.set(PDFName.of("Parent"), midRef);
+  }
+  d.catalog.Pages().set(PDFName.of("Kids"), ctx.obj([p0.ref, midRef, p3.ref]));
+  return PDFDocument.load(await d.save());
+}
+const geom = async (d) =>
+  (await PDFDocument.load(await d.save())).getPages().map((p) => [Math.round(p.getWidth()), p.getRotation().angle]);
+
+async function moveCases() {
+  // Same result as the old splice arithmetic, for EVERY (from, to) on a 5-page document.
+  const N = 5;
+  let bad = [];
+  for (let from = 0; from < N; from++) {
+    for (let to = 0; to < N; to++) {
+      const order = [...Array(N).keys()];
+      const [m] = order.splice(from, 1);
+      order.splice(to, 0, m);
+      const d = await mk(N, 100);
+      const changed = PR.movePageInDoc(d, from, to);
+      const got = await widths(d);
+      const want = order.map((i) => 100 + i);
+      if (JSON.stringify(got) !== JSON.stringify(want) || changed !== (from !== to)) bad.push([from, to, got]);
+    }
+  }
+  check("move: matches reorderPage's splice order for all 25 (from, to)", bad, []);
+
+  let threw = 0;
+  for (const [f, t] of [[-1, 0], [0, 5], [5, 0], [1.5, 0], [0, NaN]]) {
+    const d = await mk(5, 100);
+    try { PR.movePageInDoc(d, f, t); } catch (_) { threw++; }
+  }
+  check("move: out-of-range / non-integer indices throw", threw, 5);
+
+  // The reason for Đợt 1. First record what the OLD rebuild did, so this file says why.
+  let d = await mk(5, 100);
+  addOutline(d);
+  const out = await PDFDocument.create();
+  (await out.copyPages(d, [1, 2, 3, 4, 0])).forEach((p) => out.addPage(p));
+  check("baseline: the old create()+copyPages rebuild DROPS the bookmarks", await outlineTargets(out), null);
+
+  d = await mk(5, 100);
+  addOutline(d);
+  PR.movePageInDoc(d, 0, 4); // page "A" points at goes last
+  check("move: bookmarks survive and follow their page (A → idx 4, B → idx 2)", await outlineTargets(d),
+        [["A", 4, 100], ["B", 2, 103]]);
+  const re = await PDFDocument.load(await d.save());
+  check("move: the form (/AcroForm) survives", !!re.catalog.get(PDFName.of("AcroForm")), true);
+
+  // Nested tree, inheritance. Before: [p0 100/0°, p1 333/90°, p2 333/90°, p3 103/0°].
+  d = await nestedDoc();
+  check("nested: fixture really inherits (sanity)", await geom(d), [[100, 0], [333, 90], [333, 90], [103, 0]]);
+  // p1 leaves `mid` for the root: must KEEP the 333-wide box and the 90° it inherited.
+  PR.movePageInDoc(d, 1, 3);
+  check("nested: a page moved OUT of its parent keeps inherited MediaBox + Rotate", await geom(d),
+        [[100, 0], [333, 90], [103, 0], [333, 90]]);
+  // p0 (no /Rotate anywhere = default 0) is dropped INTO `mid` (/Rotate 90): must stay 0°.
+  d = await nestedDoc();
+  PR.movePageInDoc(d, 0, 1);
+  check("nested: a page moved INTO a rotated parent keeps its default 0°", await geom(d),
+        [[333, 90], [100, 0], [333, 90], [103, 0]]);
+}
+
 (async () => {
   let doc = await mk(5, 100);
   let src = await mk(4, 500);
@@ -196,6 +314,8 @@ const widths = async (d) => (await PDFDocument.load(await d.save())).getPages().
     threw = true;
   }
   check("real: an error plan is refused, doc untouched", [threw, await widths(doc)], [true, [502, 101, 102]]);
+
+  await moveCases();
 
   console.log(`\npage-range: ${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);

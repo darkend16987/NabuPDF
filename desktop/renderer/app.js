@@ -1932,11 +1932,12 @@ async function reorderPage(from, to) {
   showOverlay("Đang sắp xếp…");
   pushUndo();
   try {
-    const src = await PDFDocument.load(state.bytes);
-    const out = await PDFDocument.create();
-    const pages = await out.copyPages(src, order);
-    pages.forEach((p) => out.addPage(p));
-    state.bytes = await out.save();
+    // Moved IN PLACE (PageRange.movePageInDoc), not rebuilt with create()+copyPages:
+    // a rebuild left the catalog behind — bookmarks, form, page labels — so one dragged
+    // thumbnail wiped the file's bookmarks. See the comment on movePageInDoc.
+    const doc = await PDFDocument.load(state.bytes);
+    window.PageRange.movePageInDoc(doc, from, to);
+    state.bytes = await doc.save();
     state.selected = new Set([order.indexOf(from)]);
     await renderAll();
   } finally {

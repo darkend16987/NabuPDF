@@ -265,7 +265,60 @@
     return pages.length;
   }
 
-  const api = { parseSpec, computeRange, formatList, extractFileName, actionSet, contiguousRun, replacePlan, replaceInDoc };
+  /**
+   * Move ONE page of `doc` so it ends up at index `to` (0-based, counted after the
+   * move — the same meaning as reorderPage's `order.splice(from,1); order.splice(to,0,m)`).
+   * Edits `doc` in place; returns true if the page tree changed.
+   *
+   * IN PLACE, NOT A REBUILD — the whole point (docs/RESEARCH-2026-10-05-… §3.3, Đợt 1).
+   * reorderPage used to `PDFDocument.create()` + `copyPages`, and everything that hangs
+   * off the CATALOG did not make the trip: the bookmark tree (/Outlines), named
+   * destinations, the form (/AcroForm), page labels, XMP metadata. Measured on pdf-lib
+   * 1.17.1: one dragged thumbnail and the file had no bookmarks left. Moving the leaf
+   * inside the same document keeps the catalog AND keeps every page object's ref, so a
+   * bookmark that pointed at a page still points at that page, wherever it now sits.
+   *
+   * THE ONE TRAP: inheritance. In a nested page tree a page may not carry its own
+   * /MediaBox, /CropBox, /Rotate or /Resources — it inherits them from an intermediate
+   * /Pages node. copyPages pins them onto the copy; pdf-lib's insertPage does NOT
+   * (PDFPageLeaf.normalize only ever resolves /Resources, and insertPage does not call
+   * it). Re-parent such a page without pinning and it silently takes on its NEW parent's
+   * size / rotation, or loses its fonts. So the four inheritable keys are resolved and
+   * written onto the leaf BEFORE it leaves its parent (by reference — same objects, so
+   * a page that already had them is unchanged in meaning), and a key absent all the way
+   * up gets its PDF default written explicitly. `npm run test:pages` carries nested-tree
+   * cases for both halves that go red without them.
+   *
+   * Remove-then-insert is safe here, unlike replaceInDoc's case (BI-90 Luật 2): a move
+   * needs ≥ 2 pages, so the tree never passes through empty. Like replaceInDoc this file
+   * imports nothing from pdf-lib: PDFName comes from `doc.context.obj("Name")`.
+   */
+  function movePageInDoc(doc, from, to) {
+    const n = doc.getPageCount();
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= n || to >= n) {
+      throw new Error("movePageInDoc: index out of range");
+    }
+    if (from === to) return false;
+    const page = doc.getPage(from);
+    const leaf = page.node;
+    // MediaBox before CropBox: the CropBox default below reads the pinned MediaBox.
+    for (const key of ["Resources", "MediaBox", "CropBox", "Rotate"]) {
+      const name = doc.context.obj(key);
+      if (leaf.get(name) !== undefined) continue;
+      let v = leaf.getInheritableAttribute(name);
+      // Absent all the way up = the PDF DEFAULT applies (CropBox = MediaBox, Rotate = 0).
+      // Under a new parent that HAS one, that default would be silently replaced — an
+      // upright page dropped into a /Rotate 90 subtree comes out sideways. Pin it too.
+      if (v === undefined && key === "CropBox") v = leaf.get(doc.context.obj("MediaBox"));
+      if (v === undefined && key === "Rotate") v = doc.context.obj(0);
+      if (v !== undefined) leaf.set(name, v);
+    }
+    doc.removePage(from);
+    doc.insertPage(to, page);
+    return true;
+  }
+
+  const api = { parseSpec, computeRange, formatList, extractFileName, actionSet, contiguousRun, replacePlan, replaceInDoc, movePageInDoc };
   if (typeof window !== "undefined") window.PageRange = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

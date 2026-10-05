@@ -23,6 +23,9 @@
  *    afterwards; the same key on a PAGE DICT survives that, plus removePage of another
  *    page, merge/insert, split/extract, and a PyMuPDF round-trip. Dragging one thumbnail
  *    would otherwise wipe every hidden page in the file, with no error anywhere.
+ *    (Since Đợt 1 of docs/RESEARCH-2026-10-05-… reorderPage moves the page IN PLACE —
+ *    PageRange.movePageInDoc — and the catalog survives it. The rule stands: extract,
+ *    N-up, combine and the redaction bake still rebuild with create() + copyPages.)
  *
  * 2. THE KEY IS `/NabuVault`, NEVER `/NabuKind`.
  *    `stripManagedFromPage` (managed-codec.js) deletes EVERY annotation carrying

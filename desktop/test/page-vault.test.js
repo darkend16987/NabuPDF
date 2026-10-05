@@ -184,6 +184,8 @@ const reload = async (doc) => PDFDocument.load(await doc.save());
     // V4. reorderPages() (app.js) rebuilds the document with create() + copyPages. A
     // custom key on the CATALOG does not survive this — measured — which is why the
     // vault lives on the page dict. Dragging one thumbnail must not cost a hidden page.
+    // (reorderPage itself now moves in place — PageRange.movePageInDoc, test:pages — but
+    // the redaction bake, extract, N-up and combine still rebuild exactly like this.)
     const doc = await makeDoc(4);
     await V.hidePages(doc, [1], PW, FAST);
     const src = await reload(doc);
