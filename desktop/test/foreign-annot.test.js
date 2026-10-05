@@ -383,6 +383,188 @@ async function makeFixture() {
   }
   await pdf.destroy();
 
+  // ---- 6b. STAMPS (3b-2): only the /Rect may change, the appearance never --------------------
+  {
+    const sd = await PDFDocument.create();
+    const c = sd.context;
+    const q1 = sd.addPage([600, 800]);
+    const q2 = sd.addPage([600, 800]);
+    q2.node.set(PDFName.of("Rotate"), c.obj(90));
+    const form = (bbox, ops, extra) => c.register(c.stream(ops, Object.assign({ Type: "XObject", Subtype: "Form", BBox: bbox }, extra || {})));
+    const S = (s) => PDFHexString.fromText(s);
+    const reg = (d) => c.register(c.obj(d));
+    const st = (rect, nm, ap, extra) => reg(Object.assign({ Type: "Annot", Subtype: "Stamp", Rect: rect, F: 4, NM: S(nm), T: S("hang_"), Subj: S("Stamp"), AP: { N: ap } }, extra || {}));
+    const apA = form([0, 0, 20, 10], "0 0 1 rg 0 0 20 10 re f");
+    const SR = {};
+    SR.a = st([100, 100, 140, 120], "st-a", apA, { CA: 0.6, Name: PDFName.of("clipboard.image.1") });
+    SR.popup = reg({ Type: "Annot", Subtype: "Popup", Rect: [300, 300, 400, 400], Parent: SR.a });
+    c.lookup(SR.a).set(PDFName.of("Popup"), SR.popup);
+    SR.b = st([200, 200, 240, 220], "st-b", form([5, 5, 25, 15], "1 0 0 rg 5 5 20 10 re f", { Matrix: [1, 0, 0, 1, -5, -5] }));
+    SR.turned = st([300, 100, 340, 120], "st-rot", form([0, 0, 20, 10], "0 g 0 0 20 10 re f"), { Rotate: 90 });
+    SR.noAp = reg({ Type: "Annot", Subtype: "Stamp", Rect: [400, 100, 440, 120], F: 4, NM: S("st-noap") });
+    q1.node.set(PDFName.of("Annots"), c.obj(Object.values(SR)));
+    const SR2 = { c: st([100, 100, 160, 130], "st-c", form([0, 0, 60, 30], "0 1 0 rg 0 0 60 30 re f")) };
+    q2.node.set(PDFName.of("Annots"), c.obj(Object.values(SR2)));
+    const sbytes = await sd.save();
+
+    const sdoc = await PDFDocument.load(sbytes, { updateMetadata: false });
+    const srec = (raw) => FA.readForeign(PDFLib, sdoc, raw, sdoc.context.lookup(raw), new Set());
+    const ra = srec(SR.a);
+    check("Stamp read: /Rect, the form's /BBox + identity /Matrix, /CA kept (it is never re-drawn by Nabu)",
+      [ra.subtype, ra.rect, ra.bbox, ra.matrix, ra.ca, ra.keep.NM], ["Stamp", [100, 100, 140, 120], [0, 0, 20, 10], [1, 0, 0, 1, 0, 0], 0.6, "st-a"]);
+    check("a stamp turned by its own /Rotate → left alone", srec(SR.turned).skip, "rotated-stamp");
+    check("a stamp without an appearance → left alone", srec(SR.noAp).skip, "no-appearance");
+    check("Stamp → image object over its /Rect, showing the proxy picture",
+      FA.toObjects(ra, (x, y) => [x, 800 - y], { dataUrl: "data:image/png;base64,AA" }),
+      [{ kind: "image", x: 100, y: 680, w: 40, h: 20, dataUrl: "data:image/png;base64,AA", fmt: "png" }]);
+    check("…and no proxy → not imported", FA.toObjects(ra, (x, y) => [x, y]).skip, "no-proxy");
+
+    // the proxy, read back by the shipped pdf.js: what it would paint
+    const opsOf = async (bytes) => {
+      const p = await pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false, verbosity: 0 }).promise;
+      const pg = await p.getPage(1);
+      const vp = pg.getViewport({ scale: 1 });
+      const ol = await pg.getOperatorList();
+      const out = { w: vp.width, h: vp.height, form: ol.fnArray.includes(pdfjs.OPS.paintFormXObjectBegin), gstate: ol.fnArray.includes(pdfjs.OPS.setGState),
+                    cm: (ol.argsArray[ol.fnArray.indexOf(pdfjs.OPS.transform)] || []).map((v) => Math.round(v * 1000) / 1000) };
+      await p.destroy();
+      return out;
+    };
+    check("proxy of stamp A: 40×20 pt, the form drawn once, scaled 2× onto the box, /CA as a graphics state",
+      await opsOf(await FA.stampProxyPdf(PDFLib, sdoc, ra, 0)), { w: 40, h: 20, form: true, gstate: true, cm: [2, 0, 0, 2, 0, 0] });
+    check("proxy of stamp B: its /Matrix is honoured (BBox through Matrix = 0..20 × 0..10), no /CA → no graphics state",
+      await opsOf(await FA.stampProxyPdf(PDFLib, sdoc, srec(SR.b), 0)), { w: 40, h: 20, form: true, gstate: false, cm: [2, 0, 0, 2, 0, 0] });
+    const rc = FA.readForeign(PDFLib, sdoc, SR2.c, sdoc.context.lookup(SR2.c), new Set());
+    const pc = await opsOf(await FA.stampProxyPdf(PDFLib, sdoc, rc, 90));
+    check("proxy on a /Rotate 90 page is turned with the page (60×30 box shows as 30×60)", [pc.w, pc.h], [30, 60]);
+    {
+      const fresh = await PDFDocument.load(sbytes, { updateMetadata: false });
+      await FA.stampProxyPdf(PDFLib, fresh, FA.readForeign(PDFLib, fresh, SR.a, fresh.context.lookup(SR.a), new Set()), 0);
+      check("building a proxy leaves the source document untouched (same objects, same bytes on save)",
+        Buffer.compare(Buffer.from(await fresh.save()), Buffer.from(await (await PDFDocument.load(sbytes, { updateMetadata: false })).save())), 0);
+    }
+
+    // unit: planForeign for stamps
+    const im = (id, x, key) => ({ id, kind: "image", x, y: 0, w: 1, h: 1, _foreign: { fileRef: key, keep: { T: "hang_", NM: "st" } } });
+    const isig = (a) => JSON.stringify([a.x, a.y, a.w, a.h]);
+    const p0 = im(7, 10, "5 0 R");
+    const SE = [{ key: "5 0 R", page: 0, sigs: [isig(p0)], hideId: "5R", stamp: true, primaryId: 7 }];
+    let pl = FA.planForeign(SE, [{ page: 0, a: p0 }], isig);
+    check("stamp untouched → skipped, original kept", [[...pl.skipIds], [...pl.keepIds], pl.rects.length, pl.remove.length], [[7], ["5R"], 0, 0]);
+    p0.x = 40;
+    pl = FA.planForeign(SE, [{ page: 0, a: p0 }], isig);
+    check("stamp moved → a /Rect update, NOT a removal, and not drawn", [pl.rects.map((r) => r.a.id), [...pl.rectIds], pl.remove.length, [...pl.skipIds]], [[7], [7], 0, []]);
+    check("stamp deleted → original removed", FA.planForeign(SE, [], isig).remove.length, 1);
+    const stray = im(9, 10, "5 0 R");
+    pl = FA.planForeign(SE, [{ page: 0, a: p0 }, { page: 0, a: stray }], isig);
+    check("a second object carrying the stamp's original is a COPY: written, without the original's /NM", [pl.keepFor.get(9), pl.rects.length], [{ T: "hang_" }, 1]);
+
+    // end to end through the shipped editor-bake.js, with the proxy renderer stubbed (no canvas here)
+    const PNG1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const proxyBytes = [];
+    const realPdfjs = sandbox.pdfjsLib;
+    sandbox.pdfjsLib = {
+      AnnotationMode: pdfjs.AnnotationMode,
+      getDocument: ({ data }) => {
+        proxyBytes.push(data);
+        return { promise: Promise.resolve({
+          getPage: async () => ({ getViewport: ({ scale }) => ({ width: 10 * scale, height: 10 * scale }), render: () => ({ promise: Promise.resolve() }) }),
+          destroy: async () => {},
+        }) };
+      },
+    };
+    const realCreate = sandbox.document.createElement;
+    sandbox.document.createElement = (t) => (t === "canvas" ? { width: 0, height: 0, getContext: () => ({}), toDataURL: () => PNG1 } : realCreate(t));
+    const sdict = async (bytes) => {
+      const d = await PDFDocument.load(bytes, { updateMetadata: false });
+      const m = new Map();
+      for (let i = 0; i < 2; i++) for (const raw of annotsOf(d, i)) {
+        const x = d.context.lookup(raw);
+        const nm = x.lookup(PDFName.of("NM"));
+        let key = (nm ? nm.decodeText() : raw.toString()) + "@" + i;
+        while (m.has(key)) key += "+";
+        const ent = {};
+        for (const [k, v] of x.entries()) ent[k.decodeText()] = v.toString();
+        m.set(key, { ref: raw.toString(), ent, nabu: !!x.get(PDFName.of("NabuKind")) });
+      }
+      return m;
+    };
+    await openBytes(sbytes);
+    sandbox.state.numPages = 2;
+    await reimport();
+    const sl = live();
+    check("stamps import as image objects with the proxy picture (A, B; C on the turned page)",
+      sl.map((l) => [l.page, l.a.kind, l.a._foreign.keep.NM, l.a.dataUrl === PNG1]), [[0, "image", "st-a", true], [0, "image", "st-b", true], [1, "image", "st-c", true]]);
+    check("…one proxy PDF rendered per stamp", proxyBytes.length, 3);
+    check("…recorded as stamps, the imported object as the primary", ed._foreignImported.map((e) => [e.stamp, e.primaryId === sl.find((l) => l.a._foreign.fileRef === e.key).a.id]), [[true, true], [true, true], [true, true]]);
+
+    const s0 = await sdict(sbytes);
+    ed.annots[0].push({ id: ed.seq++, kind: "box", x: 10, y: 10, w: 20, h: 20, color: "#00ff00", width: 2 });
+    await api.bakePending();
+    const s1 = await sdict(sandbox.state.bytes);
+    check("untouched stamps: same number, same dict, key for key",
+      ["st-a@0", "st-b@0", "st-c@1"].filter((k) => !s1.has(k) || s1.get(k).ref !== s0.get(k).ref || JSON.stringify(s1.get(k).ent) !== JSON.stringify(s0.get(k).ent)), []);
+
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const findS = (nm) => live().find((l) => l.a._foreign && l.a._foreign.keep.NM === nm);
+    const A = findS("st-a").a;
+    A.x += 30;
+    const C = findS("st-c").a;
+    const cAt = [C.x, C.y, C.w, C.h];
+    C.w += 10;
+    ed.annots[0] = ed.annots[0].filter((a) => !(a._foreign && a._foreign.keep.NM === "st-b"));
+    const pre = await sdict(sandbox.state.bytes);
+    const bApNum = +(/\/N\s+(\d+)\s+0\s+R/.exec(pre.get("st-b@0").ent.AP) || [])[1];
+    check("fixture: stamp B's appearance is an indirect stream we can watch", bApNum > 0, true);
+    toasts.length = 0;
+    await api.bakePending();
+    const s2 = await sdict(sandbox.state.bytes);
+    const diffKeys = (k) => Object.keys(Object.assign({}, pre.get(k).ent, s2.get(k).ent)).filter((x) => pre.get(k).ent[x] !== s2.get(k).ent[x]);
+    check("moved stamp A: SAME object number, still the partner's (no NabuKind), and ONLY /Rect changed",
+      [s2.get("st-a@0").ref === pre.get("st-a@0").ref, s2.get("st-a@0").nabu, diffKeys("st-a@0")], [true, false, ["Rect"]]);
+    check("…its /Rect moved 30 pt right, same size", s2.get("st-a@0").ent.Rect.replace(/\s+/g, " "), "[ 130 100 170 120 ]");
+    check("resized stamp C on the /Rotate 90 page: same number, only /Rect changed", [s2.get("st-c@1").ref === pre.get("st-c@1").ref, diffKeys("st-c@1")], [true, ["Rect"]]);
+    check("deleted stamp B is gone, and nothing Nabu was written for any stamp",
+      [s2.has("st-b@0"), [...s2.values()].filter((v) => v.nabu).length], [false, 1]);
+    const dB = await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false });
+    check("…its appearance stream is freed (no orphan copy of the picture)", dB.context.lookup(PDFLib.PDFRef.of(bApNum)), undefined);
+    check("no warning", toasts.filter((t) => t !== "Đã áp dụng chỉnh sửa."), []);
+
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    const C2 = findS("st-c").a;
+    check("re-import: the resized stamp on the turned page reads back exactly as left (BI-45)",
+      [near(C2.x, cAt[0]), near(C2.y, cAt[1]), near(C2.w, cAt[2] + 10), near(C2.h, cAt[3])], [true, true, true, true]);
+    const A2 = findS("st-a").a;
+    // a paste-like copy (no _foreign) + a stray clone that still carries the original
+    ed.annots[0].push({ id: ed.seq++, kind: "image", x: 10, y: 10, w: 40, h: 20, dataUrl: PNG1, fmt: "png" });
+    ed.annots[0].push(Object.assign(JSON.parse(JSON.stringify(A2)), { id: ed.seq++, x: 400 }));
+    const pre3 = await sdict(sandbox.state.bytes);
+    await api.bakePending();
+    const s3 = await sdict(sandbox.state.bytes);
+    check("copies of a stamp → new Nabu images; the original stamp itself is untouched (same number, same dict)",
+      [[...s3.values()].filter((v) => v.nabu && /image/.test(v.ent.NabuKind)).length, s3.get("st-a@0").ref === pre3.get("st-a@0").ref && JSON.stringify(s3.get("st-a@0").ent) === JSON.stringify(pre3.get("st-a@0").ent)],
+      [2, true]);
+    check("…and no copy took the original's /NM", [...s3.keys()].filter((k) => k.startsWith("st-a@0")).length, 1);
+
+    // N2: the file changed under us — the stamp is left where it is, the user is told
+    await openBytes(sandbox.state.bytes);
+    await reimport();
+    findS("st-c").a.x += 5;
+    const dd = await PDFDocument.load(sandbox.state.bytes, { updateMetadata: false });
+    const rawC = annotsOf(dd, 1).find((r) => { const x = dd.context.lookup(r); const nm = x.lookup(PDFName.of("NM")); return nm && nm.decodeText() === "st-c"; });
+    dd.context.lookup(rawC).set(PDFName.of("Rect"), dd.context.obj([0, 0, 5, 5]));
+    sandbox.state.bytes = await dd.save();
+    toasts.length = 0;
+    await api.bakePending();
+    const s4 = await sdict(sandbox.state.bytes);
+    check("N2: a stamp that no longer matches is NOT moved (its /Rect stays what the file says), and the user is told",
+      [s4.get("st-c@1").ent.Rect.replace(/\s+/g, " "), toasts.filter((t) => /không cập nhật được vị trí/.test(t)).length], ["[ 0 0 5 5 ]", 1]);
+    sandbox.pdfjsLib = realPdfjs;
+    sandbox.document.createElement = realCreate;
+  }
+
   // ---- 7. wiring pins (DOM side; the probe runs them for real) ----------------------------------
   const read = (f) => fs.readFileSync(path.join(R, f), "utf8");
   const ED = read("editor.js");
@@ -401,11 +583,16 @@ async function makeFixture() {
   check("…skips untouched copies, and lets the raster keep untouched originals",
     /annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\)\)/.test(bwr) && /rasterRedacted\(i, redacts, vp1, fp\.keepIds\)/.test(bwr), true);
   const bip = BK.slice(BK.indexOf("async function bakeInPlace()"), BK.indexOf("async function bakeWithRedaction()"));
-  check("bakeInPlace: plan → strip ours → remove partner originals → draw all but the untouched",
-    /const fp = foreignPlan\(\);[\s\S]*stripManagedAnnots\(doc\);[\s\S]*removeForeign\(doc, fp\.remove\);[\s\S]*annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\)\)/.test(bip), true);
+  check("bakeInPlace: plan → strip ours → remove partner originals → move stamps by /Rect → draw all but the untouched / moved stamps",
+    /const fp = foreignPlan\(\);[\s\S]*stripManagedAnnots\(doc\);[\s\S]*removeForeign\(doc, fp\.remove\);[\s\S]*await applyStampRects\(doc, fp\.rects\);[\s\S]*annotsFor\(i\)\.filter\(\(a\) => !fp\.skipIds\.has\(a\.id\) && !fp\.rectIds\.has\(a\.id\)\)/.test(bip), true);
+  check("bakeWithRedaction: stamps moved by /Rect in `src` before copying; drawn as a picture only on a page rebuilt from one",
+    bwr.indexOf("await applyStampRects(src, fp.rects);") > 0 && bwr.indexOf("await applyStampRects(src, fp.rects);") < bwr.indexOf("out.copyPages(") &&
+    /const anns = redacts\.length \? all : all\.filter\(\(a\) => !fp\.rectIds\.has\(a\.id\)\);/.test(bwr), true);
   const AS = require("../renderer/annot-scan.js");
   check("list label: an imported plain Line (a 2-point poly in the editor) is still 'Đường kẻ'; a Nabu poly keeps its own",
     [AS.labelOf({ kind: "poly", subtype: "Line" }), AS.labelOf({ kind: "poly" }) === AS.KIND_LABEL.poly], ["Đường kẻ", true]);
+  check("list label: an imported Stamp (an image object in the editor) is still 'Con dấu / ảnh'; a Nabu image keeps its own",
+    [AS.labelOf({ kind: "image", subtype: "Stamp" }), AS.labelOf({ kind: "image" }) === AS.KIND_LABEL.image], [AS.SUBTYPE_LABEL.Stamp, true]);
   check("listObjects passes the original subtype", /subtype: a\._foreign \? a\._foreign\.subtype : null,/.test(ED), true);
   check("index.html loads foreign-annot.js after annot-scan.js",
     (() => { const h = read("index.html"); const a = h.indexOf('src="annot-scan.js"'), b = h.indexOf('src="foreign-annot.js"'); return a > 0 && b > a; })(), true);

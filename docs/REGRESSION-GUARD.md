@@ -2695,6 +2695,14 @@ _Ghi 2026-09-30 (v0.2.73)._
   (không đè khoá Nabu đã ghi). Danh sách vẫn hiện tên tác giả; mở lại vẫn cùng `/NM`.
 - **Luật 5 — đường bôi đen**: `removeForeign(src)` **trước** `copyPages`; bản gốc không đụng nằm trên trang bôi đen thì vẫn
   được vẽ vào ảnh (`keepIds` loại khỏi danh sách ẩn của `rasterRedacted`), như mọi chú thích khác của đối tác (BI-99 Luật 5).
+- **Luật 6 — CON DẤU (Đợt 3b-2): chỉ `/Rect`, không bao giờ vẽ lại.** Stamp → đối tượng `image` hiện **ảnh đại diện** vẽ từ
+  chính `/AP` (`stampProxyPdf`: form `/BBox` qua `/Matrix` khớp vào `/Rect`, `/CA` thành graphics state, xoay theo trang;
+  `stampProxyUrl` vẽ nền trong suốt, tối đa 3×, tối đa 200 con dấu mỗi lần vào). Kéo / đổi cỡ ⇒ `planForeign.rects` ⇒
+  `updateRect` đổi **duy nhất** `/Rect` của bản gốc (cùng số đối tượng, cùng `/AP`, không thêm ảnh); xoá ⇒ gỡ kèm Popup
+  và luồng ảnh; bản sao (dán / Áp nhiều trang) ⇒ ảnh Nabu mới, **không** mang `/NM` gốc. Trang bôi đen: con dấu đã kéo
+  được vẽ bằng ảnh đại diện (trang đó vốn là ảnh). Con dấu có `/Rotate` riêng ⇒ không nhập. ĐO trên file khách: ảnh đại
+  diện của ảnh dán lệch trung bình **4,38/255** so với trang; kéo 60, −40 px ⇒ `/Rect` dời đúng 60, +40 pt, mọi khoá khác
+  y nguyên; file không to thêm.
 - **Đếm vào `_importedManaged`** (BI-60): xoá hết hình của đối tác vẫn kích hoạt bake.
 - **Đã kiểm E2E trong Electron thật trên FILE CỦA KHÁCH** (CDP, 20/20 hai lần): vào Chú thích → 11 hình (3 mây, 2 mũi tên,
   6 đường kẻ) là đối tượng sống, tác giả `hang_`, bản gốc ẩn theo tên; danh sách 19 dòng (11 sống + 8 viền đứt); Xong không
@@ -2702,7 +2710,7 @@ _Ghi 2026-09-30 (v0.2.73)._
   giữ `hang_` + `/NM`, đường kẻ mất, **18 chú thích còn lại cùng số đối tượng, cùng dict**; copy + dán một khoanh mây → bản
   gốc y nguyên + một mây Nabu mới; Ctrl+Z → **đúng bytes gốc**. Bôi đen trang 1 → 11 hình ở trang 6–10 còn là chú thích của
   đối tác. Nhập mất 64–211 ms với file 10 MB.
-- **Vỡ khi:** mở file của đối tác, vào Chú thích, không sửa gì mà Lưu ra file khác · đối tác mở lại thấy hình bị nhân đôi /
+- **Vỡ khi:** kéo con dấu / ảnh dán của đối tác xong mà nó bị mờ / thành ảnh Nabu / file to ra · mở file của đối tác, vào Chú thích, không sửa gì mà Lưu ra file khác · đối tác mở lại thấy hình bị nhân đôi /
   mất tên người tạo / mất lời bình · xoá hình của đối tác mà Popup còn lại · hình trên trang xoay lệch chỗ sau khi sửa ·
   danh sách liệt kê một hình hai lần khi đang sửa.
 

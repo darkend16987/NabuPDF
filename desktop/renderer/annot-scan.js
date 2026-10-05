@@ -63,6 +63,8 @@
       // A partner's plain Line lives in the editor as a 2-point open `poly` (Nabu has no line
       // kind, BI-100) — the list still calls it what the partner drew.
       if (item.kind === "poly" && item.subtype === "Line") return SUBTYPE_LABEL.Line;
+      // …and a partner stamp lives there as an image object (3b-2) — still a stamp to the reader.
+      if (item.kind === "image" && item.subtype === "Stamp") return SUBTYPE_LABEL.Stamp;
       return KIND_LABEL[item.kind] || item.kind;
     }
     if (item.subtype === "FreeText" && item.it === "FreeTextCallout") return EXTRA_LABEL.callout;

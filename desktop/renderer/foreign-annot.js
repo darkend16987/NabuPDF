@@ -25,9 +25,11 @@
  *      stays (two copies beat a lost comment) and the caller says so.
  *   N3 — only kinds with a faithful Nabu counterpart are imported. Group (B) of Q1: Square,
  *      Circle, Line, Polygon, PolyLine, Ink → box / ellipse / cloud / arrow / poly / cloudpen /
- *      draw. FreeText / Text / Highlight (group A, keep their own type — Đợt 3c) and Stamp
- *      (only /Rect may change, never rasterised) are NOT imported here: they stay on the page,
- *      painted by pdf.js, listed in the Chú thích tab, untouchable as before.
+ *      draw. Stamp (3b-2) → an `image` object showing a proxy picture of its own /AP
+ *      (stampProxyPdf); a moved / resized stamp gets ONLY its /Rect rewritten (updateRect) —
+ *      same object, same appearance, never rasterised (Q1). FreeText / Text / Highlight (group A,
+ *      keep their own type — Đợt 3c) are NOT imported here: they stay on the page, painted by
+ *      pdf.js, listed in the Chú thích tab, untouchable as before.
  *      Anything the Nabu object cannot say is a reason to leave the annotation alone rather than
  *      to import it lossily: transparency (/CA < 1), a zero-width or colourless border, hidden /
  *      locked / read-only / no-rotate flags, optional content, replies in either direction,
@@ -41,7 +43,7 @@
 (function () {
   const AS = typeof module !== "undefined" && module.exports ? require("./annot-scan.js") : window.AnnotScan;
 
-  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink"]);
+  const SUBTYPES = new Set(["Square", "Circle", "Line", "Polygon", "PolyLine", "Ink", "Stamp"]);
   // /F bits we refuse: Hidden 2, NoRotate 16, NoView 32, ReadOnly 64, Locked 128.
   const FLAG_SKIP = 2 | 16 | 32 | 64 | 128;
   const ARROW_ENDS = new Set(["OpenArrow", "ClosedArrow"]);
@@ -96,9 +98,46 @@
     if (dict.get(N("IRT"))) return skip("reply");
     if (targets && targets.has(raw.toString())) return skip("has-replies");
     const ca = num(look("CA"));
-    if (Number.isFinite(ca) && ca < 0.999) return skip("opacity");
     const rect = normRect(nums(look("Rect")));
     if (!rect) return skip("rect");
+    const keepOf = () => {
+      const keep = {};
+      for (const k of ["T", "Contents", "NM", "Subj", "CreationDate"]) {
+        const v = textOf(look(k));
+        if (v) keep[k] = v;
+      }
+      return keep;
+    };
+    if (subtype === "Stamp") {
+      // A stamp is moved / resized / deleted through its /Rect ONLY — its appearance is never
+      // re-drawn by Nabu (Q1), so opacity is no obstacle: it stays in the dict it came with.
+      // Its own /Rotate (Acrobat's turned stamps) would need the proxy to turn as well — left
+      // alone instead.
+      const rot = num(look("Rotate"));
+      if (Number.isFinite(rot) && rot % 360 !== 0) return skip("rotated-stamp");
+      const ap = look("AP");
+      if (!(ap instanceof PDFDict)) return skip("no-appearance");
+      let n = ap.get(N("N"));
+      let form = doc.context.lookup(n);
+      if (form instanceof PDFDict && !(form instanceof PDFLib.PDFStream)) {
+        // an appearance-state dict: the state /AS names is the one shown
+        const as = nameOf(look("AS"));
+        n = as ? form.get(N(as)) : undefined;
+        form = n !== undefined ? doc.context.lookup(n) : null;
+      }
+      if (!(form instanceof PDFLib.PDFStream)) return skip("no-appearance");
+      const bbox = normRect(nums(form.dict.lookup(N("BBox"))));
+      if (!bbox) return skip("no-appearance");
+      const m = nums(form.dict.lookup(N("Matrix")));
+      return {
+        subtype, it: nameOf(look("IT")), rect,
+        num: raw.objectNumber, gen: raw.generationNumber, fileRef: raw.toString(),
+        nm: textOf(look("NM")), keep: keepOf(),
+        ap: n, bbox, matrix: m && m.length === 6 && m.every(Number.isFinite) ? m : [1, 0, 0, 1, 0, 0],
+        ca: Number.isFinite(ca) ? Math.max(0, Math.min(1, ca)) : 1,
+      };
+    }
+    if (Number.isFinite(ca) && ca < 0.999) return skip("opacity");
 
     const color = AS.colorOf(nums(look("C")));
     if (!color) return skip("no-color");
@@ -123,12 +162,8 @@
       subtype, it, rect, color, width, dashed, cloudy, fill,
       num: raw.objectNumber, gen: raw.generationNumber, fileRef: raw.toString(),
       nm: textOf(look("NM")),
-      keep: {},
+      keep: keepOf(),
     };
-    for (const k of ["T", "Contents", "NM", "Subj", "CreationDate"]) {
-      const v = textOf(look(k));
-      if (v) rec.keep[k] = v;
-    }
     if (subtype === "Square" || subtype === "Circle") {
       if (subtype === "Circle" && cloudy) return skip("cloudy-circle");
       const rd = nums(look("RD"));
@@ -164,7 +199,8 @@
   }
 
   // record → overlay objects in view space (scale-1 viewport units, top-left origin).
-  function toObjects(rec, toView) {
+  // `extra.dataUrl`: a Stamp's proxy picture (stampProxyPdf, rendered by the caller).
+  function toObjects(rec, toView, extra) {
     const pt = (x, y) => {
       const [vx, vy] = toView(x, y);
       return { x: vx, y: vy };
@@ -228,6 +264,15 @@
       const o = withDash(style({ kind: "poly", pts, closed: s === "Polygon" }));
       return [s === "Polygon" ? withFill(o) : o];
     }
+    if (s === "Stamp") {
+      // Shown as an image object (move / resize / delete — exactly what a /Rect can say); the
+      // picture is only a stand-in drawn from its /AP, never written back for the original.
+      if (!extra || typeof extra.dataUrl !== "string") return { skip: "no-proxy" };
+      const p = pt(rec.rect[0], rec.rect[1]);
+      const q = pt(rec.rect[2], rec.rect[3]);
+      return [{ kind: "image", x: Math.min(p.x, q.x), y: Math.min(p.y, q.y), w: Math.abs(q.x - p.x), h: Math.abs(q.y - p.y),
+                dataUrl: extra.dataUrl, fmt: "png" }];
+    }
     if (s === "Ink") {
       // Nabu draws one stroke per object: a multi-stroke Ink becomes several, which planForeign
       // treats as ONE original (all untouched → keep; any change → replace all of them).
@@ -263,8 +308,36 @@
         keepFor.set(o.a.id, keep);
       });
     };
+    // Stamps whose /Rect the bake rewrites in place (moved / resized; nothing else changes).
+    const rects = [];
+    const rectIds = new Set();
     for (const e of entries || []) {
       const owners = byKey.get(e.key) || [];
+      if (e.stamp) {
+        // ONE object stands for a stamp: the one imported (primaryId). Anything else carrying the
+        // same original is a copy — written as a new Nabu image, never with the original's /NM.
+        const prim = owners.find((o) => o.a.id === e.primaryId);
+        for (const o of owners) {
+          if (o === prim) continue;
+          const keep = Object.assign({}, o.a._foreign.keep || {});
+          delete keep.NM;
+          keepFor.set(o.a.id, keep);
+        }
+        if (!prim || prim.page !== e.page) {
+          remove.push(e);
+          if (prim) giveKeep([prim]); // on another page it can only be written as a picture
+        } else if (sigOf(prim.a) === e.sigs[0]) {
+          skipIds.add(prim.a.id);
+          keepIds.add(e.hideId);
+        } else {
+          rects.push({ entry: e, a: prim.a });
+          rectIds.add(prim.a.id);
+          // Only drawn when its page is rebuilt from a picture (a redaction on that page): then
+          // the Nabu image that stands in for it inherits everything, /NM included.
+          giveKeep([prim]);
+        }
+        continue;
+      }
       let untouched = owners.length === e.sigs.length && owners.every((o) => o.page === e.page);
       if (untouched) {
         const want = e.sigs.slice().sort();
@@ -279,35 +352,58 @@
         giveKeep(owners);
       }
     }
-    return { remove, skipIds, keepIds, keepFor };
+    return { remove, skipIds, keepIds, keepFor, rects, rectIds };
   }
 
-  // Remove the imported original `e` ({ page, num, gen, subtype, rect, nm }) from `doc`, with its
-  // /Popup. Returns false — and changes nothing — unless the annotation found at that object
-  // number on that page is the same /Subtype, /Rect and /NM we imported (N2).
-  function removeOriginal(PDFLib, doc, e) {
+  // The imported original `e` ({ page, num, gen, subtype, rect, nm }) in `doc` — or null unless
+  // the annotation at that object number on that page is the same /Subtype, /Rect and /NM we
+  // imported (N2).
+  function findOriginal(PDFLib, doc, e) {
     const { PDFName, PDFDict, PDFArray, PDFNumber, PDFRef } = PDFLib;
     const N = (s) => PDFName.of(s);
     const page = doc.getPages()[e.page];
     const arr = page && page.node.Annots();
-    if (!arr) return false;
+    if (!arr) return null;
     let at = -1;
     for (let k = 0; k < arr.size(); k++) {
       const r = arr.get(k);
       if (r instanceof PDFRef && r.objectNumber === e.num && r.generationNumber === e.gen) { at = k; break; }
     }
-    if (at < 0) return false;
+    if (at < 0) return null;
     const ref = arr.get(at);
     const d = doc.context.lookup(ref);
-    if (!(d instanceof PDFDict)) return false;
+    if (!(d instanceof PDFDict)) return null;
     const st = d.lookup(N("Subtype"));
-    if (!(st instanceof PDFName) || st.decodeText() !== e.subtype) return false;
+    if (!(st instanceof PDFName) || st.decodeText() !== e.subtype) return null;
     const r = d.lookup(N("Rect"));
     const rect = r instanceof PDFArray ? r.asArray().map((v) => { const n = doc.context.lookup(v); return n instanceof PDFNumber ? n.asNumber() : NaN; }) : null;
-    if (!sameRect(rect, e.rect)) return false;
+    if (!sameRect(rect, e.rect)) return null;
     const nm = d.lookup(N("NM"));
     const nmText = nm && typeof nm.decodeText === "function" ? nm.decodeText() : null;
-    if ((e.nm || null) !== (nmText || null)) return false;
+    if ((e.nm || null) !== (nmText || null)) return null;
+    return { arr, at, ref, dict: d };
+  }
+
+  // A moved / resized stamp: its /Rect — and nothing else — becomes `rect` (PDF user space). The
+  // viewer fits the untouched /AP into the new box, so the stamp keeps its own pixels / vectors.
+  // False (nothing changed) unless findOriginal recognises it (N2).
+  function updateRect(PDFLib, doc, e, rect) {
+    const r = normRect(rect);
+    const found = r && findOriginal(PDFLib, doc, e);
+    if (!found) return false;
+    const f4 = (v) => Math.round(v * 10000) / 10000;
+    found.dict.set(PDFLib.PDFName.of("Rect"), doc.context.obj(r.map(f4)));
+    return true;
+  }
+
+  // Remove the imported original `e` from `doc`, with its /Popup. Returns false — and changes
+  // nothing — unless findOriginal recognises it (N2).
+  function removeOriginal(PDFLib, doc, e) {
+    const { PDFName, PDFDict, PDFRef } = PDFLib;
+    const N = (s) => PDFName.of(s);
+    const found = findOriginal(PDFLib, doc, e);
+    if (!found) return false;
+    const { arr, at, ref, dict: d } = found;
 
     // Appearance streams are freed only when no other annotation in the document uses them —
     // some tools share one stream between identical marks.
@@ -367,7 +463,43 @@
     return true;
   }
 
-  const api = { SUBTYPES, FLAG_SKIP, normRect, sameRect, replyTargets, readForeign, toObjects, planForeign, removeOriginal, applyKeep };
+  // A one-page PDF that shows exactly what the viewer shows for a stamp record: its appearance
+  // form fitted into /Rect the way the spec says (the form's /BBox through its /Matrix, mapped
+  // onto /Rect), with /CA as a graphics state, turned by the page's /Rotate. The caller renders
+  // it to a picture for the overlay. Read-only towards `doc`: the form is COPIED (with its
+  // resources) into a new document. Resolves to the bytes, or null when the geometry is empty.
+  async function stampProxyPdf(PDFLib, doc, rec, rotate) {
+    const { PDFDocument, PDFName, PDFRef, PDFObjectCopier } = PDFLib;
+    const W = rec.rect[2] - rec.rect[0];
+    const H = rec.rect[3] - rec.rect[1];
+    if (!(W > 0 && H > 0)) return null;
+    const [a, b, c, d, e, f] = rec.matrix;
+    const [x0, y0, x1, y1] = rec.bbox;
+    const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    const bx0 = Math.min(...xs), by0 = Math.min(...ys);
+    const bw = Math.max(...xs) - bx0, bh = Math.max(...ys) - by0;
+    if (!(bw > 0 && bh > 0)) return null;
+    const sx = W / bw, sy = H / bh;
+    const out = await PDFDocument.create();
+    const page = out.addPage([W, H]);
+    if (rotate) page.setRotation(PDFLib.degrees(((rotate % 360) + 360) % 360));
+    const copied = PDFObjectCopier.for(doc.context, out.context).copy(rec.ap);
+    page.node.setXObject(PDFName.of("X0"), copied instanceof PDFRef ? copied : out.context.register(copied));
+    let gs = "";
+    if (rec.ca < 0.999) {
+      page.node.setExtGState(PDFName.of("G0"), out.context.obj({ CA: rec.ca, ca: rec.ca }));
+      gs = "/G0 gs ";
+    }
+    const n = (v) => (Math.round(v * 1e6) / 1e6).toFixed(6);
+    const ops = `q ${gs}${n(sx)} 0 0 ${n(sy)} ${n(-bx0 * sx)} ${n(-by0 * sy)} cm /X0 Do Q`;
+    page.node.set(PDFName.of("Contents"), out.context.register(out.context.stream(ops)));
+    return out.save({ useObjectStreams: false });
+  }
+
+  const api = { SUBTYPES, FLAG_SKIP, normRect, sameRect, replyTargets, readForeign, toObjects, planForeign,
+                findOriginal, updateRect, removeOriginal, applyKeep, stampProxyPdf };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (typeof window !== "undefined") window.ForeignAnnot = api;
 })();

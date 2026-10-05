@@ -760,7 +760,17 @@
         vp = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
         fctx.vps.set(i, vp);
       }
-      const objs = F.toObjects(rec, (x, y) => vp.convertToViewportPoint(x, y));
+      // A stamp is shown through a picture of its own /AP (3b-2). Capped: each one costs a
+      // small pdf.js render, and a file with thousands of stamps must still open the editor fast.
+      let extra = null;
+      if (rec.subtype === "Stamp") {
+        fctx.stamps = (fctx.stamps || 0) + 1;
+        if (fctx.stamps > STAMP_IMPORT_CAP) return false;
+        const bytes = await F.stampProxyPdf(PDFLib, doc, rec, vp.rotation);
+        if (!bytes) return false;
+        extra = { dataUrl: await stampProxyUrl(bytes) };
+      }
+      const objs = F.toObjects(rec, (x, y) => vp.convertToViewportPoint(x, y), extra);
       if (!Array.isArray(objs) || !objs.length) return false;
       const sigs = [];
       for (const o of objs) {
@@ -771,7 +781,8 @@
       const hide = window.AnnotHide.entryOf(PDFLib, raw, dict);
       for (const o of objs) annotsFor(i).push(o);
       ed._foreignImported.push({ key: rec.fileRef, hideId: hide.id, page: i, num: rec.num, gen: rec.gen,
-                                 subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs });
+                                 subtype: rec.subtype, rect: rec.rect, nm: rec.nm, sigs,
+                                 stamp: rec.subtype === "Stamp", primaryId: objs[0].id });
       if (!ed._owned.has(i)) ed._owned.set(i, []);
       ed._owned.get(i).push(hide);
       ed._managedPages.add(i);
@@ -780,6 +791,39 @@
       console.warn("foreign annotation left as it is:", err);
       return false;
     }
+  }
+
+  const STAMP_IMPORT_CAP = 200;
+  // The overlay's stand-in picture for a partner stamp: the one-page PDF stampProxyPdf built,
+  // rendered on a TRANSPARENT background (a stamp is not a white card) at up to 3× its size.
+  async function stampProxyUrl(bytes) {
+    const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+    try {
+      const pg = await pdf.getPage(1);
+      const v1 = pg.getViewport({ scale: 1 });
+      const S = Math.max(1, Math.min(3, 2048 / Math.max(v1.width, v1.height, 1)));
+      const vp = pg.getViewport({ scale: S });
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.ceil(vp.width));
+      c.height = Math.max(1, Math.ceil(vp.height));
+      await pg.render({ canvasContext: c.getContext("2d"), viewport: vp, background: "rgba(0,0,0,0)" }).promise;
+      return c.toDataURL("image/png");
+    } finally {
+      pdf.destroy();
+    }
+  }
+  // A moved / resized partner stamp keeps its own appearance: only its /Rect is rewritten, from
+  // the overlay box through the same scale-1 viewport the import mapped it with.
+  async function applyStampRects(doc, list) {
+    let kept = 0;
+    for (const { entry, a } of list) {
+      const vp = (await state.pdf.getPage(entry.page + 1)).getViewport({ scale: 1 });
+      const p = vp.convertToPdfPoint(a.x, a.y);
+      const q = vp.convertToPdfPoint(a.x + a.w, a.y + a.h);
+      if (!window.ForeignAnnot.updateRect(PDFLib, doc, entry, [p[0], p[1], q[0], q[1]])) kept++;
+    }
+    if (kept) toast(`${kept} con dấu của phần mềm khác không cập nhật được vị trí (file đã đổi?) — giữ nguyên chỗ cũ.`, "warn");
+    return kept;
   }
 
   // At bake time (BI-100): which imported originals stay exactly as they are (their overlay
@@ -1155,10 +1199,11 @@
     const fp = foreignPlan(); // BI-100: untouched partner annotations are not written at all
     stripManagedAnnots(doc); // drop the previous round-trip copies; re-added from ed.annots below
     removeForeign(doc, fp.remove);
+    await applyStampRects(doc, fp.rects); // moved partner stamps: /Rect only (3b-2)
     const share = new Map(); // one embed per distinct image across the whole bake
     const pages = doc.getPages();
     for (let i = 0; i < pages.length; i++) {
-      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id));
+      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id) && !fp.rectIds.has(a.id));
       if (!anns.length && !ed.watermark) continue;
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       await drawAnnots(doc, pages[i], anns, vp1, "orig", share);
@@ -1173,6 +1218,7 @@
     // untouched ones are copied (or, on a redacted page, burned in) exactly as they are.
     const fp = foreignPlan();
     removeForeign(src, fp.remove);
+    await applyStampRects(src, fp.rects);
     const out = await PDFDocument.create();
     const share = new Map(); // see bakeInPlace
     // Copied pages carry the old round-trip annots. They are unlinked page by page
@@ -1181,8 +1227,11 @@
     const trash = [];
     const n = state.numPages;
     for (let i = 0; i < n; i++) {
-      const anns = annotsFor(i).filter((a) => !fp.skipIds.has(a.id));
-      const redacts = anns.filter((a) => a.kind === "redact");
+      const all = annotsFor(i).filter((a) => !fp.skipIds.has(a.id));
+      const redacts = all.filter((a) => a.kind === "redact");
+      // A moved partner stamp normally just has its /Rect rewritten in `src` (above). On a page
+      // rebuilt from a picture its original is gone with the page, so its stand-in is drawn instead.
+      const anns = redacts.length ? all : all.filter((a) => !fp.rectIds.has(a.id));
       const others = anns.filter((a) => a.kind !== "redact");
       const vp1 = (await state.pdf.getPage(i + 1)).getViewport({ scale: 1 });
       let page;
