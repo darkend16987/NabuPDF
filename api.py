@@ -66,7 +66,10 @@ from src.pdf.fonts import (
     _norm_fam,
     _page_font_buffers,
     _page_font_programs_exact,
+    _drawn_glyph_map,
     _resolve_local_font,
+    _merge_tounicode,
+    _font_xref_for_resource,
     _font_program_key,
     _vietnamese_font,
 )
@@ -2494,6 +2497,11 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
             raise HTTPException(status_code=400, detail=f"Trang {e.page} không hợp lệ")
         by_page.setdefault(e.page, []).append(e)
 
+    # (page, font resource) → [fontfile, fontbuffer, characters drawn with it], for
+    # rebuilding the text layer of everything this request draws — see the
+    # ToUnicode note in src/pdf/fonts.py.
+    drawn_fonts: dict[tuple[int, str], list] = {}
+
     try:
         for pno, edits in by_page.items():
             page = doc[pno]
@@ -2872,6 +2880,12 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                         logger.debug("insert_text retry error: %s", ie2)
                         continue
 
+                # Only embedded programs get a CMap of ours; a Base-14 builtin
+                # (fontname only) is a simple font with no ToUnicode to fix.
+                if fontfile or fontbuffer:
+                    rec = drawn_fonts.setdefault((pno, fontname), [fontfile, fontbuffer, set()])
+                    rec[2].update(txt)
+
                 # Underline: a line just under the baseline, width = drawn-text width.
                 if e.underline:
                     try:
@@ -2903,6 +2917,25 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
             doc.subset_fonts()
         except Exception as se:
             logger.debug("subset_fonts (edit-text) skipped: %s", se)
+        # AFTER subsetting, so nothing rewrites the CMap behind us. Glyph ids survive
+        # the subset (it keeps gids: the content stream still says <0015> for "2").
+        # Grouped by font XREF, not by page: PyMuPDF reuses one font object for every
+        # page that inserts the same file, so its CMap must hear about all of them.
+        by_xref: dict[int, tuple] = {}
+        for (pno, fname), (ffile, fbuf, chars) in drawn_fonts.items():
+            fx = _font_xref_for_resource(doc[pno], fname)
+            if not fx:
+                continue
+            if fx in by_xref:
+                by_xref[fx][2].update(chars)
+            else:
+                by_xref[fx] = (ffile, fbuf, set(chars))
+        for fx, (ffile, fbuf, chars) in by_xref.items():
+            try:
+                fobj_tu = _font_object(fontfile=ffile, fontbuffer=fbuf)
+                _merge_tounicode(doc, fx, _drawn_glyph_map(fobj_tu, chars))
+            except Exception as te:
+                logger.debug("ToUnicode merge skipped for xref %s: %s", fx, te)
         out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
         pages_changed = len(by_page)
     except HTTPException:

@@ -448,6 +448,178 @@ def _page_font_programs_exact(doc, page, names) -> dict[str, bytes]:
     return out
 
 
+# ---- the text layer of what /edit-text draws ----------------------------------
+#
+# insert_text on an embedded TrueType writes a ToUnicode CMap built by REVERSING the
+# font's whole cmap. Where two code points share one glyph the reversal has to pick
+# one, and PyMuPDF 1.27.2 picks the wrong one for the two that matter most: Windows
+# Arial maps U+002D and U+00AD (soft hyphen) to glyph 16, U+0020 and U+00A0 to glyph
+# 3, and the CMap says <0010> <00AD>, <0003> <00A0>. The page LOOKS right; its text
+# says "I2_BD\xadS\xad5.001\xa0…" — so the word cannot be found again, and a copy
+# carries invisible soft hyphens into Excel. Measured on the customer's drawing set
+# after a Thay tất cả; DejaVu (separate glyphs) does not show it, which is why the
+# test grid never did.
+#
+# The fix is exact for what /edit-text drew: every glyph it drew maps to the character
+# it was drawn FOR. It is MERGED into the existing CMap, never substituted for it:
+# PyMuPDF shares ONE font object across every page that inserts the same font file
+# (measured — a per-page rewrite left page 2 with page 13's digits), so the stream is
+# shared state, and anything already in it stays exactly as it was.
+
+_HEX = r"<([0-9A-Fa-f]+)>"
+_BFCHAR_RE = _re.compile(r"beginbfchar(.*?)endbfchar", _re.S)
+_BFRANGE_RE = _re.compile(r"beginbfrange(.*?)endbfrange", _re.S)
+_PAIR_RE = _re.compile(_HEX + r"\s*" + _HEX)
+_RANGE_RE = _re.compile(_HEX + r"\s*" + _HEX + r"\s*(?:" + _HEX + r"|\[([^\]]*)\])")
+
+
+def _utf16_hex_to_str(h: str) -> str:
+    # PyMuPDF writes code points above the BMP as the bare number — "<10780>", five
+    # digits — instead of a UTF-16 surrogate pair (measured, Arial's own CMap). Not
+    # valid UTF-16, so read it as the code point it obviously means; the CMap written
+    # back encodes it properly.
+    if len(h) % 4:
+        return chr(int(h, 16))
+    return bytes.fromhex(h).decode("utf-16-be", errors="strict")
+
+
+def _parse_tounicode(data: bytes) -> dict[int, str] | None:
+    """code → text for a ToUnicode CMap of 2-byte codes; None if anything in it is
+    not understood (then the caller must leave the stream alone)."""
+    try:
+        txt = data.decode("latin-1")
+        out: dict[int, str] = {}
+        for block in _BFCHAR_RE.findall(txt):
+            for src, dst in _PAIR_RE.findall(block):
+                out[int(src, 16)] = _utf16_hex_to_str(dst)
+        for block in _BFRANGE_RE.findall(txt):
+            for lo, hi, dst, arr in _RANGE_RE.findall(block):
+                a, b = int(lo, 16), int(hi, 16)
+                if b < a or b - a > 0xFFFF:
+                    return None
+                if arr:
+                    items = _re.findall(_HEX, arr)
+                    for k, h in enumerate(items[: b - a + 1]):
+                        out[a + k] = _utf16_hex_to_str(h)
+                elif len(dst) % 4:
+                    # The bare-code-point form above, as a range start.
+                    for k in range(b - a + 1):
+                        out[a + k] = chr(int(dst, 16) + k)
+                else:
+                    base = bytes.fromhex(dst)
+                    # Only the LAST byte of the destination increments (the CMap rule).
+                    for k in range(b - a + 1):
+                        cur = base[:-1] + bytes([(base[-1] + k) & 0xFF])
+                        out[a + k] = cur.decode("utf-16-be", errors="strict")
+        return out
+    except Exception:
+        return None
+
+
+def _tounicode_cmap(code_to_text: dict[int, str]) -> bytes:
+    """A ToUnicode CMap (2-byte codes) for `code_to_text`, runs folded into bfrange.
+
+    A run is folded only where the CMap rule allows it: codes that differ in the last
+    byte alone, and single BMP destinations that also differ in the last byte alone."""
+    items = sorted((c, t) for c, t in code_to_text.items() if 0 <= c <= 0xFFFF and t)
+    ranges: list[tuple[int, int, str]] = []
+    singles: list[tuple[int, str]] = []
+    i = 0
+    while i < len(items):
+        c0, t0 = items[i]
+        j = i
+        if len(t0) == 1 and ord(t0) <= 0xFFFF:
+            while (
+                j + 1 < len(items)
+                and items[j + 1][0] == items[j][0] + 1
+                and items[j + 1][0] >> 8 == c0 >> 8
+                and len(items[j + 1][1]) == 1
+                and ord(items[j + 1][1]) == ord(items[j][1]) + 1
+                and ord(items[j + 1][1]) >> 8 == ord(t0) >> 8
+            ):
+                j += 1
+        if j > i:
+            ranges.append((c0, items[j][0], t0))
+        else:
+            singles.append((c0, t0))
+        i = j + 1
+
+    def hx(t: str) -> str:
+        return t.encode("utf-16-be").hex().upper()
+
+    out = [
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        "/CIDSystemInfo <</Registry(Adobe)/Ordering(UCS)/Supplement 0>> def\n"
+        "/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n"
+        "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+    ]
+    for k in range(0, len(ranges), 100):  # the CMap format caps a block at 100
+        chunk = ranges[k:k + 100]
+        out.append(f"{len(chunk)} beginbfrange\n")
+        out.extend(f"<{a:04X}> <{b:04X}> <{hx(t)}>\n" for a, b, t in chunk)
+        out.append("endbfrange\n")
+    for k in range(0, len(singles), 100):
+        chunk = singles[k:k + 100]
+        out.append(f"{len(chunk)} beginbfchar\n")
+        out.extend(f"<{c:04X}> <{hx(t)}>\n" for c, t in chunk)
+        out.append("endbfchar\n")
+    out.append("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n")
+    return "".join(out).encode("ascii")
+
+
+def _drawn_glyph_map(font, chars) -> dict[int, str]:
+    """glyph id → the character drawn with it, for the characters in `chars`.
+
+    Two characters on one glyph (the user really typed both '-' and a soft hyphen)
+    cannot both be right; the LOWER code point wins, so ASCII beats its look-alike —
+    the deterministic choice, and the one every reader expects for a hyphen."""
+    out: dict[int, str] = {}
+    for ch in sorted(set(chars)):
+        if ch in "\n\r\t":
+            continue
+        try:
+            gid = int(font.has_glyph(ord(ch)))
+        except Exception:
+            continue
+        if gid > 0 and gid not in out:
+            out[gid] = ch
+    return out
+
+
+def _font_xref_for_resource(page, fontname: str) -> int:
+    """xref of the font `page` knows as resource `fontname`; 0 if none."""
+    try:
+        return next((int(f[0]) for f in page.get_fonts(full=True) if f[4] == fontname), 0)
+    except Exception:
+        return 0
+
+
+def _merge_tounicode(doc, font_xref: int, gid_to_text: dict[int, str]) -> bool:
+    """Override `gid_to_text` in the ToUnicode of Type0 font `font_xref`, keeping
+    every other entry. False (and nothing changed) when there is no ToUnicode or it
+    cannot be parsed — the drawn text is right either way; only its text layer stays
+    as PyMuPDF wrote it."""
+    if not gid_to_text or not font_xref:
+        return False
+    try:
+        kind, val = doc.xref_get_key(font_xref, "ToUnicode")
+        if kind != "xref":
+            return False
+        tu_xref = int(val.split()[0])
+        cur = _parse_tounicode(doc.xref_stream(tu_xref) or b"")
+        if cur is None:
+            return False
+        changed = {g: t for g, t in gid_to_text.items() if cur.get(g) != t}
+        if not changed:
+            return True
+        cur.update(changed)
+        doc.update_stream(tu_xref, _tounicode_cmap(cur))
+        return True
+    except Exception as fe:
+        logger.debug("ToUnicode merge for xref %s failed: %s", font_xref, fe)
+        return False
+
+
 def _list_local_font_families() -> list[str]:
     try:
         from matplotlib import font_manager as fm

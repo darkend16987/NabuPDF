@@ -2763,6 +2763,24 @@ _Ghi 2026-09-30 (v0.2.73)._
 - Luật: chờ lần vẽ dở xong (tối đa ~5 s), rồi mới đặt cờ và vẽ lại; trang đang vẽ dở được coi là "đang hiện".
 - **Vỡ khi:** ra khỏi Chú thích mà hình / con dấu / hộp chữ còn ẩn trên trang đầu tiên cho tới khi cuộn.
 
+### BI-102 · Chữ `/edit-text` vẽ ra phải **đọc lại đúng ký tự đã gõ** — ToUnicode gộp, không thay
+- `api.py` `/edit-text` (vòng `drawn_fonts` → `by_xref` sau `subset_fonts`), `src/pdf/fonts.py`
+  `_merge_tounicode` / `_parse_tounicode` / `_tounicode_cmap` / `_drawn_glyph_map`. Lưới:
+  `.venv\Scripts\python test_edit_text_tounicode.py` (7 ca).
+- `insert_text` dựng ToUnicode bằng cách **đảo cmap** của font; Arial Windows dùng chung glyph cho U+002D/U+00AD
+  và U+0020/U+00A0, PyMuPDF 1.27.2 chọn ký tự giống-mà-khác ⇒ trang **nhìn đúng**, lớp chữ là
+  `I2_BD\xadS\xad5.001` — Tìm & Thay thế không tìm lại được, copy mang soft hyphen ẩn. DejaVu có glyph riêng nên
+  lưới cũ không bao giờ thấy. Đo trên bộ bản vẽ khách sau Thay tất cả.
+- Luật: mỗi glyph đã vẽ ↦ đúng ký tự đã vẽ (trùng glyph ⇒ code point **thấp** thắng), **gộp** vào CMap cũ:
+  PyMuPDF dùng **một object font cho mọi trang** chèn cùng file font (đo: ghi theo trang ⇒ trang 2 mang chữ số của
+  trang 13), nên CMap là trạng thái chung. Không đọc được CMap ⇒ **không đụng** (chữ vẫn đúng, chỉ lớp chữ như cũ).
+- ⚠️ PyMuPDF ghi code point ngoài BMP dạng số trần `<10780>` (không phải surrogate) — bộ đọc phải nhận, không thì
+  mọi lần gộp bị từ chối **im lặng** (đã vấp lúc làm).
+- ⚠️ Fixture dựng bằng `insert_text` + Arial **tự mang lỗi này** ⇒ file nguồn của test phải được làm sạch trước
+  (xem `_arial_src`), và các trang phải **khác nhau** — fixture đồng nhất đã để lọt đột biến "chỉ gộp trang cuối".
+- **Vỡ khi:** thay xong tìm lại chính chữ vừa thay (có `-` hoặc dấu cách) ra 0; copy số hiệu bản vẽ dán sang
+  Excel mất dấu gạch.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2831,7 +2849,8 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Bất kỳ điều kiện nào đọc `Editor.active` / `TextEdit.active` | Vào Chú thích rồi bấm ↑/↓/PageUp/PageDown/Delete → **không** có lỗi trong console, trang không bị xoá · thoát Chú thích → Delete xoá lại được (BI-28) |
 | Menu ngữ cảnh dùng chung (`showPageMenu` trong `capture.js`) | Chuột phải lên **trang PDF** (Sao chép ảnh/vùng/Dán) vẫn đúng · mở menu này rồi mở menu kia → menu cũ đóng · cuộn dải thumbnail → menu đóng |
 | Chiều vẽ lại chữ (`_text_frame`, `theta`/`u_dir`/`n_dir`, `morph`, trường `dir` của `/text-spans`·`/text-find`·`TextEdit`, `ed.dir` ở `text-edit.js`, `dir` ở `editForSpan`) | BI-66 · `.venv\Scripts\python test_edit_text_rotate.py` · rồi **test tay trên bản vẽ `/Rotate 90` thật** (bộ hồ sơ thầu/CAD): **Sửa nội dung** một dòng đọc xuôi → chữ mới **đọc xuôi**, thẳng hàng với dòng bên cạnh · sửa một **nhãn kích thước dựng dọc** → vẫn **dựng dọc**, cùng chiều với nhãn kế bên · **Ctrl+H → Thay tất cả** → mọi chữ thay thế đúng chiều của chỗ nó thay · sửa một đoạn **rất ngắn** (2–3 ký tự) trên trang xoay → **không** bị nén lại · bật **gạch chân** → gạch nằm **dưới** chữ, cùng chiều · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-66, BI-25, BI-45) |
-| Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa (BI-25) |
+| Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`, `_bbox_is_size_fallback`, `_page_font_programs_exact`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa · **và** trên bản vẽ PDFsharp (khung tên) → số hiệu thay vào **cao bằng** `DAOL.` đứng cạnh, không thấp/bè (BI-25) |
+| Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |
 | Thứ tự `<script>` trong `index.html` | `find-replace.js` **sau** `app.js` (dùng tên trần `state`/`sidecarFetch`/`pdfJsonBody`/`rerenderChanged` và gắn nút lúc nạp); `wire.js` **trước** `app.js`/`text-edit.js`/`compare.js`/`editor.js`/`sign.js`; `annot-text.js` + `annot-geom.js` + `managed-codec.js` **trước** `editor.js` (và `managed-codec.js` sau `vendor/pdf-lib.min.js` + `wire.js` + `annot-text.js`); `pan.js` sau `app.js` và trước `editor.js`/`capture.js`. Mở app → console **không** có `ReferenceError` · thử một lệnh gọi sidecar bất kỳ (Nén) (§2, BI-14, BI-40) |
