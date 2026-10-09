@@ -241,6 +241,18 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > trên cùng tài liệu nhanh hơn hẳn. Riêng việc **thay** thì tài liệu trên **~200MB** chưa ghi được — app
 > báo ngay trên dòng đếm và mờ hai nút **Thay**; hãy **Nén** bớt trước.
 
+**Tạo bản theo mẫu (từ v0.2.78)** — có bộ bản vẽ của tháp **I1**, cần đúng bộ đó cho **I2, I3, I4**
+(cùng trang, cùng nội dung, chỉ đổi tên cấu kiện)? Mở `Ctrl+H` → **Tạo bản theo mẫu…**:
+
+- **Mã cần đổi:** `I1`. **Đổi thành:** `I2, I3, I4` (hoặc viết gọn `I2..I6`) — mỗi giá trị ra **một file mới**.
+- Bấm **Quét** → app liệt kê từng chỗ sẽ đổi (ví dụ `I1_BD-S-5.001` trang 2, `-THÁP I1` ×12…), kèm số trang;
+  **bỏ tick** dòng nào không muốn đổi. App cũng nhắc nếu có trang **không có** mã.
+- **Khớp nguyên mã** (bật sẵn): `I1` **không** khớp bên trong `I10`, `I11`, `PI1` — nhưng vẫn khớp `I1_BD`,
+  `DAOL.I1`, `THÁP I1`.
+- Tên file tự đổi theo: `DAOL.I1.S-HS….pdf` → `DAOL.I2.S-HS….pdf`. Mặc định lưu cạnh file gốc (**Chọn…** để đổi).
+- **File đang mở không bị sửa.** Mỗi file mới được **đọc lại kiểm tra** trước khi lưu — sót một chỗ là file đó
+  không được ghi. Trùng tên file có sẵn thì app **hỏi** trước khi ghi đè.
+
 > **Chèn chữ ký:** dùng nút **Chèn ảnh / chữ ký** → chọn ảnh chữ ký rồi bấm lên trang để đặt.
 > Nên dùng **PNG nền trong** để chữ ký không có hộp trắng đè lên tài liệu (ảnh JPG có nền đặc — app sẽ
 > nhắc). Chỉ nhận **PNG / JPG**.
@@ -414,6 +426,14 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 >   vẫn là đối tượng sống nên copy được cả sau khi Lưu và mở lại.
 > - Nếu clipboard hệ điều hành đang có **ảnh** (copy từ app khác) thì Ctrl+V vẫn là **dán ảnh vào
 >   trang** như trước — hai đường không lẫn nhau.
+
+> **Hộp chữ tự xuống dòng theo khung (từ v0.2.78):** như text box của Word / Foxit.
+> - **Bấm** một cái để đặt hộp = hộp thường như trước (xuống dòng khi nhấn `Enter`).
+> - **Kéo chuột** khi đặt hộp = khung có bề rộng cố định: gõ tới mép là **tự xuống dòng**, chiều cao **tự giãn**.
+> - Kéo **góc khung đang gõ**, hoặc chọn hộp rồi kéo **tay nắm** ở góc → đổi bề rộng, chữ xuống dòng lại ngay.
+> - Bảng **Định dạng** có ô **Tự xuống dòng theo khung** để bật / tắt cho hộp đang chọn.
+> - Chỗ xuống dòng trên màn hình **đúng y** chỗ xuống dòng trong file đã lưu. Hộp đang xoay không có tay nắm
+>   (bỏ xoay về 0° để kéo).
 
 > **Nền cho hộp văn bản (từ v0.2.64):** hộp văn bản vốn **trong suốt**, nên đặt lên ảnh scan hay bản
 > vẽ nhiều nét thì chữ lẫn vào hình. Chọn công cụ **Hộp văn bản** (hoặc chọn một hộp đã có) → trên

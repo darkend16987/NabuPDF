@@ -4,7 +4,24 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-05 · v0.2.77 (dưới đây) · v0.2.76 là bản trước đó_
+_Cập nhật: 2026-10-09 · v0.2.78 (dưới đây) · v0.2.77 là bản trước đó_
+
+> **v0.2.78 — Tạo bản theo mẫu (I1 → I2, I3…) + hộp chữ tự xuống dòng theo khung** (2026-10-09).
+> Nghiên cứu & số đo: `docs/RESEARCH-2026-10-09-textbox-wrap-batch-variants.md` (§3 = kết quả + việc để lại). Sổ bất
+> biến **BI-25 (mục mới), BI-102…BI-104**. **Có đổi `*.py`** (`api.py`, `src/pdf/fonts.py`) ⇒ **sidecar build lại**.
+> 1. **BI-25** `/edit-text`: descriptor `/Ascent−/Descent` < 1 em (PDFsharp 728/−210) làm PyMuPDF trả bbox dày đúng
+>    `size` = √(Sv·Sh) ⇒ chữ thay vào thấp 10–20 %. Sửa: Sv từ advance đo bằng **chính font nhúng** (`_page_font_programs_exact`
+>    — khoá theo face, không theo họ). File khách: cao 18.25→18.25, bìa 45.75→45.88.
+> 2. **BI-102** ToUnicode của chữ vẽ lại: Arial dùng chung glyph `-`/U+00AD, ` `/U+00A0 ⇒ thay xong không tìm lại được.
+>    Gộp CMap theo **xref** (PyMuPDF dùng một object font cho mọi trang).
+> 3. `/text-find` thêm `code_boundary` ("Khớp nguyên mã", mặc định tắt cho Ctrl+H).
+> 4. **BI-103** `renderer/batch-variants.js` "Tạo bản theo mẫu" (nút trong panel Ctrl+H) + IPC `dialog:choose-dir`,
+>    `file:write-new-pdf` (cờ `wx`). Không sửa file đang mở; mỗi file quét lại trước khi ghi.
+> 5. **BI-104** hộp chữ cố định bề rộng (`boxW`): kéo để tạo, tay nắm / kéo giãn ô gõ / `#fmt-wrap`; ngắt dòng ở pt
+>    (`wrapItemsPt`) để overlay và PNG bake trùng dòng. Ô gõ hộp thường giờ `wrap="off"`.
+> Kiểm: E2E trên app thật qua CDP (2 probe, file khách + A4), JS 48/48, Python 24/24.
+> ⚠️ **Còn mở:** tìm nguyên chuỗi `DAOL.I1_BD-S` (PDF chia 2 khối) · `_page_font_buffers` gộp đậm/thường · `/translate`
+> có thể mang lỗi BI-102 · FreeText ngoại vẫn chèn `\n` cứng · chưa test tay tiếng Anh / file vài trăm trang.
 
 > **v0.2.77 — Sửa chú thích của phần mềm khác + cột trái Trang / Dấu trang / Chú thích** (2026-10-05).
 > Kế hoạch & số đo: `docs/RESEARCH-2026-10-05-foreign-annots-sidebar-panels.md` (Q1–Q4 người dùng đã chốt). Sổ bất biến
