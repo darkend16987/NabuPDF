@@ -64,7 +64,9 @@ const chars = (lay) => lay.ops.map((o) => o.ch).join("");
 
 const D = normTextStyle();
 check("no argument → the full default bundle, never undefined fields", Object.keys(D).sort(), [
-  "align", "bold", "charScale", "font", "indent", "italic", "letterSpacing",
+  // boxW (fixed-width box) joined the bundle ON PURPOSE: being in the normaliser is
+  // what makes every re-measure path carry it (see normTextStyle). 0 = point box.
+  "align", "bold", "boxW", "charScale", "font", "indent", "italic", "letterSpacing",
   "lineHeight", "listType", "opacity", "paraSpacing", "rot", "strike", "underline",
   "wordSpacing",
 ]);
@@ -407,7 +409,9 @@ check("the input string is not mutated and markers are not idempotent-safe by ac
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(A).sort(),
   ["FONT_STACKS", "fontFamily", "layoutTextBox", "listDisplayText", "measureCtx",
-   "measureText", "normRot", "normTextStyle", "rotatedBox", "textFont", "textStyle"]);
+   "measureText", "normRot", "normTextStyle", "rotatedBox", "textFont", "textStyle",
+   // fixed-width boxes (wrapLine: the break rule; wrappedDisplayText: the overlay text)
+   "wrapLine", "wrappedDisplayText"]);
 check("every export is callable (or the stacks table)",
   Object.keys(A).map((k) => (k === "FONT_STACKS" ? typeof A[k] === "object" : typeof A[k] === "function")).every(Boolean), true);
 
@@ -505,6 +509,110 @@ check("layoutTextBox places every glyph identically with a background applied",
   JSON.stringify(layoutTextBox("Nghiem thu", {}, flat(), 48, 3).ops));
 check("textFont ignores a background too (it is not a font property)",
   textFont(14, BG), textFont(14, {}));
+
+// ==========================================================================
+// 8. fixed-width boxes ("hộp cố định bề rộng") — boxW
+// ==========================================================================
+//
+// The user's complaint: dragging the frame changed nothing, a one-line text stayed one
+// line until it was baked. A box with `boxW` wraps to that width and grows DOWN. The
+// danger is the usual one (BI-40): the screen element and the baked PNG must break
+// every line in the same place, or the saved file differs from what was approved.
+
+const { wrapLine, wrappedDisplayText } = A;
+const W10 = (t) => [...t].length * 10; // flat 10-wide glyphs, as a widthOf
+
+check("W1 a line that fits is returned whole", wrapLine("abc def", 70, W10), ["abc def"]);
+check("W2 breaks after spaces, trailing spaces hang (not drawn)",
+  wrapLine("aa bb cc dd", 50, W10), ["aa bb", "cc dd"]);
+check("W3 may break after a hyphen, like the browser's textarea",
+  wrapLine("DAOL.I2_BD-S-5.001", 120, W10), ["DAOL.I2_BD-", "S-5.001"]);
+check("W3b …greedily: a line takes every piece that still fits",
+  wrapLine("ab-cd-ef", 50, W10), ["ab-", "cd-ef"]);
+check("W4 a word wider than the box is cut between characters, never overflows",
+  wrapLine("abcdefghij", 40, W10), ["abcd", "efgh", "ij"]);
+check("W5 no drawn line is wider than the box",
+  wrapLine("Hợp đồng thi công xây dựng công trình nhà ở thương mại", 120, W10).every((l) => W10(l) <= 120), true);
+check("W6 nothing is lost: the words come back in order",
+  wrapLine("aa bb cc dd ee", 50, W10).join(" ").split(/ +/), ["aa", "bb", "cc", "dd", "ee"]);
+
+check("B1 boxW is normalised: negative / garbage → 0 (point box), strings accepted",
+  [-5, "x", NaN, undefined, "120", 80].map((v) => normTextStyle({ boxW: v }).boxW), [0, 0, 0, 0, 120, 80]);
+check("B2 boxW 0 lays out byte-identically to a box that never had the field",
+  JSON.stringify(layoutTextBox("ab\ncd ef", { boxW: 0, align: "right" }, flat(), 10, 1)),
+  JSON.stringify(layoutTextBox("ab\ncd ef", { align: "right" }, flat(), 10, 1)));
+{
+  const lay = layoutTextBox("aa bb cc dd", { boxW: 50 }, flat(), 10, 1);
+  check("B3 the box is exactly boxW wide, whatever the text", lay.width, 50);
+  check("B3b two lines, wrapped", lay.lines.map((l) => l.str), ["aa bb", "cc dd"]);
+  check("B3c the second line sits one line-height down", [...new Set(lay.ops.map((o) => o.y))], [0, 13]);
+}
+{
+  const lay = layoutTextBox("ab cd", { boxW: 100, align: "center" }, flat(), 10, 1);
+  check("B4 centre aligns within the BOX, not within the longest line", lay.ops[0].x, (100 - 50) / 2);
+}
+{
+  const lay = layoutTextBox("aa bb cc dd ee", { boxW: 70, align: "justify" }, flat(), 10, 1);
+  const rows = {};
+  for (const o of lay.ops) (rows[o.y] = rows[o.y] || []).push(o);
+  const right = (r) => r[r.length - 1].x + 10;
+  check("B5 justify stretches every wrapped line but the paragraph's last",
+    Object.values(rows).map(right), [70, 70, 20]);
+}
+{
+  // 80 wide minus the number column ("1." 20 + gap 4) leaves 56 for the text.
+  const lay = layoutTextBox("aa bb cc\ndd", { boxW: 80, listType: "number" }, flat(), 10, 1);
+  check("B6 a list marker only on the FIRST line of each item",
+    lay.lines.map((l) => [l.marker, l.str]), [["1.", "aa bb"], ["", "cc"], ["2.", "dd"]]);
+}
+check("B7 measureText of a fixed box: width = boxW + padding, height grows with lines",
+  [measureText("aa bb cc dd", 10, { boxW: 50 }, flat()), measureText("aa bb", 10, { boxW: 50 }, flat())],
+  [{ w: Math.ceil(50 + 3), h: Math.ceil(26 + 3) }, { w: Math.ceil(50 + 3), h: Math.ceil(13 + 3) }]);
+check("B8 an indent wider than the box still makes progress (one glyph per line)",
+  layoutTextBox("abc", { boxW: 10, indent: 40 }, flat(), 10, 1).lines.map((l) => l.str), ["a", "b", "c"]);
+
+// B9 — THE BI-40 case. A measuring context whose widths are NOT linear in font size
+// (rounded to whole px, as hinting does). If line breaks were decided at the call's
+// scale, the raster (fpx = size·3) and the screen (fpx = size) would split differently.
+const hinted = () => {
+  const ctx = {
+    font: "10px x",
+    measureText(str) {
+      const px = parseFloat(/([\d.]+)px/.exec(ctx.font)[1]);
+      return { width: [...str].reduce((t) => t + Math.round(px * 0.55 + 0.4), 0) };
+    },
+  };
+  return ctx;
+};
+{
+  const TXT = "Mặt bằng định vị cọc tháp I2 khu đô thị thể thao quốc tế";
+  const at1 = layoutTextBox(TXT, { boxW: 60 }, hinted(), 10, 1).lines.map((l) => l.str);
+  const at3 = layoutTextBox(TXT, { boxW: 60 }, hinted(), 30, 3).lines.map((l) => l.str);
+  check("B9 screen (1×) and bake (3×) break every line in the same place", at3, at1);
+  check("B9b …and the fixture really is non-linear (else B9 proves nothing)",
+    hinted().measureText.call({ font: "30px x" }, "a") !== undefined &&
+    (() => { const c = hinted(); c.font = "30px x"; const w3 = c.measureText("abcdefgh").width; c.font = "10px x"; return w3 !== 3 * c.measureText("abcdefgh").width; })(),
+    true);
+}
+check("B10 the overlay text of a fixed box is its wrapped lines",
+  wrappedDisplayText("aa bb cc dd", { boxW: 50 }, 10, flat()), "aa bb\ncc dd");
+check("B10b …and of a point box exactly what listDisplayText gives",
+  wrappedDisplayText("aa bb\ncc", { listType: "bullet" }, 10, flat()), listDisplayText("aa bb\ncc", { listType: "bullet" }));
+// B11 — the /NabuData payload. A point box must stay byte-identical (BI-59: every
+// file saved before fixed boxes existed re-saves to the same bytes); a fixed box must
+// carry its width, or re-opening the file turns it back into one long line.
+{
+  const MC = require("../renderer/managed-codec.js");
+  const base = { kind: "text", x: 1, y: 2, w: 30, h: 20, text: "aa bb", fontSize: 12, color: "#000000" };
+  const point = MC.serializeManaged(base);
+  check("B11 a point box writes no boxW key at all", "boxW" in point, false);
+  check("B11b …so its payload is exactly what it was before boxW existed",
+    JSON.stringify(point), JSON.stringify(MC.serializeManaged(Object.assign({}, base, { boxW: 0 }))));
+  check("B11c a fixed box writes its width", MC.serializeManaged(Object.assign({}, base, { boxW: 120 })).boxW, 120);
+}
+
+check("B10c a list item's continuation line is indented, its marker not repeated",
+  wrappedDisplayText("aa bb cc", { boxW: 70, listType: "bullet" }, 10, flat()), "• aa bb\n   cc");
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

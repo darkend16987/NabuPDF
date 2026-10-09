@@ -326,6 +326,8 @@
         a.fill = data.fill;
         a.fillOpacity = data.fillOpacity != null ? +data.fillOpacity : 1;
       }
+      // Fixed-width box: left off a point box, the same arm as the background above.
+      if (s.boxW > 0) a.boxW = s.boxW;
       return a;
     }
     if (data.k === "arrow") {

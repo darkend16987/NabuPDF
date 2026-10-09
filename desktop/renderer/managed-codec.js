@@ -487,6 +487,9 @@
         o.fill = a.fill;
         o.fillOpacity = a.fillOpacity != null ? a.fillOpacity : 1;
       }
+      // Fixed-width box: same rule — the key exists only for a box that wraps, so a
+      // point box (every box written before this) keeps a byte-identical payload.
+      if (s.boxW > 0) o.boxW = s.boxW;
       return o;
     }
     if (a.kind === "arrow") {

@@ -87,6 +87,14 @@ function normTextStyle(a) {
     // A box written before rotation existed has no `rot` at all and reads 0, which
     // is the same picture it has always drawn.
     rot: normRot(a.rot),
+    // Fixed-width box ("hộp cố định bề rộng"): the width, in pt, that the TEXT wraps
+    // to; 0 = the original point-text box that breaks lines only at "\n" and grows to
+    // its longest line. Every box written before this existed has no `boxW` and reads
+    // 0 — the same picture it has always drawn. Here, in the normaliser, so that every
+    // path that re-measures a box (`measureText(…, textStyle(a))` after a font change,
+    // renderTextPng in the bake) carries it without being told: a width that only some
+    // paths knew about is BI-40 by construction.
+    boxW: Math.max(0, num(a.boxW, 0)),
   };
 }
 // Back-compat alias: the style bundle read off a text annotation is now the full
@@ -131,7 +139,7 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
   };
 
   let num = 0;
-  const items = rawLines.map((str) => {
+  let items = rawLines.map((str) => {
     const blank = str.trim() === "";
     let marker = "";
     if (isList && !blank) {
@@ -143,7 +151,19 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
   const markerW = (m) => (m ? meas(m) * sx : 0);
   const maxMarkerW = items.reduce((mx, it) => Math.max(mx, markerW(it.marker)), 0);
   const textLeft = indent + (isList ? maxMarkerW + markerGap : 0);
-  const blockW = items.reduce((mx, it) => Math.max(mx, lineTextWidth(it.str)), 1);
+  // Fixed-width box: break every "\n" line into the lines that fit. The breaks are
+  // decided ONCE, in pt (see wrapItemsPt) — never at this call's scale — so the
+  // on-screen box (fpx = size) and the baked raster (fpx = size·RS) cannot break a
+  // line differently: canvas text at 3× is not exactly 3× as wide (hinting), and a
+  // word right at the edge would land on different lines in the saved file. BI-40.
+  const boxW = s.boxW > 0 ? s.boxW * upp : 0;
+  if (boxW) {
+    items = wrapItemsPt(items, s, ctx, fpx / upp, isList);
+    ctx.font = textFont(fpx, s); // wrapItemsPt measured at the pt size; back to ours
+  }
+  const blockW = boxW
+    ? Math.max(1, boxW - textLeft)
+    : items.reduce((mx, it) => Math.max(mx, lineTextWidth(it.str)), 1);
 
   const ops = [];
   const decos = [];
@@ -151,7 +171,9 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
   items.forEach((it, idx) => {
     if (!it.blank) {
       const lw = lineTextWidth(it.str);
-      const lastOfPara = idx === items.length - 1 || items[idx + 1].blank;
+      // A fixed-width box justifies every wrapped line except the one that ends its
+      // paragraph (Word's rule); a point box keeps the rule it always had.
+      const lastOfPara = boxW ? !!it.endsPara : idx === items.length - 1 || items[idx + 1].blank;
       let offset = 0;
       let justifyExtra = 0;
       if (s.align === "center") offset = (blockW - lw) / 2;
@@ -183,7 +205,102 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
     if (it.blank) y += para;
   });
 
-  return { width: Math.max(1, textLeft + blockW), height: Math.max(lh, y), ops, decos, style: s };
+  // `lines` = what was laid out, one entry per drawn line (after wrapping, in a
+  // fixed-width box) — read by wrappedDisplayText so the on-screen element shows the
+  // very same breaks.
+  return { width: Math.max(1, textLeft + blockW), height: Math.max(lh, y), ops, decos, style: s, lines: items };
+}
+
+// ---- fixed-width boxes: where the lines break ------------------------------
+//
+// Greedy, like every text box the user has ever typed into: a line takes words while
+// they fit; a break may fall after a space or after a hyphen (where browsers break
+// too — the inline <textarea> previews with the browser's own wrapping, and the closer
+// the two agree, the less the text moves when the editor closes); spaces at the end
+// of a line hang and are not drawn; a single word wider than the line is cut between
+// characters rather than overflowing the box.
+function wrapLine(str, avail, widthOf) {
+  const fits = (t) => widthOf(t.replace(/ +$/, "")) <= avail + 0.01;
+  if (fits(str)) return [str.replace(/ +$/, "")];
+  const out = [];
+  let line = "";
+  for (const tok of str.split(/(?<=[ \-])/)) {
+    if (fits(line + tok)) {
+      line += tok;
+      continue;
+    }
+    if (line) {
+      out.push(line.replace(/ +$/, ""));
+      line = "";
+    }
+    if (fits(tok)) {
+      line = tok;
+      continue;
+    }
+    for (const ch of tok) {
+      if (line && !fits(line + ch)) {
+        out.push(line);
+        line = "";
+      }
+      line += ch;
+    }
+  }
+  out.push(line.replace(/ +$/, ""));
+  return out;
+}
+
+// The wrapped lines of a fixed-width box, measured in PT whatever scale the caller
+// lays out at (see layoutTextBox). Leaves ctx.font at the pt size — the caller resets
+// it. Each wrapped line carries the list marker only on its paragraph's first line,
+// and `endsPara` on its last (the justify rule).
+function wrapItemsPt(items, s, ctx, sizePt, isList) {
+  ctx.font = textFont(sizePt, s);
+  const m = (str) => ctx.measureText(str).width;
+  const sx = s.charScale;
+  const widthOf = (str) => {
+    let w = 0;
+    for (const ch of str) {
+      w += m(ch) * sx + s.letterSpacing;
+      if (ch === " ") w += s.wordSpacing;
+    }
+    if (str.length) w -= s.letterSpacing;
+    return Math.max(0, w);
+  };
+  const markerW = items.reduce((mx, it) => Math.max(mx, it.marker ? m(it.marker) * sx : 0), 0);
+  const textLeft = s.indent + (isList ? markerW + sizePt * 0.4 : 0);
+  // Never narrower than one wide glyph: an indent wider than the box must still make
+  // progress, one character per line, instead of looping on nothing.
+  const avail = Math.max(m("M") * sx, s.boxW - textLeft);
+  const out = [];
+  for (const it of items) {
+    if (it.blank) {
+      out.push({ str: it.str, blank: true, marker: "", endsPara: true });
+      continue;
+    }
+    const parts = wrapLine(it.str, avail, widthOf);
+    parts.forEach((p, k) =>
+      out.push({ str: p, blank: false, marker: k === 0 ? it.marker : "", endsPara: k === parts.length - 1 })
+    );
+  }
+  return out;
+}
+
+// The on-screen text of a fixed-width box: its wrapped lines joined by "\n", so the
+// element (white-space: pre) shows EXACTLY the breaks the bake will draw. Markers as
+// listDisplayText writes them; a wrapped continuation line of a list item is indented
+// by spaces — an approximation, exactly as the list display already is (the raster is
+// the exact one). A point box (boxW 0) gets listDisplayText unchanged.
+function wrappedDisplayText(text, style, fontSizePt, ctx) {
+  const s = normTextStyle(style);
+  if (!(s.boxW > 0)) return listDisplayText(text, style);
+  const lay = layoutTextBox(text, style, ctx || measureCtx(), fontSizePt, 1);
+  const isList = s.listType !== "none";
+  return lay.lines
+    .map((it) => {
+      if (it.blank || !isList) return it.str;
+      return (it.marker ? it.marker + " " : "   ") + it.str;
+    })
+    .join("\n");
 }
 
 // One throwaway 2d context, reused for every measurement (creating a canvas per
@@ -271,14 +388,14 @@ function rotatedBox(w, h, deg) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
-    layoutTextBox, measureCtx, measureText, listDisplayText,
+    layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
     normRot, rotatedBox,
   };
 }
 if (typeof window !== "undefined") {
   window.AnnotText = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
-    layoutTextBox, measureCtx, measureText, listDisplayText,
+    layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
     normRot, rotatedBox,
   };
 }
