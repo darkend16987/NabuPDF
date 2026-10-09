@@ -2781,6 +2781,24 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** thay xong tìm lại chính chữ vừa thay (có `-` hoặc dấu cách) ra 0; copy số hiệu bản vẽ dán sang
   Excel mất dấu gạch.
 
+### BI-103 · "Tạo bản theo mẫu" không sửa file đang mở, không ghi file chưa **đọc lại**, không ghi đè khi chưa hỏi
+- `renderer/batch-variants.js`, `main.js` `dialog:choose-dir` / `file:write-new-pdf`. Lưới:
+  `npm test -- batch-variants` (86 ca: luật mã, tên file, khoảng giá trị, đếm kiểm tra, chốt nguồn).
+- Không có đường ghi riêng: payload là `FindReplace.pure.groupEdits` → `/edit-text` (thừa hưởng BI-21/23/25/66/102).
+  Nguồn là `state.bytes` **đang mở** (gồm thay đổi chưa lưu) nhưng **không bao giờ** gán `state.bytes` / gọi
+  `pushUndo` (test ghim).
+- Mỗi file đầu ra được **quét lại** trước khi ghi: số chỗ mã cũ và mã mới phải đúng như dự đoán
+  (`expectedCounts`/`countsMatch`); lệch ⇒ file đó **không ghi**, báo lý do. Đếm mã mới trên bản gốc làm
+  **trước** vòng lặp (sidecar chỉ cache một chỉ mục).
+- "Khớp nguyên mã" (`code_boundary`) bật mặc định — `I1` không khớp trong `I10`. Quét chạm trần 5000 ⇒ **chặn**
+  tạo bản (không hứa "mọi chỗ").
+- Ghi bằng cờ `wx`; tồn tại ⇒ hỏi "Ghi đè?" từng file. Tên file: chỉ basename `.pdf`, không ký tự cấm (main kiểm).
+  Hộp chọn thư mục tuân BI-85 (khôi phục + ghi nhớ thư mục).
+- Đo E2E trên app thật (CDP, file khách): 25 chỗ/13 trang → 2/2 file I2, I3; mỗi file 0 `I1`, 25 mã mới, cao chữ
+  18.25 = gốc; file đang mở giữ nguyên object bytes; lần 2 hỏi ghi đè từng file, chọn bỏ qua ⇒ "0/2, Bỏ qua: …".
+- **Vỡ khi:** file sinh ra còn sót mã cũ / dính mã I10; file đang mở bị đổi hoặc Ctrl+Z có thêm bước; hộp
+  "Ghi đè?" nằm dưới hộp thoại; Esc đóng hộp thoại khi đang ghi dở.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2851,6 +2869,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Chiều vẽ lại chữ (`_text_frame`, `theta`/`u_dir`/`n_dir`, `morph`, trường `dir` của `/text-spans`·`/text-find`·`TextEdit`, `ed.dir` ở `text-edit.js`, `dir` ở `editForSpan`) | BI-66 · `.venv\Scripts\python test_edit_text_rotate.py` · rồi **test tay trên bản vẽ `/Rotate 90` thật** (bộ hồ sơ thầu/CAD): **Sửa nội dung** một dòng đọc xuôi → chữ mới **đọc xuôi**, thẳng hàng với dòng bên cạnh · sửa một **nhãn kích thước dựng dọc** → vẫn **dựng dọc**, cùng chiều với nhãn kế bên · **Ctrl+H → Thay tất cả** → mọi chữ thay thế đúng chiều của chỗ nó thay · sửa một đoạn **rất ngắn** (2–3 ký tự) trên trang xoay → **không** bị nén lại · bật **gạch chân** → gạch nằm **dưới** chữ, cùng chiều · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-66, BI-25, BI-45) |
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`, `_bbox_is_size_fallback`, `_page_font_programs_exact`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa · **và** trên bản vẽ PDFsharp (khung tên) → số hiệu thay vào **cao bằng** `DAOL.` đứng cạnh, không thấp/bè (BI-25) |
 | "Khớp nguyên mã" (`code_boundary` của `_find_occurrences` / `/text-find(-bin)`) | `.venv\Scripts\python test_text_find.py` (C1–C7c) · mặc định **tắt** ⇒ Ctrl+H không đổi gì · trên bộ bản vẽ khách: `I1` + khớp nguyên mã = 25 chỗ (đủ 12 số hiệu `I1_BD-S-…`), **không** khớp `I10`/`I11`/`PI1`; "Đúng nguyên từ" chỉ ra 13 (coi `_` là chữ — cố ý giữ nguyên) |
+| `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
 | `wire.js` (`pdfJsonBody` / `binArrayJsonBody` / `pushB64Chunks` / `b64ToU8` / `B64_CHUNK`) hay bất kỳ chỗ gọi sidecar nào có PDF | `cd desktop ; npm run test:wire` (51 ca) · mở file **lớn** (≥100MB) rồi: Sửa nội dung · Nén · So sánh 2 file · Tách — không tab nào chết vì hết bộ nhớ · **Ảnh → PDF với ~50 ảnh máy ảnh**: tạo được file, PDF mở lại đúng số trang và đúng thứ tự (BI-24) |

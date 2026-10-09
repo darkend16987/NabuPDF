@@ -990,6 +990,63 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
   }
 });
 
+// ---- Tạo bản theo mẫu (renderer/batch-variants.js) ---------------------------
+//
+// One folder, then N new files in it — a save dialog per file would make "10 bản từ
+// một bản" ten dialogs. So the renderer picks a FOLDER once and hands over bare file
+// NAMES, and main joins them: a name is checked to be exactly a basename ending in
+// .pdf, so nothing the renderer composes can walk out of the chosen folder.
+//
+// NEVER overwrites by default: the write uses flag "wx" and an existing file comes back
+// as { exists: true } — the renderer asks the user and only then retries with
+// overwrite. Replacing a colleague's I2 set without a question is the failure this is
+// shaped against.
+
+const VARIANT_NAME_BAD = /[\\/:*?"<>|\x00-\x1f]/;
+
+// BI-85 like every other dialog: it starts somewhere remembered and remembers where it
+// ended. The folder of the open document wins when the renderer has one (the copies
+// almost always belong next to the original); otherwise the remembered SAVE folder —
+// picking where new files go is a save, so it shares that bucket.
+ipcMain.handle("dialog:choose-dir", async (e, { defaultPath } = {}) => {
+  const docDirOk =
+    typeof defaultPath === "string" && !!defaultPath && (await SafeFs.exists(defaultPath));
+  const res = await dialog.showOpenDialog(senderWindow(e), {
+    title: "Chọn thư mục lưu",
+    properties: ["openDirectory", "createDirectory"],
+    ...(docDirOk ? { defaultPath } : await openDefault("save-pdf")),
+  });
+  if (res.canceled || !res.filePaths || !res.filePaths.length) return null;
+  // rememberDir stores the PARENT of what it is given (it is fed file paths), so hand it
+  // a path INSIDE the chosen folder: the folder itself is what must be remembered.
+  rememberDir("save-pdf", path.join(res.filePaths[0], "_"));
+  return res.filePaths[0];
+});
+
+ipcMain.handle("file:write-new-pdf", async (_e, { dir, name, data, overwrite = false } = {}) => {
+  if (typeof dir !== "string" || !dir || !path.isAbsolute(dir)) {
+    return { saved: false, error: "Thư mục không hợp lệ" };
+  }
+  if (
+    typeof name !== "string" || !name || path.basename(name) !== name ||
+    VARIANT_NAME_BAD.test(name) || !/\.pdf$/i.test(name) || /^\.+$/.test(name.replace(/\.pdf$/i, ""))
+  ) {
+    return { saved: false, error: "Tên file không hợp lệ" };
+  }
+  const fp = path.join(dir, name);
+  try {
+    await fs.promises.writeFile(fp, asWritable(data), { flag: overwrite ? "w" : "wx" });
+  } catch (err) {
+    if (err && err.code === "EEXIST") return { saved: false, exists: true, path: fp };
+    return { saved: false, error: String((err && err.message) || err) };
+  }
+  // Same rule as file:write-pdf: a read-only pane showing this path must not keep
+  // showing the bytes it had before the write.
+  const found = Tabs.findDoc(_e && _e.sender);
+  if (found) found.tw.reloadPanesForPath(fp);
+  return { saved: true, path: fp };
+});
+
 // Generic save for non-PDF exports (xlsx/csv/json). `filters` is an array of
 // { name, extensions } passed straight to the native dialog.
 ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => {

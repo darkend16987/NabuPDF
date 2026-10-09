@@ -270,6 +270,12 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
   // Silent write to an existing path (Ctrl+S on an already-saved doc). { saved, path? }.
   writePdf: (path, data) => ipcRenderer.invoke("file:write-pdf", { path, data }),
+  // Tạo bản theo mẫu: pick a folder once (null if cancelled), then write NEW files
+  // into it by bare name. writeNewPdf never overwrites unless `overwrite` is true —
+  // an existing file returns { saved: false, exists: true, path }.
+  chooseDir: (defaultPath) => ipcRenderer.invoke("dialog:choose-dir", { defaultPath }),
+  writeNewPdf: (dir, name, data, overwrite) =>
+    ipcRenderer.invoke("file:write-new-pdf", { dir, name, data, overwrite: !!overwrite }),
   // List available printers (name + isDefault). Returns [] on failure.
   getPrinters: () => ipcRenderer.invoke("print:printers"),
   // Print the current window (its #print-root images) with the given options:

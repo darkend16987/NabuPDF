@@ -995,6 +995,29 @@ body.editing .note-marker, body.text-editing .note-marker { pointer-events: none
 .fr-actions { display: flex; align-items: center; gap: 6px; }
 .fr-actions .fr-gap { flex: 1; }
 .fr-note { margin: 2px 0 0; font-size: 11px; line-height: 1.45; color: var(--muted); }
+.fr-more { align-self: flex-start; font-size: 12px; }
+
+/* ---- Tạo bản theo mẫu (batch-variants.js) ---- */
+.bv-card { width: 620px; max-width: calc(100vw - 32px); }
+.bv-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.bv-opts #bv-scan { margin-left: auto; }
+.bv-status { margin: 0; font-size: 12px; line-height: 1.45; min-height: 16px; color: var(--muted); }
+.bv-status.warn { color: #f59e0b; }
+.bv-status.bad { color: #e5484d; }
+.bv-status.good { color: #30a46c; }
+/* The checklist of contexts. Capped and scrolled: a set with every page carrying its
+   own drawing number lists one row per sheet. */
+.bv-contexts { display: flex; flex-direction: column; gap: 2px; max-height: 210px; overflow: auto; }
+.bv-contexts:empty { display: none; }
+.bv-ctx { font-size: 12px; padding: 2px 4px; border-radius: 6px; }
+.bv-ctx:hover { background: var(--bg-3); }
+.bv-ctx.locked { opacity: 0.6; }
+.bv-ctx-text { font-family: ui-monospace, Consolas, monospace; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.bv-ctx-meta { margin-left: auto; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bv-card .fr-row input[type="text"] { flex: 1; min-width: 0; }
+.bv-names { margin: 0; padding-left: 18px; font-size: 12px; max-height: 120px; overflow: auto; }
+.bv-names:empty { display: none; }
+.bv-names li.bad { color: #e5484d; }
 
 .fr-layer { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
 .fr-hl {

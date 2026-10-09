@@ -646,6 +646,49 @@
         <button id="fr-replace-all" class="primary" disabled title="Thay mọi vị trí trong toàn bộ tài liệu">Thay tất cả</button>
       </div>
       <p class="fr-note">Chỉ dùng được với PDF có chữ thật (không phải bản scan). Từ khoá bị chia làm nhiều đoạn định dạng sẽ được tô nhưng không thay tự động.</p>
+      <!-- Door to "Tạo bản theo mẫu" (batch-variants.js). Lives here because it is Thay
+           tất cả run once per value into NEW files — the user reaches for it from this
+           panel. In GATED_BTNS (it writes through /edit-text) and gated again inside
+           canRun() for BI-26. -->
+      <button id="btn-batch-variants" class="fr-more" title="Từ file đang mở, tạo nhiều file mới — mỗi file đổi một mã (ví dụ I1 → I2, I3…)">Tạo bản theo mẫu…</button>
+    </div>
+
+    <!-- Tạo bản theo mẫu. A real .modal (unlike the F&R panel): nothing on the page has
+         to be read while it is up, and it owns a multi-step flow. Placed BEFORE
+         #confirm-modal on purpose — every .modal shares one z-index, so document order
+         decides, and the "Ghi đè?" question it asks must paint ON TOP of it. -->
+    <div class="modal" id="bv-modal" hidden>
+      <div class="modal-card bv-card">
+        <button type="button" class="modal-x" title="Đóng" aria-label="Đóng">✕</button>
+        <h3>Tạo bản theo mẫu</h3>
+        <p class="modal-note">Tạo các file mới từ file đang mở, mỗi file đổi một mã — ví dụ mặt bằng tháp I1 thành I2, I3, I4. File đang mở không bị sửa.</p>
+        <div class="modal-row">
+          <label>Mã cần đổi <input id="bv-token" type="text" placeholder="VD: I1" autocomplete="off" spellcheck="false" /></label>
+          <label>Đổi thành (mỗi giá trị một file) <input id="bv-values" type="text" placeholder="VD: I2, I3, I4 hoặc I2..I6" autocomplete="off" spellcheck="false" /></label>
+        </div>
+        <div class="bv-opts">
+          <label class="chk"><input type="checkbox" id="bv-code" checked /> Khớp nguyên mã (không khớp I1 trong I10, I1A)</label>
+          <label class="chk"><input type="checkbox" id="bv-case" checked /> Phân biệt hoa/thường</label>
+          <button id="bv-scan">Quét</button>
+        </div>
+        <!-- Live summary, rewritten after every scan / tick (BI-10 → SKIP_IDS). -->
+        <p class="bv-status" id="bv-status"></p>
+        <!-- One row per distinct context, built by batch-variants.js (BI-10 → SKIP_IDS). -->
+        <div class="bv-contexts" id="bv-contexts"></div>
+        <label>Lưu vào thư mục
+          <span class="fr-row">
+            <input type="text" id="bv-dir" readonly />
+            <button id="bv-pick">Chọn…</button>
+          </span>
+        </label>
+        <!-- Planned output names, rebuilt on every keystroke (BI-10 → SKIP_IDS). -->
+        <ul class="bv-names" id="bv-names"></ul>
+        <div class="modal-actions">
+          <button id="bv-open" hidden>Mở thư mục</button>
+          <button id="bv-close" data-modal-close>Đóng</button>
+          <button id="bv-run" class="primary" disabled>Tạo file</button>
+        </div>
+      </div>
     </div>
 
     <!-- Watermark dialog -->
@@ -1656,6 +1699,10 @@
          toast / uiConfirm / gateProFeature / rerenderChanged / renderPageCanvas, and wires
          its buttons at load time (§2, BI-14). -->
     <script src="find-replace.js"></script>
+    <!-- AFTER find-replace.js and app.js/wire.js: wires its buttons at load on the same
+         bare globals (state / sidecarFetch / pdfJsonBody / uiConfirm / gateProFeature),
+         and resolves window.FindReplace.pure at CALL time for the /edit-text payload. -->
+    <script src="batch-variants.js"></script>
     <script src="compare.js"></script>
     <script src="capture.js"></script>
     <!-- page-move.js: AFTER app.js (uses the bare globals state / $ / toast /

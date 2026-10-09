@@ -91,6 +91,54 @@
       "This PDF has no real text (it is a scan) — run \"OCR văn bản\" under Công cụ first.",
     "Thoát \"Chú thích\" trước khi dùng Tìm & Thay thế.": "Leave \"Chú thích\" before using Find & Replace.",
     "Thoát \"Sửa nội dung\" trước khi dùng Tìm & Thay thế.": "Leave \"Sửa nội dung\" before using Find & Replace.",
+    // --- Tạo bản theo mẫu (batch-variants.js) ---
+    "Tạo bản theo mẫu…": "Make copies from this one…",
+    "Từ file đang mở, tạo nhiều file mới — mỗi file đổi một mã (ví dụ I1 → I2, I3…)":
+      "From the open file, make several new files — each with one code changed (e.g. I1 → I2, I3…)",
+    "Tạo bản theo mẫu": "Make copies from this one",
+    "Tạo các file mới từ file đang mở, mỗi file đổi một mã — ví dụ mặt bằng tháp I1 thành I2, I3, I4. File đang mở không bị sửa.":
+      "Make new files from the open one, each with one code changed — e.g. tower I1's plan as I2, I3, I4. The open file is not modified.",
+    "Mã cần đổi": "Code to change",
+    "VD: I1": "e.g. I1",
+    "Đổi thành (mỗi giá trị một file)": "Change to (one file per value)",
+    "VD: I2, I3, I4 hoặc I2..I6": "e.g. I2, I3, I4 or I2..I6",
+    "Khớp nguyên mã (không khớp I1 trong I10, I1A)": "Whole code only (I1 does not match inside I10, I1A)",
+    "Quét": "Scan",
+    "Lưu vào thư mục": "Save to folder",
+    "Chọn…": "Choose…",
+    "Mở thư mục": "Open folder",
+    "Tạo file": "Create files",
+    "Thoát \"Chú thích\" trước khi tạo bản theo mẫu.": "Leave \"Chú thích\" before making copies.",
+    "Thoát \"Sửa nội dung\" trước khi tạo bản theo mẫu.": "Leave \"Sửa nội dung\" before making copies.",
+    "Nhập mã cần đổi (ví dụ I1).": "Enter the code to change (e.g. I1).",
+    "Đang quét…": "Scanning…",
+    "trang {p}": "page {p}",
+    "không thay được": "cannot be replaced",
+    "Không tìm thấy \"{t}\".": "\"{t}\" was not found.",
+    "{n} chỗ trên {p}/{N} trang — sẽ thay {s}.": "{n} matches on {p}/{N} pages — {s} will be replaced.",
+    "Trang không có mã: {list}.": "Pages without the code: {list}.",
+    "{k} chỗ bị chia định dạng sẽ GIỮ NGUYÊN trong mọi bản.":
+      "{k} matches split across formatting runs will stay UNCHANGED in every copy.",
+    "Quá nhiều kết quả — lượt quét dừng sớm, không tạo bản được. Hãy nhập mã cụ thể hơn.":
+      "Too many matches — the scan stopped early, so no copies can be made. Enter a more specific code.",
+    "Không hiểu: {v}": "Not understood: {v}",
+    "Đã có file \"{f}\" trong thư mục này. Ghi đè?": "\"{f}\" already exists in this folder. Overwrite it?",
+    "Ghi đè": "Overwrite",
+    "Bỏ qua file này": "Skip this file",
+    "không ghi được file": "the file could not be written",
+    "Tài liệu vừa thay đổi — bấm Quét lại.": "The document just changed — press Quét (Scan) again.",
+    "Tuỳ chọn vừa đổi — bấm Quét lại.": "The options just changed — press Quét (Scan) again.",
+    "Tài liệu quá lớn để thay tự động — dùng Nén trước.":
+      "This document is too large to replace in — shrink it with Nén (Compress) first.",
+    "Tạo {n} file mới, mỗi file thay {s} chỗ \"{t}\"? File đang mở không bị sửa.":
+      "Create {n} new files, each replacing {s} matches of \"{t}\"? The open file is not modified.",
+    "Đang tạo {i}/{n}: {f}": "Creating {i}/{n}: {f}",
+    "{f}: kiểm tra lại không khớp (mong {e}, đọc được {g}) — KHÔNG ghi":
+      "{f}: the re-check did not match (expected {e}, read {g}) — NOT written",
+    "Đã tạo {n}/{m} file.": "Created {n}/{m} files.",
+    "Bỏ qua: {list}": "Skipped: {list}",
+    "Nhập mã cần đổi rồi bấm Quét.": "Enter the code to change, then press Quét (Scan).",
+    "Bấm Quét để xem các chỗ sẽ thay.": "Press Quét (Scan) to see what will be replaced.",
     // --- Dịch PDF (AI) — the result toast, in three pieces so the two warning
     // clauses only appear when they apply. "Đè" is deliberate in the last one:
     // the user is about to hand this file to somebody and needs to know the
@@ -931,6 +979,10 @@
     "confirm-third",
     // Live "🔒 N trang đang ẩn", rewritten by updateStatusBar on every render (BI-10).
     "sb-vault",
+    // Tạo bản theo mẫu (batch-variants.js): the scan summary, the per-document context
+    // checklist, the planned file names and the chosen folder are all written at runtime
+    // (BI-10). The status line also carries the result ("Đã tạo 3/3 file.").
+    "bv-status", "bv-contexts", "bv-names", "bv-dir",
     // The Ẩn trang dialog's per-call subtitle ("3 trang sẽ được mã hoá…") and its
     // validation line ("Hai lần nhập không khớp"), both written per call (BI-10).
     "vault-sub", "vault-err",

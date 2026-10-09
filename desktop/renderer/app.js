@@ -4825,6 +4825,11 @@ const GATED_BTNS = [
   // same paid tier as "Sửa nội dung". Ctrl+H is a SECOND entry point with no button
   // to catch, so find-replace.js also calls gateProFeature() in canRun() — BI-26.
   "btn-find-replace",
+  // Tạo bản theo mẫu = Thay tất cả into N new files, through the same /edit-text. Its
+  // only door sits inside the (already gated) F&R panel, but a second entry point to a
+  // paid feature needs its own id here regardless (BI-9); batch-variants.js canRun()
+  // gates the function too (BI-26).
+  "btn-batch-variants",
 ];
 
 function licBlocked() {
