@@ -1,6 +1,6 @@
 # Nghiên cứu 2026-10-09 — (1) Hộp văn bản tự xuống dòng theo khung · (2) Tạo hàng loạt bản sao "đổi tên cấu kiện"
 
-Trạng thái: **NGHIÊN CỨU — chưa sửa dòng code nào.** Mọi số liệu dưới đây đo trên mã ở `44b2d89` (v0.2.77)
+Trạng thái: **ĐÃ LÀM (2026-10-09)** — xem §3. Bản nghiên cứu gốc giữ nguyên bên dưới. Mọi số liệu dưới đây đo trên mã ở `44b2d89` (v0.2.77)
 và trên file mẫu của khách `DAOL.I1.S-HS TKCS (PHAN THAP).pdf` (13 trang A1, `/Rotate 270`, PDFsharp 6.1.1).
 Script đo nằm ở scratchpad của phiên, không đưa vào repo.
 
@@ -140,3 +140,32 @@ từ" hiện coi `_` là chữ ⇒ `I1` trong `I1_BD` không phải nguyên từ
 
 Chưa làm A1/A2 mà ra C thì bộ bản vẽ sinh ra sẽ có số hiệu **khác cỡ chữ** so với phần còn lại của
 khung tên — không chấp nhận được cho hồ sơ giao.
+
+---
+
+## 3. Kết quả triển khai (2026-10-09)
+
+| Commit | Đợt | Nội dung | Kiểm chứng |
+|---|---|---|---|
+| `acbb57a` | A1 | BI-25: ca descriptor < 1 em (PDFsharp) — Sv từ advance trong chính font nhúng | cao chữ khung tên 18.25→18.25, bìa 45.75→45.88 |
+| `ef4bd51` | A2 | BI-102: ToUnicode gộp theo xref — hết U+00AD/U+00A0 | tìm lại "I2_BD-S" 0→12 |
+| `4508eeb` | B | `code_boundary` ("Khớp nguyên mã") cho /text-find | I1: 25 chỗ, không khớp I10/I11 |
+| `2464703` | C | BI-103: "Tạo bản theo mẫu" | E2E: 2/2 file I2/I3 đúng, file mở không đổi |
+| `0865050` | 1a | lõi `boxW` trong annot-text (ngắt dòng ở pt) | 153 ca annot-text |
+| `7338cf3` | 1b | BI-104: UI hộp chữ cố định bề rộng | E2E 8/8, PNG bake 7 dòng = màn hình |
+
+Quyết định đã chốt với người dùng: hộp cố định bề rộng **tự giãn chiều cao**; có thể có tháp I10+ ⇒ "Khớp
+nguyên mã" bật mặc định + danh sách ngữ cảnh có ô tích.
+
+### Để lại có chủ đích (việc sau, mỗi việc một đợt)
+1. **Nối mảnh chữ cùng hàng** (`DAOL.` + `I1_BD-S-…` là hai khối) để tìm được nguyên mã `DAOL.I1_BD-S`. Không làm
+   ở đợt này: đổi kết quả Ctrl+H hiện có (biên "Đúng nguyên từ" ở chỗ nối). Tính năng sinh bản không cần nó.
+2. `_page_font_buffers` gộp ArialMT với Arial-BoldMT vào khoá họ `arial` (bản thường thắng) — đường "dùng lại
+   font nhúng" có thể vẽ chữ đậm bằng font thường. A1 đã tránh bằng `_page_font_programs_exact`; chưa sửa gốc.
+3. `/translate` (api.py `translate_pdf`) nhúng font hệ thống cùng kiểu ⇒ có thể mang cùng lỗi lớp chữ BI-102.
+   Chưa đo.
+4. FreeText nhập từ Acrobat/Foxit vẫn chèn `
+` cứng (`wrapText`); có thể chuyển sang `boxW` để sửa lại vẫn
+   tự gói như ở Foxit.
+5. Sửa `*.py` ⇒ **phải build lại sidecar** trước khi đóng gói (`check-sidecar-fresh.js` sẽ chặn). Chưa build,
+   chưa phát hành.
