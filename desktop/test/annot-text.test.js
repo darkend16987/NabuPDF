@@ -611,6 +611,22 @@ check("B10b …and of a point box exactly what listDisplayText gives",
   check("B11c a fixed box writes its width", MC.serializeManaged(Object.assign({}, base, { boxW: 120 })).boxW, 120);
 }
 
+// B12 — source pins on editor.js, which the grid cannot run (DOM). Each one is a place
+// where an innocent-looking edit silently breaks fixed boxes.
+{
+  const ed = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "editor.js"), "utf8");
+  check("B12 the overlay shows a fixed box's WRAPPED lines (never the browser's wrapping)",
+    /st\.boxW > 0\s*\?\s*window\.AnnotText\.wrappedDisplayText\(a\.text, st, a\.fontSize\)/.test(ed), true);
+  check("B12b the drag-out runs BEFORE onMove drops a drag with no annot",
+    /if \(drag\.type === "textbox"\) \{[\s\S]{0,300}?return;\s*\}\s*const hit = findAnnot\(drag\.id\);/.test(ed), true);
+  check("B12c Esc during the drag-out keeps the field open (returns before renderLayer)",
+    /function cancelDrag\(\)[\s\S]{0,400}?d\.type === "textbox"[\s\S]{0,200}?return;/.test(ed), true);
+  check("B12d a resize grip moves the wrap width and re-measures the height",
+    /a\.kind === "text"\) \{[\s\S]{0,700}?a\.boxW = Math\.max\(MIN_BOX_W[\s\S]{0,200}?measureText\(a\.text, a\.fontSize, textStyle\(a\)\)/.test(ed), true);
+  check("B12e Esc on a grip drag puts the wrap width back too",
+    /d\.orig\.boxW != null\) a\.boxW = d\.orig\.boxW/.test(ed), true);
+}
+
 check("B10c a list item's continuation line is indented, its marker not repeated",
   wrappedDisplayText("aa bb cc", { boxW: 70, listType: "bullet" }, 10, flat()), "• aa bb\n   cc");
 

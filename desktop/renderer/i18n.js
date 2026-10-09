@@ -91,6 +91,10 @@
       "This PDF has no real text (it is a scan) — run \"OCR văn bản\" under Công cụ first.",
     "Thoát \"Chú thích\" trước khi dùng Tìm & Thay thế.": "Leave \"Chú thích\" before using Find & Replace.",
     "Thoát \"Sửa nội dung\" trước khi dùng Tìm & Thay thế.": "Leave \"Sửa nội dung\" before using Find & Replace.",
+    // --- Hộp chữ cố định bề rộng (editor.js Format panel) ---
+    "Tự xuống dòng theo khung": "Wrap text to the frame",
+    "Chữ xuống dòng theo bề rộng khung (kéo tay nắm để đổi bề rộng); chiều cao tự giãn. Cũng tạo được bằng cách kéo chuột khi đặt hộp chữ.":
+      "Text wraps to the frame width (drag a grip to change it); the height grows by itself. You can also drag out the box when placing it.",
     // --- Tạo bản theo mẫu (batch-variants.js) ---
     "Tạo bản theo mẫu…": "Make copies from this one…",
     "Từ file đang mở, tạo nhiều file mới — mỗi file đổi một mã (ví dụ I1 → I2, I3…)":

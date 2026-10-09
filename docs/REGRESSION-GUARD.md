@@ -2799,6 +2799,27 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** file sinh ra còn sót mã cũ / dính mã I10; file đang mở bị đổi hoặc Ctrl+Z có thêm bước; hộp
   "Ghi đè?" nằm dưới hộp thoại; Esc đóng hộp thoại khi đang ghi dở.
 
+### BI-104 · Hộp chữ cố định bề rộng (`boxW`): màn hình, ô gõ và file lưu **ngắt dòng ở cùng một chỗ**
+- `annot-text.js` (`normTextStyle.boxW`, `wrapItemsPt`, `wrapLine`, `wrappedDisplayText`), `editor.js`
+  (`openTextEditor` setBox/applyBox/ResizeObserver, drag `"textbox"`, nhánh resize `a.kind === "text"`,
+  `#fmt-wrap`), `managed-codec.js` + `editor-bake.js` (`boxW` trong /NabuData). Lưới: `npm run test:text`
+  (B1–B12, có chốt nguồn editor.js).
+- Bấm = hộp **thường** như cũ (ngắt chỉ ở Enter); **kéo** khi đặt = hộp cố định bề rộng; kéo tay nắm / kéo
+  giãn ô gõ / nút "Tự xuống dòng theo khung" đổi bề rộng; **chiều cao luôn tự giãn**. Hộp thường giờ có ô gõ
+  `wrap="off"` — ô gõ không còn giả vờ xuống dòng (đúng lời phàn nàn gốc).
+- ⚠️ Chỗ ngắt dòng quyết **một lần, ở pt** (`wrapItemsPt` đo ở `fpx/upp`): canvas ở 3× không rộng đúng 3× ⇒
+  ngắt theo tỉ lệ của lời gọi thì overlay (1×) và PNG bake (3×) lệch dòng ở chữ sát mép. Overlay hiển thị
+  **dòng đã ngắt** (`white-space: pre`), không bao giờ để trình duyệt tự gói (`pre-wrap` = thuật toán khác).
+- `boxW` nằm trong `normTextStyle` ⇒ mọi đường đo lại tự mang theo; ghi vào payload **chỉ khi > 0** ⇒ hộp cũ
+  byte-identical (BI-59). Tay nắm chỉ khi **không xoay** (tay nắm nằm trên phần tử đã xoay, kéo đọc ở hệ trang).
+- Ô gõ: `border-box` toàn cục ⇒ bề rộng = `boxW·scale` + padding/viền (đọc computed style; `applyTextCss` đặt
+  `paddingLeft` = thụt lề); ẩn thanh cuộn dọc (nó ăn bề rộng ⇒ ngắt sớm), tự giãn cao.
+- Đo E2E (app thật, CDP, chuột/phím thật): bấm → 1 dòng, không tay nắm; kéo 150pt → vùng chữ ô gõ đúng
+  150px, hộp 5 dòng; kéo tay nắm −50pt → 7 dòng, cao tự giãn; tắt nút → 1 dòng, Ctrl+Z → 7; kéo giãn ô gõ hộp
+  thường → thành hộp cố định 3 dòng; bake → PNG trong file **7 dòng đúng từng chữ**; mở lại → y hệt.
+- **Vỡ khi:** trên màn hình 7 dòng mà file lưu 6/8; hộp cũ mở ra bị ngắt dòng; kéo tay nắm hộp chữ làm chữ
+  méo/không đổi dòng; Esc lúc kéo tạo hộp làm mất ô gõ.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2869,6 +2890,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Chiều vẽ lại chữ (`_text_frame`, `theta`/`u_dir`/`n_dir`, `morph`, trường `dir` của `/text-spans`·`/text-find`·`TextEdit`, `ed.dir` ở `text-edit.js`, `dir` ở `editForSpan`) | BI-66 · `.venv\Scripts\python test_edit_text_rotate.py` · rồi **test tay trên bản vẽ `/Rotate 90` thật** (bộ hồ sơ thầu/CAD): **Sửa nội dung** một dòng đọc xuôi → chữ mới **đọc xuôi**, thẳng hàng với dòng bên cạnh · sửa một **nhãn kích thước dựng dọc** → vẫn **dựng dọc**, cùng chiều với nhãn kế bên · **Ctrl+H → Thay tất cả** → mọi chữ thay thế đúng chiều của chỗ nó thay · sửa một đoạn **rất ngắn** (2–3 ký tự) trên trang xoay → **không** bị nén lại · bật **gạch chân** → gạch nằm **dưới** chữ, cùng chiều · lặp lại trên trang **không** xoay để chắc không có gì dịch đi (BI-66, BI-25, BI-45) |
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`, `_bbox_is_size_fallback`, `_page_font_programs_exact`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa · **và** trên bản vẽ PDFsharp (khung tên) → số hiệu thay vào **cao bằng** `DAOL.` đứng cạnh, không thấp/bè (BI-25) |
 | "Khớp nguyên mã" (`code_boundary` của `_find_occurrences` / `/text-find(-bin)`) | `.venv\Scripts\python test_text_find.py` (C1–C7c) · mặc định **tắt** ⇒ Ctrl+H không đổi gì · trên bộ bản vẽ khách: `I1` + khớp nguyên mã = 25 chỗ (đủ 12 số hiệu `I1_BD-S-…`), **không** khớp `I10`/`I11`/`PI1`; "Đúng nguyên từ" chỉ ra 13 (coi `_` là chữ — cố ý giữ nguyên) |
+| Hộp chữ cố định bề rộng (`boxW`, `wrapItemsPt`, drag `"textbox"`, `#fmt-wrap`) | BI-104 · `npm run test:text` **và** `npm test -- rotate managed bake-split` · **test tay**: Chú thích → T → **bấm** → gõ dòng dài → vẫn 1 dòng (như cũ) · **kéo** khi đặt → gõ → xuống dòng theo khung · chọn hộp → kéo tay nắm → dòng đổi, cao tự giãn · Xong → mở lại file → **cùng** chỗ ngắt · mở file **cũ** có hộp chữ → **không** đổi gì · hộp xoay → không có tay nắm · tiếng Việt có dấu sát mép phải |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

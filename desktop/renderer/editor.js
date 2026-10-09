@@ -75,6 +75,12 @@
   // shape belongs to exactly one of the two halves, deliberately — it cannot inherit the
   // wrong one by falling through.
   const RESIZABLE_KINDS = new Set(["highlight", "redact", "image", "box", "ellipse", "check", "cross"]);
+  // A fixed-width TEXT box gets the same four grips, but they drive its WIDTH only —
+  // the height always follows the text (onMove's resize branch). Not in the set above
+  // because a point text box (boxW 0) must not get them: its size IS its text. And
+  // not while turned: the grips sit on the rotated element while the drag is read in
+  // page space, so they would pull the wrong way.
+  const isFixedTextBox = (a) => a.kind === "text" && normTextStyle(a).boxW > 0 && !normTextStyle(a).rot;
   const HANDLE_DIRS = ["nw", "ne", "sw", "se"];
   // Single-key tool shortcuts (edit mode only). Letters mirror the tool tooltips.
   // `x` was already redact, so the ✗ symbol takes `j` — j/k are neighbours on the
@@ -1193,7 +1199,13 @@
       el.style.fontSize = a.fontSize * s + "px";
       el.style.color = a.color;
       applyTextCss(el, st, s); // font/weight/style/align/spacing/indent/opacity/decoration
-      el.textContent = listDisplayText(a.text, st); // markers are display-only
+      // Markers are display-only. A fixed-width box shows its WRAPPED lines — the same
+      // breaks renderTextPng draws (annot-text.js wrappedDisplayText), never the
+      // browser's own wrapping (BI-40). Through window.AnnotText, not a new bare name
+      // (BI-14); a point box gets listDisplayText exactly as before.
+      el.textContent = st.boxW > 0
+        ? window.AnnotText.wrappedDisplayText(a.text, st, a.fontSize)
+        : listDisplayText(a.text, st);
       // Horizontal character scale — approximate preview (baked PNG is exact).
       if (st.charScale !== 1) {
         el.style.width = (a.w * s) / st.charScale + "px";
@@ -1315,7 +1327,7 @@
     // The BOX half of "which shapes get grips". Every point-list kind (draw / cloudpen /
     // poly) returns before this line and calls `addPtsGrips` itself, because each builds
     // its own element box — see the note on RESIZABLE_KINDS for the two halves.
-    if (gripsFor(a.id) && RESIZABLE_KINDS.has(a.kind)) {
+    if (gripsFor(a.id) && (RESIZABLE_KINDS.has(a.kind) || isFixedTextBox(a))) {
       for (const dir of HANDLE_DIRS) {
         const h = document.createElement("div");
         h.className = "handle h-" + dir;
@@ -2040,7 +2052,7 @@
         dir: e.target.dataset.dir || "se", // "se" = the single-grip behaviour this replaced
         orig: isPtsKind(a.kind)
           ? { pts: (a.pts || []).map((q) => ({ ...q })), box: annotBounds(a) }
-          : { x: a.x, y: a.y, w: a.w, h: a.h },
+          : { x: a.x, y: a.y, w: a.w, h: a.h, boxW: a.boxW },
         pushed: false,
       };
       e.preventDefault();
@@ -2113,6 +2125,12 @@
         openTextEditor(layer, i, { x: a.x, y: a.y }, a);
       } else {
         openTextEditor(layer, i, p, null);
+        // The field is ALREADY open (a click behaves exactly as it always has). If the
+        // button stays down and the pointer travels, that travel is the width of a
+        // fixed-width box — Illustrator's / Foxit's "drag out a text frame". No annot
+        // exists yet, so this drag carries no id; onMove/onUp/cancelDrag handle it
+        // before anything that looks one up.
+        drag = { type: "textbox", page: i, layer, sx: p.x, sy: p.y };
       }
       return;
     }
@@ -2274,6 +2292,13 @@
     }
     if (!drag) return;
     const p = layerPoint(drag.layer, e);
+    // Dragging out a new fixed-width box: there is no annot yet (see onDown), so this
+    // must run before the lookup below, which drops a drag with no annot.
+    if (drag.type === "textbox") {
+      const w = Math.abs(p.x - drag.sx);
+      if (ed._taSetBox) ed._taSetBox(Math.min(drag.sx, p.x), w >= MIN_BOX_W ? w : 0);
+      return;
+    }
     const hit = findAnnot(drag.id);
     if (!hit) {
       drag = null;
@@ -2344,6 +2369,20 @@
         // compounding its own rounding — the rule the box branch below follows too.
         const g = resizeRect(drag.dir, drag.orig.box, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
         a.pts = scalePts(drag.orig.pts, drag.orig.box, g);
+      } else if (a.kind === "text") {
+        // Fixed-width text box: the grips set the WRAP WIDTH, the text decides the
+        // height (never a limit — "tự giãn chiều cao"). From `orig` every move, like
+        // the box branch, so a long drag cannot compound its own rounding. `pad` is
+        // measureText's padding: a.w is the wrap width plus a pad on each side.
+        const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, 0, false, 4);
+        const pad = a.fontSize * 0.15;
+        a.boxW = Math.max(MIN_BOX_W, g.w - 2 * pad);
+        const m = measureText(a.text, a.fontSize, textStyle(a));
+        a.w = m.w;
+        a.h = m.h;
+        // A west grip keeps the RIGHT edge where it was; every other grip the left.
+        a.x = drag.dir.indexOf("w") >= 0 ? drag.orig.x + drag.orig.w - a.w : drag.orig.x;
+        a.y = drag.orig.y;
       } else {
         const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
         a.x = g.x;
@@ -2450,6 +2489,12 @@
   function onUp() {
     captureTextHighlight();
     if (!drag) return;
+    // The new box's field stays open for typing; the drag only set its width.
+    if (drag.type === "textbox") {
+      drag = null;
+      if (ed._taFocus) ed._taFocus();
+      return;
+    }
     // A freehand cloud drag ends by closing the loop; a click (no drag) instead
     // arms polygon mode so further clicks add vertices.
     if (PEN_TOOLS.has(drag.type)) {
@@ -2593,6 +2638,13 @@
     if (!drag) return;
     const d = drag;
     drag = null;
+    // Nothing was created: back to a plain (point) field, which stays open. Returning
+    // before renderLayer below matters — re-rendering the layer would destroy the
+    // open field, and with it the user's chance to just type.
+    if (d.type === "textbox") {
+      if (ed._taSetBox) ed._taSetBox(d.sx, 0);
+      return;
+    }
     const hit = findAnnot(d.id);
     if (hit) {
       const a = hit.a;
@@ -2616,6 +2668,8 @@
           a.y = d.orig.y;
           a.w = d.orig.w;
           a.h = d.orig.h;
+          // A fixed-width text box's wrap width moved with the grip (onMove).
+          if (a.kind === "text" && d.orig.boxW != null) a.boxW = d.orig.boxW;
         }
       } else if (d.type === "vertex") {
         // The WHOLE point list goes back, not just the dragged vertex — same reason the
@@ -2666,6 +2720,9 @@
   // alone would stay small at 300%.
   const TA_ROWS = 3;
   const TA_COLS = 26;
+  // Narrowest fixed-width box, in pt. Below this a drag is read as a CLICK (point box),
+  // so a hand that wobbles while clicking does not make a 2 pt column of letters.
+  const MIN_BOX_W = 24;
 
   function openTextEditor(layer, i, p, existing) {
     const ta = document.createElement("textarea");
@@ -2679,8 +2736,12 @@
     ta.rows = TA_ROWS;
     ta.cols = TA_COLS;
     const st = existing ? normTextStyle(existing) : edTextStyle(); // for the rot block below
-    ta.style.left = p.x * state.scale + "px";
-    ta.style.top = p.y * state.scale + "px";
+    // Where the box will be placed. Mutable: dragging out a NEW fixed-width box to the
+    // left moves its left edge (see setBox / the "textbox" drag in onDown).
+    let px = p.x;
+    const py = p.y;
+    ta.style.left = px * state.scale + "px";
+    ta.style.top = py * state.scale + "px";
     // Every visual the palette can change, in ONE place, RE-READ from its source on each
     // call. Called at open and again from the palette listener (via ed._taPreview), so a
     // style tweak mid-typing shows up in the field instead of being a promise about a box
@@ -2702,6 +2763,83 @@
     paint();
     ta.value = existing ? existing.text : "";
     layer.appendChild(ta);
+
+    // ---- fixed-width box ("hộp cố định bề rộng") --------------------------
+    //
+    // The user's complaint was that this field LIED: it wrapped while typing, the
+    // committed box was one long line, and dragging the field's corner changed nothing.
+    // Now the field shows what the box will be:
+    //   · point box (boxW 0) — the field does NOT wrap (wrap="off"): one line typed is
+    //     one line on the page, as the result has always been;
+    //   · fixed-width box (boxW > 0) — the field is exactly boxW wide and wraps there,
+    //     and grows DOWN as lines are added (height is never a limit — chosen with the
+    //     user: "tự giãn chiều cao");
+    //   · dragging the field WIDER or NARROWER (its resize corner) turns a point box
+    //     into a fixed-width one at that width — "co kéo khung thì chữ xuống dòng theo
+    //     khung" is the request, word for word.
+    // The field's wrapping is the browser's, the box's is wrapLine's; they agree on the
+    // rule (break after a space or a hyphen) and the committed box always shows
+    // wrapLine's breaks, which are the ones the bake draws (BI-40).
+    let boxW = existing ? st.boxW : 0;
+    const taFrame = () => {
+      const cs = getComputedStyle(ta);
+      return parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) +
+        parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    };
+    let ownW = null; // the width WE last gave the field, so the observer can tell ours from the user's
+    const growDown = () => {
+      if (!(boxW > 0)) return;
+      ta.style.height = "auto";
+      ta.style.height = ta.scrollHeight + 2 + "px";
+    };
+    const applyBox = () => {
+      if (boxW > 0) {
+        ta.wrap = "soft";
+        ta.style.minWidth = "0";
+        ta.style.overflowY = "hidden"; // a scrollbar would steal width and wrap early
+        ta.style.resize = "horizontal";
+        // border-box (app.css `*`): the CONTENT must be boxW wide, so add the frame.
+        ownW = boxW * state.scale + taFrame();
+        ta.style.width = ownW + "px";
+        growDown();
+      } else {
+        ta.wrap = "off";
+        ta.style.minWidth = "";
+        ta.style.overflowY = "";
+        ta.style.resize = "";
+        ta.style.width = "";
+        ta.style.height = "";
+        ownW = null;
+      }
+    };
+    applyBox();
+    ta.addEventListener("input", growDown);
+    // Drag-to-create (onDown's "textbox" drag) and the Format panel call this.
+    const setBox = (leftX, w) => {
+      boxW = w > 0 ? Math.max(MIN_BOX_W, w) : 0;
+      if (leftX != null && !existing) {
+        px = leftX;
+        ta.style.left = px * state.scale + "px";
+      }
+      applyBox();
+    };
+    let baseW = null;
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (!ta.isConnected) return ro.disconnect();
+      const w = ta.offsetWidth;
+      if (baseW == null) {
+        baseW = w;
+        return;
+      }
+      if (ownW != null && Math.abs(w - ownW) <= 1) return; // our own write
+      if (Math.abs(w - baseW) <= 1) return; // only the height moved
+      // The user dragged the field's width: that width is the box.
+      baseW = w;
+      const contentW = (ta.clientWidth - (parseFloat(getComputedStyle(ta).paddingLeft) +
+        parseFloat(getComputedStyle(ta).paddingRight))) / state.scale;
+      if (contentW > 0) setBox(null, contentW);
+    }) : null;
+    if (ro) ro.observe(ta);
     // Retyping a TURNED box types at the same angle, so the words never jump between
     // editing and not editing. The pivot is the ANNOT's visual centre, not the
     // textarea's: the textarea is a fixed TA_ROWS x TA_COLS slab that has nothing to
@@ -2728,6 +2866,7 @@
       if (done) return;
       done = true;
       clearTaHooks();
+      if (ro) ro.disconnect();
       const text = ta.value.replace(/\s+$/, "");
       ta.remove();
       if (existing) {
@@ -2744,9 +2883,13 @@
           if (ed.sel === existing.id) ed.sel = null;
           ed.selMore.delete(existing.id);
           if (ed.tool === "select") syncCtlVisibility("select");
-        } else if (text !== existing.text) {
+        } else if (text !== existing.text || boxW !== st.boxW) {
           pushEdUndo();
           existing.text = text;
+          // The key is left OFF a point box rather than set to 0 — the payload and
+          // every renderer read an absent key as "point box" (BI-59 byte identity).
+          if (boxW > 0) existing.boxW = boxW;
+          else delete existing.boxW;
           const m = measureText(text, existing.fontSize, textStyle(existing));
           existing.w = m.w;
           existing.h = m.h;
@@ -2754,12 +2897,13 @@
       } else if (text) {
         pushEdUndo();
         const stNew = edTextStyle();
+        if (boxW > 0) stNew.boxW = boxW;
         const m = measureText(text, ed.fontSize, stNew);
         annotsFor(i).push({
           id: ed.seq++,
           kind: "text",
-          x: p.x,
-          y: p.y,
+          x: px,
+          y: py,
           w: m.w,
           h: m.h,
           text,
@@ -2782,6 +2926,9 @@
     // moment it becomes verifiable.
     ed._taPreview = paint;
     ed._taFocus = () => ta.focus();
+    // Width hook for the "textbox" drag in onDown: dragging out the field right after
+    // the click that opened it turns it into a fixed-width box (leftX, width in pt).
+    ed._taSetBox = setBox;
     // Focus moving into the palette must NOT commit — see PALETTE_KEEP_SEL. `relatedTarget`
     // is the element gaining focus; it is null for a click on the page background or on
     // anything unfocusable, which is exactly the "clicked away, I'm done" case that still
@@ -2810,6 +2957,7 @@
     ed._taAnnot = null;
     ed._taPreview = null;
     ed._taFocus = null;
+    ed._taSetBox = null;
   }
 
   // ---- note editor (comment anchored to a point) ---------------------------
@@ -4106,6 +4254,11 @@
     $("fmt-bullet").classList.toggle("active", s.listType === "bullet");
     $("fmt-number").classList.toggle("active", s.listType === "number");
     if ($("fmt-strike") !== active) $("fmt-strike").checked = s.strike;
+    const wrapC = $("fmt-wrap");
+    if (wrapC) {
+      wrapC.disabled = !(hit && hit.a.kind === "text");
+      if (wrapC !== active) wrapC.checked = !wrapC.disabled && s.boxW > 0;
+    }
     setVal("fmt-linehl", s.lineHeight);
     setVal("fmt-para", s.paraSpacing);
     setVal("fmt-letter", s.letterSpacing);
@@ -4157,6 +4310,34 @@
   {
     const c = $("fmt-strike");
     if (c) c.addEventListener("change", () => applyTextFmt("strike", c.checked, { undoKey: "strike" }));
+  }
+  // Tự xuống dòng theo khung. Turning it ON starts the box at the width its text has
+  // NOW, so nothing moves until a grip is dragged; OFF goes back to a point box (one
+  // line per paragraph, width = longest line). Not applyTextFmt: it is a property of
+  // the selected box, not a palette default for new ones (a new fixed box is made by
+  // dragging it out).
+  {
+    const c = $("fmt-wrap");
+    if (c) c.addEventListener("change", () => {
+      const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+      if (!hit || hit.a.kind !== "text") {
+        c.checked = false;
+        return;
+      }
+      const a = hit.a;
+      pushEdUndo("wrap:" + ed.sel);
+      if (c.checked) {
+        const natural = measureText(a.text, a.fontSize, Object.assign({}, textStyle(a), { boxW: 0 }));
+        a.boxW = Math.max(MIN_BOX_W, natural.w - 2 * a.fontSize * 0.15);
+      } else {
+        delete a.boxW;
+      }
+      const m = measureText(a.text, a.fontSize, textStyle(a));
+      a.w = m.w;
+      a.h = m.h;
+      syncOverlays();
+      syncFmtPanel();
+    });
   }
   // Numeric spacing / scale / opacity (live via 'input', coalesced undo per field)
   $("fmt-linehl").addEventListener("input", (e) =>
