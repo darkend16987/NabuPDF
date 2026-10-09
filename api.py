@@ -1874,6 +1874,7 @@ class TextFindRequest(BaseModel):
     query: str
     match_case: bool = False
     whole_word: bool = False
+    code_boundary: bool = False  # "Khớp nguyên mã" — see _find_occurrences
     max_hits: int = 5000  # safety valve; a runaway query shouldn't build a 500 MB JSON
 
 
@@ -1915,7 +1916,7 @@ def _is_word_char(ch: str) -> bool:
 
 
 def _find_occurrences(
-    hay: str, needle: str, match_case: bool, whole_word: bool
+    hay: str, needle: str, match_case: bool, whole_word: bool, *, code_boundary: bool = False
 ) -> list[tuple[int, int]]:
     """Non-overlapping occurrences of `needle` in `hay` as (start, end) half-open.
 
@@ -1925,6 +1926,14 @@ def _find_occurrences(
     characters, and one of those anywhere in the span would slide every offset after
     it — silently splicing the replacement into the wrong place in the user's
     document. So: verify the length is unchanged, else fall back to exact matching.
+
+    `code_boundary` ("Khớp nguyên mã") is the rule a DRAWING CODE needs and whole-word
+    is not: a match may not continue a letter or digit run on either side, but `_`,
+    `.`, `-` and spaces ARE boundaries. Whole-word counts `_` as a letter, so "I1" in
+    "I1_BD-S-5.001" was not a whole word — and without either option "I1" matched
+    inside "I10", "I11", "PI1". Each side is only checked when the needle itself
+    starts/ends with a letter or digit there: "-I1" asks nothing about what precedes
+    its hyphen.
     """
     if not needle:
         return []
@@ -1946,6 +1955,12 @@ def _find_occurrences(
         if whole_word:
             before_ok = j == 0 or not _is_word_char(h[j - 1])
             after_ok = k >= len(h) or not _is_word_char(h[k])
+            if not (before_ok and after_ok):
+                i = j + 1
+                continue
+        if code_boundary:
+            before_ok = j == 0 or not (n[0].isalnum() and h[j - 1].isalnum())
+            after_ok = k >= len(h) or not (n[-1].isalnum() and h[k].isalnum())
             if not (before_ok and after_ok):
                 i = j + 1
                 continue
@@ -2086,7 +2101,8 @@ def _find_index_for(pdf_bytes: bytes) -> tuple[list, bool]:
 
 
 def _find_scan_index(
-    pages: list, query: str, match_case: bool, whole_word: bool, max_hits: int
+    pages: list, query: str, match_case: bool, whole_word: bool, max_hits: int,
+    *, code_boundary: bool = False,
 ) -> tuple[list, int, int]:
     """Match `query` against a built index. Returns (hits, crossing, truncated_page).
 
@@ -2115,7 +2131,9 @@ def _find_scan_index(
         for joined, offsets, parts, span_base in lines:
             if truncated_page:
                 break
-            for s, e in _find_occurrences(joined, query, match_case, whole_word):
+            for s, e in _find_occurrences(
+                joined, query, match_case, whole_word, code_boundary=code_boundary
+            ):
                 if len(hits) >= max_hits:
                     truncated_page = pno + 1
                     break
@@ -2200,7 +2218,8 @@ def _find_scan_index(
 
 
 def _text_find_core(
-    pdf_bytes: bytes, query: str, match_case: bool, whole_word: bool, max_hits: int
+    pdf_bytes: bytes, query: str, match_case: bool, whole_word: bool, max_hits: int,
+    *, code_boundary: bool = False,
 ) -> TextFindResponse:
     """Shared body of /text-find and /text-find-bin — the two differ only in how the
     document arrives, so neither can drift away from the other's results."""
@@ -2215,7 +2234,8 @@ def _text_find_core(
     try:
         pages, cached = _find_index_for(pdf_bytes)
         hits, crossing, truncated_page = _find_scan_index(
-            pages, query, match_case, whole_word, max(1, max_hits)
+            pages, query, match_case, whole_word, max(1, max_hits),
+            code_boundary=code_boundary,
         )
     except HTTPException:
         raise
@@ -2254,7 +2274,10 @@ async def text_find(req: TextFindRequest):
         pdf_bytes = base64.b64decode(req.pdf_b64)
     except Exception:
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
-    return _text_find_core(pdf_bytes, req.query, req.match_case, req.whole_word, req.max_hits)
+    return _text_find_core(
+        pdf_bytes, req.query, req.match_case, req.whole_word, req.max_hits,
+        code_boundary=req.code_boundary,
+    )
 
 
 @app.post("/text-find-bin", response_model=TextFindResponse)
@@ -2264,6 +2287,7 @@ async def text_find_bin(
     match_case: bool = False,
     whole_word: bool = False,
     max_hits: int = 5000,
+    code_boundary: bool = False,
 ):
     """The same search, with the document carried as RAW BYTES in the request body.
 
@@ -2286,7 +2310,9 @@ async def text_find_bin(
         raise HTTPException(
             status_code=400, detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB)."
         )
-    return _text_find_core(pdf_bytes, query, match_case, whole_word, max_hits)
+    return _text_find_core(
+        pdf_bytes, query, match_case, whole_word, max_hits, code_boundary=code_boundary
+    )
 
 
 class OcrSpanRequest(BaseModel):

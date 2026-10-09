@@ -363,5 +363,49 @@ d.close()
 check("R11 an empty page yields an empty index", (len(pages_idx), total), (1, 0))
 
 
+# ---- C1..C6: "Khớp nguyên mã" (code_boundary) --------------------------------
+# The drawing-code rule. Measured on the customer's set: whole-word could not find
+# "I1" in "I1_BD-S-5.001" (it counts `_` as a letter), and plain search would also
+# rewrite I10 / I11 / PI1 the day a project has them.
+
+
+def cscan(text, query, match_case=True):
+    hits, _, _ = _find_scan_index([page([part(text)])], query, match_case, False, 5000, code_boundary=True)
+    return [(h.start, h.end) for h in hits]
+
+
+check("C1 code after `_` / `.` / `-` / space is a boundary",
+      [cscan(t, "I1") for t in ("I1_BD-S-5.001", "DAOL.I1", "A-I1-B", "THÁP I1")],
+      [[(0, 2)], [(5, 7)], [(2, 4)], [(5, 7)]])
+check("C2 a digit or letter run continuing is NOT a match",
+      [cscan(t, "I1") for t in ("I10", "I11_BD", "PI1", "I1A", "ĐI1")],
+      [[], [], [], [], []])
+check("C3 I1 among I10 / I11 on one line: only the real one",
+      cscan("I10 I1 I11 I1_X", "I1"), [(4, 6), (11, 13)])
+check("C4 a needle that STARTS with a separator does not check before it",
+      cscan("A-I1", "-I1"), [(1, 4)])
+check("C5 case-insensitive still applies the boundary",
+      cscan("i10 i1", "I1", match_case=False), [(4, 6)])
+# C6 — off by default: every existing caller (Tìm & Thay thế, the test grid above)
+# gets exactly what it got before this option existed.
+hits, _, _ = scan([page([part("I10 I1")])], "I1")
+check("C6 without the option plain search still matches inside I10", len(hits), 2)
+# C7 — through BOTH endpoints, so the flag really reaches the matcher from the wire.
+def codes_pdf() -> bytes:
+    doc = fitz.open()
+    doc.new_page(width=400, height=200).insert_text((40, 60), "I10 I1_BD-S-5.001 I11", fontsize=11)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+res = find(codes_pdf(), "I1", code_boundary=True, match_case=True)
+check("C7 /text-find honours code_boundary",
+      [h.span_text[h.start:h.end + 3] for h in res.hits], ["I1_BD"])
+check("C7b …and without it still finds all three", len(find(codes_pdf(), "I1", match_case=True).hits), 3)
+res = asyncio.run(text_find_bin(FakeRequest(codes_pdf()), query="I1", match_case=True, code_boundary=True))
+check("C7c /text-find-bin honours code_boundary", len(res.hits), 1)
+
+
 print(f"\ntext-find: {PASS} pass, {FAIL} fail")
 raise SystemExit(1 if FAIL else 0)
