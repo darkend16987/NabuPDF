@@ -65,7 +65,9 @@ from src.pdf.fonts import (
     _list_local_font_families,
     _norm_fam,
     _page_font_buffers,
+    _page_font_programs_exact,
     _resolve_local_font,
+    _font_program_key,
     _vietnamese_font,
 )
 from src.pdf.legacy_text import (
@@ -2410,6 +2412,39 @@ def _view_offset_to_page(page, offset) -> tuple[float, float]:
     return p1.x - p0.x, p1.y - p0.y
 
 
+# ---- BI-25, the descriptor-fallback case ------------------------------------
+#
+# PyMuPDF builds a span's box from the font DESCRIPTOR's /Ascent − /Descent, and when
+# that sum is below 1 em it gives up on it: the box is then exactly `size` thick —
+# and `size` is the GEOMETRIC MEAN √(Sv·Sh) of the text matrix (see the BI-25 note in
+# docs/REGRESSION-GUARD.md). Measured, PyMuPDF 1.27.2, Arial Bold drawn at Sv 19.8 /
+# width factor 0.8, the descriptor swept from 0.900 to 1.300 em:
+#     sum < 1.000  →  thick == size (17.710) whatever Sv and the squeeze are
+#     sum ≥ 1.000  →  thick == Sv × sum      (the case the height rule was built on)
+# The switch is exactly at 1.000 (850/−149 vs 850/−151). PDFsharp writes
+# 728/−210 = 0.938 for Arial, so every CAD sheet it exports lands in the first row:
+# the box carries NO vertical information, and dividing it by the substitute's line
+# box (1.117 for Arial) drew the replacement 10.5 % short on the customer's set.
+#
+# The way out is the one quantity that does survive: the run's ADVANCE. Measured in
+# the run's own embedded program it gives Sh exactly, and Sv = size² / Sh.
+_SIZE_FALLBACK_TOL = 0.005
+
+
+def _bbox_is_size_fallback(e: "TextEdit") -> bool:
+    """True when this span's box is PyMuPDF's `size`-thick fallback box (above) —
+    i.e. its thickness across the line equals orig_size. Off-axis runs have no
+    separable thickness and never qualify (same rule as the BI-66 frame)."""
+    if not e.orig_size or e.orig_size <= 0 or not e.orig_text or len(e.bbox) != 4:
+        return False
+    _theta, _u, _n, quad = _text_frame(e.dir)
+    if quad is None:
+        return False
+    x0, y0, x1, y1 = e.bbox
+    thick = (y1 - y0) if quad % 2 == 0 else (x1 - x0)
+    return abs(thick / float(e.orig_size) - 1.0) <= _SIZE_FALLBACK_TOL
+
+
 class EditTextRequest(BaseModel):
     pdf_b64: str
     edits: list[TextEdit]
@@ -2467,6 +2502,12 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
             #    buffers are the only way to keep a face that isn't installed on
             #    this machine (see embed_page_font below).
             page_font_buffers = _page_font_buffers(doc, page)
+            # The exact programs too (not by family — see _page_font_programs_exact),
+            # for measuring an original run's advances in the BI-25 descriptor-fallback
+            # case below. Only the fonts this page's edits actually name.
+            page_font_exact = _page_font_programs_exact(
+                doc, page, {e.font for e in edits if _bbox_is_size_fallback(e)}
+            )
             # 1. Physically remove the old glyphs under each box — and NOTHING else.
             #    The box is the text's own bbox, so everything it overlaps (a shaded
             #    table cell, the rule under a heading, a scanned letterhead) was
@@ -2704,7 +2745,45 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                 #    the original's line box in em. Applied as a RATIO, so an explicit
                 #    size the user typed is corrected the same way and stays consistent
                 #    with the text around it.
-                if fobj and e.orig_size and e.orig_size > 0 and thick is not None:
+                #
+                #    EXCEPT when the box is PyMuPDF's size-thick fallback (see
+                #    _bbox_is_size_fallback): then bbox_h / orig_size is 1.000 by
+                #    construction, says nothing about the original, and the rule
+                #    below would shrink EVERY such run by the substitute's line box.
+                #    There the true vertical size comes from the advance instead,
+                #    measured in the run's own embedded program — exact, because it
+                #    is the same program the document laid the run out with. With no
+                #    such program the old rule still runs: unchanged behaviour.
+                v_done = False
+                if (fobj and adv is not None and adv > 1 and _bbox_is_size_fallback(e)):
+                    prog = page_font_exact.get(_font_program_key(fam_raw))
+                    if prog and _font_covers(e.orig_text, fontbuffer=prog):
+                        try:
+                            pobj = _font_object(fontbuffer=prog)
+                            nat1 = pobj.text_length(e.orig_text, fontsize=1.0)
+                            if nat1 > 0:
+                                sh = adv / nat1  # horizontal size the run was drawn at
+                                sv = float(e.orig_size) ** 2 / sh  # size = √(Sv·Sh)
+                                r = sv / float(e.orig_size)
+                                # Same credibility clamp as the width rule below.
+                                if 0.5 <= r <= 2.0:
+                                    # Then the usual line-box match, but between the
+                                    # two PROGRAMS (the descriptor is what lied):
+                                    # 1.0 when the substitute is the same face.
+                                    d = 1.0
+                                    sub_em = fobj.ascender - fobj.descender
+                                    org_em = pobj.ascender - pobj.descender
+                                    if sub_em > 0.1 and org_em > 0.1:
+                                        d = org_em / sub_em
+                                        if not (0.6 <= d <= 1.6) or abs(d - 1.0) <= 0.02:
+                                            d = 1.0
+                                    size *= r * d
+                                    v_done = True
+                        except Exception as ve:
+                            logger.debug("fallback vscale probe failed: %s", ve)
+
+                if (not v_done and fobj and e.orig_size and e.orig_size > 0
+                        and thick is not None):
                     try:
                         line_em = fobj.ascender - fobj.descender
                         if line_em > 0.1:

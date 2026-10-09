@@ -220,6 +220,92 @@ def test_substituted_face_keeps_the_original_glyph_height():
     assert 0.94 <= h1 / h0 <= 1.06, f"substituted face drew {h1 / h0:.3f}x the height"
 
 
+# ---- the descriptor-fallback case (CAD sheets exported by PDFsharp) -----------
+#
+# PyMuPDF builds the span box from the descriptor's /Ascent − /Descent and, when that
+# sum is below 1 em, falls back to a box exactly `size` thick — `size` being the
+# geometric mean √(Sv·Sh). PDFsharp writes 728/−210 = 0.938 for Arial. The height rule
+# then read "line box 1.000 em" for every run and shrank the redraw by the
+# substitute's line box: measured 10.5 % short on the customer's drawing set (title
+# block numbers) and 20 % short on its cover.
+
+PDFSHARP_ASC, PDFSHARP_DESC = 728, -210
+
+
+def _src_pdfsharp(sv: float, squeeze: float, text: str = TEXT) -> str:
+    """`text` drawn at vertical size `sv`, condensed to `squeeze`, with the font
+    descriptor rewritten the way PDFsharp writes it (sum < 1 em)."""
+    doc = fitz.open()
+    try:
+        page = doc.new_page()
+        page.insert_font(fontname="F0", fontfile=_font())
+        morph = (fitz.Point(*ORIGIN), fitz.Matrix(squeeze, 0, 0, 1, 0, 0)) if squeeze != 1.0 else None
+        page.insert_text(ORIGIN, text, fontname="F0", fontsize=sv, morph=morph)
+        for xref in range(1, doc.xref_length()):
+            if doc.xref_get_key(xref, "Type")[1] == "/FontDescriptor":
+                doc.xref_set_key(xref, "Ascent", str(PDFSHARP_ASC))
+                doc.xref_set_key(xref, "Descent", str(PDFSHARP_DESC))
+        return base64.b64encode(doc.tobytes(deflate=True, garbage=3)).decode()
+    finally:
+        doc.close()
+
+
+def _assert_in_fallback_regime(src: str):
+    """Guards the guard: the fixture must really produce PyMuPDF's size-thick box,
+    or the tests below would pass through the ordinary height rule and prove nothing."""
+    t = _span0(src)
+    thick = t.bbox[3] - t.bbox[1]
+    assert abs(thick / t.size - 1.0) < 0.002, (
+        f"fixture box is {thick / t.size:.3f} em thick, not the 1.000 fallback — "
+        "PyMuPDF changed how it reads the descriptor; re-measure before trusting these tests"
+    )
+
+
+def test_pdfsharp_condensed_run_keeps_its_height_and_width():
+    """The reported bug: a CAD width-factor-0.8 run, redrawn with its own text."""
+    src = _src_pdfsharp(20.0, 0.8)
+    _assert_in_fallback_regime(src)
+    w0, h0 = _ink(src)
+    w1, h1 = _ink(_edit(src, TEXT))
+    assert 0.96 <= h1 / h0 <= 1.04, f"redraw is {h1 / h0:.3f}x the original height"
+    assert 0.96 <= w1 / w0 <= 1.04, f"redraw is {w1 / w0:.3f}x the original width"
+
+
+def test_pdfsharp_upright_run_keeps_its_height():
+    """No squeeze at all — the plainest PDFsharp text. The old rule shrank it by the
+    substitute's line box regardless (1 / 1.164 for DejaVu)."""
+    src = _src_pdfsharp(14.0, 1.0)
+    _assert_in_fallback_regime(src)
+    _w0, h0 = _ink(src)
+    _w1, h1 = _ink(_edit(src, TEXT))
+    assert 0.96 <= h1 / h0 <= 1.04, f"redraw is {h1 / h0:.3f}x the original height"
+
+
+def test_pdfsharp_run_does_not_drift_over_repeated_edits():
+    """Round 2 reads back what round 1 drew — in the substitute's descriptor, which
+    is a normal (≥ 1 em) one, so round 2 goes through the ORDINARY rule. The two
+    rules must agree, or the run changes height every time it is touched."""
+    pdf = _src_pdfsharp(20.0, 0.8)
+    _w0, h0 = _ink(pdf)
+    for i in range(3):
+        pdf = _edit(pdf, TEXT)
+        _w, h = _ink(pdf)
+        assert 0.96 <= h / h0 <= 1.04, f"round {i + 1} drifted to {h / h0:.3f}x the height"
+
+
+def test_font_program_key_never_merges_bold_with_regular():
+    """The exact-program lookup exists because the family lookup merges ArialMT and
+    Arial-BoldMT (measured on the customer's file); its key must not do the same,
+    while still matching PyMuPDF's two spellings of one face."""
+    from src.pdf.fonts import _font_program_key as k
+
+    assert k("Arial-BoldMT") != k("ArialMT")
+    assert k("ABCDEF+Arial-BoldMT") == k("Arial-BoldMT")
+    assert k("DejaVu Sans Book") == k("DejaVuSans")
+    assert k("DejaVu Sans Bold") != k("DejaVuSans")
+    assert k("TimesNewRomanPSMT") != k("TimesNewRomanPS-BoldMT")
+
+
 def test_single_character_span_is_not_distorted():
     """A one-glyph span is where the bbox-vs-advance measurement is least reliable;
     the credibility clamp must keep it out of the scaling path."""
@@ -238,6 +324,10 @@ if __name__ == "__main__":
         test_width_does_not_drift_over_repeated_edits,
         test_substituted_face_keeps_the_original_glyph_height,
         test_single_character_span_is_not_distorted,
+        test_pdfsharp_condensed_run_keeps_its_height_and_width,
+        test_pdfsharp_upright_run_keeps_its_height,
+        test_pdfsharp_run_does_not_drift_over_repeated_edits,
+        test_font_program_key_never_merges_bold_with_regular,
     ):
         fn()
         print(f"PASS {fn.__name__}")

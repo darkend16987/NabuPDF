@@ -384,6 +384,70 @@ def _page_font_buffers(doc, page) -> dict[str, bytes]:
     return out
 
 
+def _strip_subset_prefix(name: str) -> str:
+    """"ABCDEF+Arial-BoldMT" → "Arial-BoldMT"; anything else unchanged."""
+    if "+" in name and len(name.split("+", 1)[0]) == 6:
+        return name.split("+", 1)[1]
+    return name
+
+
+_REGULAR_SUFFIX_RE = _re.compile(r"(book|regular|normal)$")
+
+
+def _font_program_key(name: str) -> str:
+    """Matching key for `_page_font_programs_exact`: subset prefix dropped, case and
+    punctuation folded, and a trailing REGULAR-weight word removed.
+
+    The span's font name and the font's /BaseFont need not be spelled alike: PyMuPDF
+    names a font it embeds "DejaVu Sans Book" in /BaseFont while text extraction
+    reports the PostScript name "DejaVuSans" (measured). Only words that mean
+    "regular" are dropped — never Bold/Italic — so a bold run can still never be
+    matched to its regular sibling, which is the collision this function exists to
+    avoid. "Roman" is not one of them (Times New Roman, see _STYLE_TOKENS)."""
+    k = _norm_fam(_strip_subset_prefix(str(name or "")))
+    return _REGULAR_SUFFIX_RE.sub("", k) or k
+
+
+def _page_font_programs_exact(doc, page, names) -> dict[str, bytes]:
+    """The embedded font program of each font in `names`, keyed by
+    `_font_program_key` — the exact face, not the family.
+
+    Why not `_page_font_buffers`: that one keys by FAMILY, so "ArialMT" and
+    "Arial-BoldMT" collide on "arial" and the first one wins. Fine for its job (a
+    face to draw with, coverage-checked), wrong for measuring: /edit-text uses this
+    to read the ORIGINAL run's glyph advances (BI-25, the descriptor-fallback case),
+    and a bold run measured with the regular program is ~5–8 % off.
+
+    Same contract as `_page_font_buffers`: call BEFORE apply_redactions, and treat a
+    missing entry as "not available" — best-effort, never raises.
+    """
+    want = {_font_program_key(n) for n in names if n} - {""}
+    out: dict[str, bytes] = {}
+    if not want:
+        return out
+    try:
+        fonts = page.get_fonts(full=False)
+    except Exception as fe:
+        logger.debug("get_fonts failed: %s", fe)
+        return out
+    for f in fonts:
+        try:
+            xref = int(f[0])
+            key = _font_program_key(str(f[3]))
+        except Exception:
+            continue
+        if key not in want or key in out:
+            continue
+        try:
+            _name, ext, _subtype, buf = doc.extract_font(xref)
+        except Exception as fe:
+            logger.debug("extract_font %s failed: %s", key, fe)
+            continue
+        if buf and len(buf) > 4 and str(ext).lower() in ("ttf", "otf", "cff", "ttc"):
+            out[key] = bytes(buf)
+    return out
+
+
 def _list_local_font_families() -> list[str]:
     try:
         from matplotlib import font_manager as fm

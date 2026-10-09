@@ -339,6 +339,18 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - Ghi nhớ khi đọc số: PyMuPDF trả `size` của span là **trung bình nhân** của ma trận
   chữ, nên một cú nén ngang 0.84 hiện ra thành `size × sqrt(0.84)` — nửa cú nén đã
   nằm sẵn trong cỡ chữ.
+- ⚠️ **Ca descriptor < 1 em (PDFsharp / bản vẽ CAD, 2026-10-09).** PyMuPDF dựng bbox từ
+  `/Ascent − /Descent` của **descriptor**; tổng **< 1.000** thì nó bỏ, bbox dày **đúng
+  bằng `size`** (= √(Sv·Sh)) — mốc đo chính xác giữa 850/−149 và 850/−151. PDFsharp ghi
+  728/−210 ⇒ bước **Cao** đọc "line box 1.000 em" cho mọi run và thu chữ theo line box
+  font thay (Arial 1.117): bộ bản vẽ khách thấp **10.5 %** (khung tên), **20 %** (bìa).
+  Sửa: `_bbox_is_size_fallback(e)` nhận ca này ⇒ Sh = bề dài / advance đo bằng **chính
+  chương trình font nhúng của run** (`_page_font_programs_exact`, khoá theo face, **không**
+  theo họ — `_page_font_buffers` gộp ArialMT với Arial-BoldMT), Sv = size²/Sh. Không có
+  chương trình đó ⇒ quy tắc cũ chạy y như trước. Đo trên file khách: cao 18.25→18.25,
+  dài 101.88→101.88, bìa 45.75→45.88. Lưới: 4 ca `test_pdfsharp_*` / `font_program_key`
+  trong `test_edit_text_metrics.py` (có ca canh gác fixture thật sự rơi vào ca fallback;
+  đột biến tắt nhánh ⇒ 3 ca đỏ 0.772/0.851).
 
 ### BI-24 · Không bao giờ dựng payload PDF thành **một chuỗi JS**
 - **Nhà của luật này: `renderer/wire.js`** (tách khỏi `app.js` 2026-07-28) — có lưới
