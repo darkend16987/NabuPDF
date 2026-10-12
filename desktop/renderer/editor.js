@@ -2904,14 +2904,18 @@
       }
       applyBox();
     };
+    // A width change is the USER's only while they hold the mouse down on the field —
+    // its resize corner is the one way a person changes this element's width (BI-111).
+    // Everything else that moves it is the app's own doing and must NOT turn a point box
+    // into a fixed one: a point box's field is `cols` wide, i.e. as wide as 26 average
+    // glyphs of its CURRENT font, so pressing Đậm (B) or changing the size or the font
+    // while typing re-paints it (paint via ed._taPreview) wider or narrower. Before this
+    // gate the observer took that for a drag — measured: B while typing ⇒ a 254pt fixed
+    // box for a 44pt label; size 24 ⇒ 310pt. A non-user change only moves the baseline.
     let baseW = null;
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
-      if (!ta.isConnected) return ro.disconnect();
+    let pressed = false;
+    const userResized = () => {
       const w = ta.offsetWidth;
-      if (baseW == null) {
-        baseW = w;
-        return;
-      }
       if (ownW != null && Math.abs(w - ownW) <= 1) return; // our own write
       if (Math.abs(w - baseW) <= 1) return; // only the height moved
       // The user dragged the field's width: that width is the box.
@@ -2919,8 +2923,33 @@
       const contentW = (ta.clientWidth - (parseFloat(getComputedStyle(ta).paddingLeft) +
         parseFloat(getComputedStyle(ta).paddingRight))) / state.scale;
       if (contentW > 0) setBox(null, contentW);
+    };
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+      if (!ta.isConnected) return ro.disconnect();
+      if (baseW == null || !pressed) {
+        // First layout, or the app re-painted the field (palette, font, zoom…): the new
+        // width is the field's natural one — remember it, change nothing.
+        baseW = ta.offsetWidth;
+        return;
+      }
+      userResized(); // live while the corner is being dragged
     }) : null;
     if (ro) ro.observe(ta);
+    // `pressed` spans the press wherever it is released — shrinking the field drags the
+    // pointer outside it — hence a one-shot listener on the document, not on the field.
+    // The release re-checks once, so the last frame of a drag is never lost to the order
+    // in which the observer and the pointerup happen to run.
+    ta.addEventListener("pointerdown", () => {
+      pressed = true;
+      const end = () => {
+        document.removeEventListener("pointerup", end, true);
+        document.removeEventListener("pointercancel", end, true);
+        if (ta.isConnected && baseW != null) userResized();
+        pressed = false;
+      };
+      document.addEventListener("pointerup", end, true);
+      document.addEventListener("pointercancel", end, true);
+    });
     // Retyping a TURNED box types at the same angle, so the words never jump between
     // editing and not editing. The pivot is the one the annot turns about on screen and
     // in the file (annot-text.js textRotationPivot, BI-110), not the textarea's: the textarea is a fixed TA_ROWS x TA_COLS slab that has nothing to

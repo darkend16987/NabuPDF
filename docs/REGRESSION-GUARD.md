@@ -2805,7 +2805,9 @@ _Ghi 2026-09-30 (v0.2.73)._
   `#fmt-wrap`), `managed-codec.js` + `editor-bake.js` (`boxW` trong /NabuData). Lưới: `npm run test:text`
   (B1–B12, có chốt nguồn editor.js).
 - Bấm = hộp **thường** như cũ (ngắt chỉ ở Enter); **kéo** khi đặt = hộp cố định bề rộng; kéo tay nắm / kéo
-  giãn ô gõ / nút "Tự xuống dòng theo khung" đổi bề rộng; **chiều cao luôn tự giãn**. Hộp thường giờ có ô gõ
+  giãn ô gõ / nút "Tự xuống dòng theo khung" đổi bề rộng; **chiều cao luôn tự giãn**.
+  ⚠️ "Kéo giãn ô gõ" chỉ tính khi người dùng **đang nhấn chuột trên ô gõ** — xem BI-111 (đổi kiểu chữ lúc gõ từng biến hộp
+  thường thành hộp cố định). Hộp thường giờ có ô gõ
   `wrap="off"` — ô gõ không còn giả vờ xuống dòng (đúng lời phàn nàn gốc).
 - ⚠️ Chỗ ngắt dòng quyết **một lần, ở pt** (`wrapItemsPt` đo ở `fpx/upp`): canvas ở 3× không rộng đúng 3× ⇒
   ngắt theo tỉ lệ của lời gọi thì overlay (1×) và PNG bake (3×) lệch dòng ở chữ sát mép. Overlay hiển thị
@@ -3009,6 +3011,25 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** hộp xoay trên màn hình và trong file đã lưu không trùng (rõ nhất ở 90°/180° chữ to); bấm đúp hộp xoay để sửa thì
   chữ nhảy chỗ; hộp xoay có co giãn ngang lệch ngang khi lưu.
 
+### BI-111 · Ô gõ hộp chữ: chỉ cú kéo của NGƯỜI DÙNG mới biến hộp thường thành hộp cố định bề rộng
+- `editor.js` `openTextEditor`: `ResizeObserver` + cờ `pressed` (pointerdown trên ô gõ → pointerup/pointercancel một-lần trên
+  **document**) + `userResized()`. Lưới: `npm run test:taresize` (cắt khối khỏi editor.js, ResizeObserver / ô gõ / document giả;
+  W1–W8), 8/8 đột biến đỏ.
+- **Lỗi cũ (từ BI-104, v0.2.78):** ô gõ hộp thường rộng theo `cols` = 26 glyph trung bình của **font hiện tại**, nên mọi lần tô lại
+  kiểu (bảng → `ed._taPreview` → `paint`) làm nó rộng/hẹp đi; observer coi **mọi** thay đổi bề rộng là "người dùng kéo góc ô gõ" ⇒
+  `setBox` ⇒ hộp cố định ở bề rộng ô gõ. Đo app thật (Chú thích → T → bấm → gõ → …): bấm **Đậm** ⇒ hộp cố định **254 pt** cho nhãn
+  44 pt; cỡ 24 ⇒ **310 pt**; đổi font serif ⇒ hộp cố định hẹp gói chữ. In nghiêng / căn lề / giãn ký tự không đổi bề rộng ô gõ nên
+  không dính. (Từng thấy 1 lần không có thao tác bảng nào — cùng cơ chế nếu font tải trễ sau lần đo đầu; cổng mới phủ luôn.)
+- **Luật:** đổi bề rộng chỉ là "kéo" khi `pressed` — góc resize là cách duy nhất người dùng đổi bề rộng phần tử này. Không nhấn ⇒ chỉ
+  dời mốc `baseW` (app tô lại, font, zoom…). Nhả chuột kiểm lại một lần (khung cuối của cú kéo có thể chưa qua observer). Nhả ở
+  **ngoài** ô gõ vẫn được (thu hẹp kéo con trỏ ra ngoài) — listener ở document, tự gỡ. `ownW` (bề rộng do chính mã ghi) vẫn không
+  tính là kéo.
+- E2E (2026-10-12, app thật, chuột/phím thật): 14/14 — 2 ca gõ thường, B, I, cỡ 24, serif, giãn ký tự 2, căn giữa, 4 lần lặp ⇒ đều
+  **hộp thường** (B ⇒ 47 pt, cỡ 24 ⇒ 66 pt); **đối chứng**: kéo góc ô gõ −120 px ⇒ hộp cố định 91 pt, +60 px ⇒ 271 pt (tính năng
+  BI-104 còn nguyên). Cùng probe trên HEAD cũ: B ⇒ 254 pt, cỡ 24 ⇒ 310 pt, serif ⇒ hộp gói chữ — đỏ 3 ca.
+- **Vỡ khi:** đang gõ hộp mới mà bấm Đậm / đổi cỡ / đổi font thì hộp thành "Tự xuống dòng theo khung" rộng bất thường; hoặc ngược
+  lại, kéo góc ô gõ **không** còn biến hộp thường thành hộp cố định.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3086,6 +3107,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Bảng Định dạng: Ký tự đặc biệt (`#fmt-symbols`, `ed._taInsert`) / kiểu mặc định (`#fmt-set-default`, `#fmt-clear`, `pickTextDefault`, `TEXT_DEFAULT_LS`) | BI-108 · `npm run test:fmtpanel` + `test:text` (nhóm T) · **test tay**: T → bấm trang → gõ "m" → bấm ² → gõ tiếp: ô không đóng · Ctrl+Z trong ô → mất ² · Xong → mở lại file → ² còn đúng (không ô vuông) · chọn hộp → cỡ 24 + Đậm + Căn giữa → Đặt làm mặc định → hộp mới đúng kiểu, **màu không đổi** · đóng app → mở lại → hộp mới vẫn kiểu đó · chọn hộp → Xoá định dạng → về 16/thường/trái, giữ màu/nền/xoay · Ctrl+Z → về lại · mở file **cũ** → hộp chữ không đổi |
 | Viền khung hộp chữ (`borderColor/Width/Dash`, `normTextBorder`, `textRasterGeom`/`textRasterBoxPt`, `.an-text-border`, `writeBorder`) · Sao chép / Dán định dạng (`copyTextFormat`, `applyTextFormat`, `fmtClip`, Ctrl+Shift+C/V) | BI-109 · `npm run test:text` (V, F) + `test:fmtpanel` (P5, B) + `npm test -- managed` (raster + round-trip) · **test tay**: chọn hộp chữ → Viền quanh hộp chữ → đỏ 2 pt → Xong → mở lại file: viền **đúng chỗ, cùng độ dày** · nét đứt + Co giãn ngang 60% → cạnh dọc không mảnh hơn cạnh ngang · hộp đã xoay có viền → Xong → so · mở file **cũ** → không hộp nào có viền · Ctrl+Shift+C một hộp → Ctrl+click 2 hộp khác → Ctrl+Shift+V → đúng kiểu, góc xoay/bề rộng giữ · Ctrl+Z một lần → cả hai về · nhóm có cả hình vuông → hình vuông không đổi · FreeText từ Acrobat → ô Viền tắt |
 | Tâm xoay hộp chữ (`textRotationPivot`, khối `if (st.rot)` của `renderAnnot`, `if (existing && st.rot)` của `openTextEditor`) | BI-110 · `npm run test:text` (X) + `npm test -- managed` (pivot) · **test tay**: hộp chữ 48 pt có Viền → xoay 90° → nhớ chỗ khung trên màn hình → Xong → **mở lại file** (hoặc xem bằng Foxit) → khung **cùng chỗ** · lặp 30°, 180° và với Co giãn ngang 60% · bấm đúp hộp xoay → ô gõ **không nhảy** khỏi chữ · hộp không xoay → không đổi gì |
+| Ô gõ hộp chữ: ResizeObserver + `pressed` (`openTextEditor`, `userResized`) | BI-111 · `npm run test:taresize` · **test tay**: Chú thích → T → **bấm** lên trang → gõ vài chữ → bấm **Đậm**, đổi **cỡ** 24, đổi **font** → Ctrl+Enter → chọn hộp: "Tự xuống dòng theo khung" **không** tick, hộp vừa khít chữ · **kéo góc** ô gõ của hộp thường → thành hộp cố định (đúng BI-104) · kéo góc thu hẹp, nhả chuột **ngoài** ô gõ → vẫn nhận |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
