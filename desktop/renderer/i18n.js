@@ -317,6 +317,10 @@
     "Cỡ chữ (điểm)": "Font size (pt)",
     "Cỡ chữ": "Font size",
     "Cỡ": "Size",
+    // Cỡ nhãn (P7, BI-112): the label size of an arrow / a dimension line.
+    "Cỡ nhãn": "Label size",
+    "Cỡ chữ nhãn của mũi tên / số đo (điểm) — áp cho mục đang chọn và các mũi tên, đường đo vẽ sau":
+      "Font size of an arrow's label / a measurement (pt) — applies to the selection and to arrows and dimension lines you draw next",
     "In đậm": "Bold",
     "In nghiêng": "Italic",
     "Gạch chân": "Underline",

@@ -361,6 +361,9 @@
           <option value="tail">Ở cuối (gốc)</option>
         </select>
       </label>
+      <!-- Cỡ nhãn (P7, BI-112): cỡ chữ nhãn của mũi tên và của đường đo. Trường labelSize đã có từ lâu
+           (mặc định 14, đọc ở overlay / PNG mũi tên / làm phẳng / NabuData) nhưng chưa có ô chỉnh. -->
+      <label class="ctl" data-ctl="labelsize" title="Cỡ chữ nhãn của mũi tên / số đo (điểm) — áp cho mục đang chọn và các mũi tên, đường đo vẽ sau">Cỡ nhãn <input type="number" id="ed-labelsize" min="6" max="72" value="14" /></label>
       <button id="ed-arrow-reverse" data-ctl="arrowrev" title="Đảo chiều mũi tên đang chọn — mũi nhọn sang đầu kia (nhãn đi theo mũi nhọn)">Đảo chiều</button>
       <label class="ctl" data-ctl="cloudsize" title="Cỡ vòng mây: kéo nhỏ để mây ken đặc, sát viền hơn">Cỡ mây <input type="range" id="ed-cloudsize" min="6" max="28" step="1" value="12" /><span id="ed-cloudsize-val" class="readout">12</span></label>
       <label class="ctl" data-ctl="fill" title="Màu nền: bên trong hình khoanh vùng, hoặc phía sau chữ của hộp văn bản">Nền <input type="color" id="ed-fill" value="#ffffff" /></label>

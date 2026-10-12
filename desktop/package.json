@@ -36,6 +36,7 @@
     "test:text": "node test/annot-text.test.js",
     "test:fmtpanel": "node test/fmt-panel.test.js",
     "test:taresize": "node test/text-editor-resize.test.js",
+    "test:labelsize": "node test/label-size.test.js",
     "test:clip": "node test/annot-clip.test.js",
     "test:sig": "node test/signatures.test.js",
     "test:cloud": "node test/annot-geom.test.js",

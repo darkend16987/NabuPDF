@@ -706,7 +706,7 @@ chỉ tên hàm.
   quả: **nhãn mũi tên + watermark render bằng Arial** còn mọi hộp văn bản dùng Segoe UI,
   suốt nhiều phiên bản, mà **không ai phát hiện được** vì cả hai **không có** tuỳ chọn font
   (`TOOL_CTLS.arrow` = `["color","penwidth","arrowlabel"]`; modal watermark chỉ có
-  size/angle/opacity/color). `labelSize` cũng hardcode `14`.
+  size/angle/opacity/color). `labelSize` cũng hardcode `14`. *(Từ BI-112: có ô **Cỡ nhãn**; mặc định vẫn 14.)*
 - **Phạm vi ảnh hưởng của bản sửa, đã đo bằng probe (không suy luận):** `layoutTextBox`
   **0/1248** lệch · `measureText` **0/1248** lệch · hình học mây/mũi tên **0/178** lệch ·
   `textFont` **1104/1248** lệch — đúng những ca **không** có `font` tường minh (144 ca còn
@@ -3030,6 +3030,29 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** đang gõ hộp mới mà bấm Đậm / đổi cỡ / đổi font thì hộp thành "Tự xuống dòng theo khung" rộng bất thường; hoặc ngược
   lại, kéo góc ô gõ **không** còn biến hộp thường thành hộp cố định.
 
+### BI-112 · Cỡ nhãn mũi tên / đường đo: một phép kẹp, mặc định 14 ở MỌI chỗ đọc
+- `annot-geom.js` `LABEL_SIZE_MIN/MAX/DEFAULT` (6 / 72 / 14) + `normLabelSize`; `editor.js` `LABEL_SIZE_KINDS` (arrow, dim — khai
+  **trước** `ed`, syncControls đọc nó), `ed.labelSize` (theo phiên, như `dash` / `arrowLabelEnd`), ô `#ed-labelsize`
+  (`data-ctl="labelsize"`: công cụ Mũi tên + Đo; mục đang chọn arrow + dim), `applyLabelSize`. Lưới: `npm run test:labelsize`
+  (45 ý, 14/14 đột biến đỏ) + ghim bề mặt `test:annot-geom`.
+- Trường `labelSize` có từ lâu, mọi chỗ đọc đều `a.labelSize || 14` (overlay ×2, `renderArrowPng`, `drawOneAnnot` ×2,
+  `serializeManaged`), nhưng **không có điều khiển** nào ghi nó (đường đo còn ghi cứng `labelSize: 14` lúc tạo).
+- **Luật:**
+  - Mặc định = 14 ở **mọi** chỗ đọc và trong `LABEL_SIZE_DEFAULT` — đổi một chỗ thì nhãn chưa từng chỉnh đổi cỡ, và /NabuData của
+    mũi tên đổi byte (BI-59). Mũi tên mới giờ **luôn** mang `labelSize`; codec vốn đã ghi `labelSize: a.labelSize || 14` nên mũi tên
+    14 pt ra **byte y hệt** mũi tên vẽ trước P7 (test ghim).
+  - Rác (NaN, "", chuỗi, 0, âm) ⇒ **14**, không phải sàn 6. `input` vẽ trực tiếp; `change` ghi lại giá trị đã kẹp vào ô.
+  - Áp cho **cả vùng chọn** (chỉ arrow/dim), một bước hoàn tác mỗi đợt (`"labelsize:" + ed.sel`), không hoàn tác nếu không gì đổi
+    (đặt 14 cho mũi tên không có khoá ⇒ không ghi khoá). Như Nét: mục còn đang chọn khi đổi công cụ vẫn nhận cỡ mới.
+  - Đường đo **không** phải chú thích quản lý — cỡ chỉ sống tới khi bake (làm phẳng thành PNG đúng cỡ); mũi tên giữ cỡ qua lưu ↔ mở.
+- E2E (2026-10-12, app thật, chuột/phím thật, gõ vào ô): 22/22 — ẩn ở công cụ Chữ, hiện ở Mũi tên/Đo với 14; mũi tên mặc định 14;
+  không chọn gì thì đổi ô không đụng mũi tên cũ; mũi tên sau 28; đo hiện 28 → đặt 20 → số đo 20; chọn mũi tên 28 hiện 28, gõ 10 chỉ
+  đổi mũi tên đó, Ctrl+Z một bước về 28; chọn mũi tên mặc định hiện 14, đường đo hiện 20; 500 ⇒ 72 (ô + hình), Ctrl+Z về 20.
+  **File đã lưu:** mực nhãn 28 pt / 14 pt = **1,95**, số đo 20 / 14 = **1,45**, tâm mực mỗi nhãn nằm trong khung chữ trên màn hình;
+  mở lại: mũi tên 28 vẫn 28 (overlay + ô), mũi tên mặc định vẫn 14.
+- **Vỡ khi:** ô Cỡ nhãn không hiện ở Mũi tên/Đo, hoặc hiện ở loại khác; nhãn trên màn hình khác cỡ trong file đã lưu; mũi tên mở
+  lại mất cỡ; mũi tên cũ đổi cỡ / /NabuData đổi byte dù không ai chỉnh.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3108,6 +3131,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Viền khung hộp chữ (`borderColor/Width/Dash`, `normTextBorder`, `textRasterGeom`/`textRasterBoxPt`, `.an-text-border`, `writeBorder`) · Sao chép / Dán định dạng (`copyTextFormat`, `applyTextFormat`, `fmtClip`, Ctrl+Shift+C/V) | BI-109 · `npm run test:text` (V, F) + `test:fmtpanel` (P5, B) + `npm test -- managed` (raster + round-trip) · **test tay**: chọn hộp chữ → Viền quanh hộp chữ → đỏ 2 pt → Xong → mở lại file: viền **đúng chỗ, cùng độ dày** · nét đứt + Co giãn ngang 60% → cạnh dọc không mảnh hơn cạnh ngang · hộp đã xoay có viền → Xong → so · mở file **cũ** → không hộp nào có viền · Ctrl+Shift+C một hộp → Ctrl+click 2 hộp khác → Ctrl+Shift+V → đúng kiểu, góc xoay/bề rộng giữ · Ctrl+Z một lần → cả hai về · nhóm có cả hình vuông → hình vuông không đổi · FreeText từ Acrobat → ô Viền tắt |
 | Tâm xoay hộp chữ (`textRotationPivot`, khối `if (st.rot)` của `renderAnnot`, `if (existing && st.rot)` của `openTextEditor`) | BI-110 · `npm run test:text` (X) + `npm test -- managed` (pivot) · **test tay**: hộp chữ 48 pt có Viền → xoay 90° → nhớ chỗ khung trên màn hình → Xong → **mở lại file** (hoặc xem bằng Foxit) → khung **cùng chỗ** · lặp 30°, 180° và với Co giãn ngang 60% · bấm đúp hộp xoay → ô gõ **không nhảy** khỏi chữ · hộp không xoay → không đổi gì |
 | Ô gõ hộp chữ: ResizeObserver + `pressed` (`openTextEditor`, `userResized`) | BI-111 · `npm run test:taresize` · **test tay**: Chú thích → T → **bấm** lên trang → gõ vài chữ → bấm **Đậm**, đổi **cỡ** 24, đổi **font** → Ctrl+Enter → chọn hộp: "Tự xuống dòng theo khung" **không** tick, hộp vừa khít chữ · **kéo góc** ô gõ của hộp thường → thành hộp cố định (đúng BI-104) · kéo góc thu hẹp, nhả chuột **ngoài** ô gõ → vẫn nhận |
+| Cỡ nhãn mũi tên / đường đo (`normLabelSize`, `applyLabelSize`, `#ed-labelsize`, mọi `labelSize \|\| 14`) | BI-112 · `npm run test:labelsize` + `test:annot-geom` · **test tay**: Chú thích → Mũi tên: ô **Cỡ nhãn** = 14 → đặt 28 → vẽ mũi tên, gõ nhãn → chữ to · chọn mũi tên → ô hiện 28, gõ 10 → chỉ mũi tên đó đổi, Ctrl+Z về 28 · Đo: đặt 20 → số đo to · Xong → nhãn trong file đúng cỡ trên màn hình · mở lại Chú thích → mũi tên vẫn 28 |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

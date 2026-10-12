@@ -71,6 +71,20 @@ function arrowLabelPos(a, sx, sy, ex, ey, ang, hl, fs) {
   return { x: ex + Math.cos(ang) * gap, y: ey + Math.sin(ang) * gap };
 }
 
+// Cỡ nhãn (P7, BI-112): the label font size of an arrow and of a dimension line, in points.
+// Every reader already fell back to 14 (`a.labelSize || 14` — overlay, arrow PNG, flatten,
+// /NabuData), so 14 is the default and a label nobody resized stays byte-identical
+// (BI-59). The floor matches the text box's 6pt; 72 is a leader label already larger than
+// most drawing titles. Junk (NaN, "", a string) reads as the default, not as 6.
+const LABEL_SIZE_MIN = 6;
+const LABEL_SIZE_MAX = 72;
+const LABEL_SIZE_DEFAULT = 14;
+function normLabelSize(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return LABEL_SIZE_DEFAULT;
+  return Math.min(LABEL_SIZE_MAX, Math.max(LABEL_SIZE_MIN, n));
+}
+
 // ---- dragging one end of a two-point annotation --------------------------
 
 // New position for the end of a line being dragged, with `fx,fy` the end that stays
@@ -827,6 +841,7 @@ if (typeof module !== "undefined" && module.exports) {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
     PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ, DASH_KINDS, normDash, dashSpec, dashSegments,
+    LABEL_SIZE_MIN, LABEL_SIZE_MAX, LABEL_SIZE_DEFAULT, normLabelSize,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
@@ -838,6 +853,7 @@ if (typeof window !== "undefined") {
     CLOUD_BUMP, CLOUD_BUMP_MIN, CLOUD_BUMP_MAX, bumpOf, SYMBOL_SIZE,
     ANGLE_SNAP_DEG, STROKE_TOL, STROKE_MAX_PTS, QUAD_GAP, QUAD_MIN, TEXTHL_OPACITY,
     PTS_KINDS, QUAD_KINDS, isPtsKind, isQuadKind, reorderZ, DASH_KINDS, normDash, dashSpec, dashSegments,
+    LABEL_SIZE_MIN, LABEL_SIZE_MAX, LABEL_SIZE_DEFAULT, normLabelSize,
     annotBounds, arrowLabelPos, cloudPath, arcApex, cloudPathPoly, countDistinct,
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,

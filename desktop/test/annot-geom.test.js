@@ -437,11 +437,13 @@ check("node import exposes exactly the surface editor.js calls by bare name",
   // reorderZ (Thứ tự chồng, BI-93) — editor.js calls it by bare name; its grid is test:zorder.
   // DASH_KINDS / normDash / dashSpec / dashSegments (Kiểu nét, BI-94) — the four writers read
   // them by bare name (editor.js, editor-bake.js, managed-codec.js); grid: test:dash.
+  // LABEL_SIZE_* / normLabelSize (Cỡ nhãn, P7) — editor.js reads them via window.AnnotGeom; grid: test:labelsize.
   ["ANGLE_SNAP_DEG", "CLOUD_BUMP", "CLOUD_BUMP_MAX", "CLOUD_BUMP_MIN", "DASH_KINDS",
+   "LABEL_SIZE_DEFAULT", "LABEL_SIZE_MAX", "LABEL_SIZE_MIN",
    "PTS_KINDS", "QUAD_GAP", "QUAD_KINDS", "QUAD_MIN",
    "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE", "TEXTHL_OPACITY",
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "countDistinct", "dashSegments", "dashSpec", "fitShift", "isPtsKind", "isQuadKind", "normDash",
+   "countDistinct", "dashSegments", "dashSpec", "fitShift", "isPtsKind", "isQuadKind", "normDash", "normLabelSize",
    "polyPath", "quadsFromRects", "reorderZ", "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
 // The two KIND sets are the exception to "SHOUTY name ⇒ number": they are Sets, and

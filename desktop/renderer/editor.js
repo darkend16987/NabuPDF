@@ -300,6 +300,10 @@
     }
   }
 
+  // The kinds that carry a Cỡ nhãn (P7, BI-112). Up here, not beside its handler: syncControls
+  // reads it and must never meet it in the temporal dead zone.
+  const LABEL_SIZE_KINDS = new Set(["arrow", "dim"]);
+
   const ed = {
     active: false,
     tool: "select",
@@ -346,6 +350,9 @@
     // making every later shape dashed is a worse surprise than re-picking it. BI-94.
     dash: "solid",
     arrowLabelEnd: "head", // where a new arrow's label sits: "head" (tip) or "tail" (base)
+    // Cỡ nhãn of the NEXT arrow / dimension line (P7). Session-only, like `dash` and
+    // `arrowLabelEnd` beside it.
+    labelSize: window.AnnotGeom.LABEL_SIZE_DEFAULT,
     fillColor: "#ffffff", // interior fill for box / ellipse / cloud / cloudpen
     fillOn: false, // false → transparent interior (the default for revision clouds)
     fillOpacity: 1, // 0..1 interior-fill opacity (0 = fully transparent, 1 = solid)
@@ -1995,6 +2002,7 @@
     }
     if (["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
+    if (LABEL_SIZE_KINDS.has(a.kind)) $("ed-labelsize").value = String(window.AnnotGeom.normLabelSize(a.labelSize));
     if (DASH_KINDS.has(a.kind)) $("ed-dash").value = normDash(a.dash);
     if (a.kind === "cloud" || a.kind === "cloudpen") {
       const b = bumpOf(a);
@@ -2258,7 +2266,8 @@
     }
 
     if (ed.tool === "arrow") {
-      const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth, labelEnd: ed.arrowLabelEnd };
+      const a = { id: ed.seq++, kind: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: ed.color, width: ed.penWidth, labelEnd: ed.arrowLabelEnd,
+                  labelSize: ed.labelSize };
       stampDash(a);
       pushEdUndo();
       annotsFor(i).push(a);
@@ -2273,7 +2282,7 @@
       // the first segment calibrates (asks the real length), later ones are auto
       // numbered by the stored ratio. `text` is a live preview during the drag.
       const a = { id: ed.seq++, kind: "dim", x1: p.x, y1: p.y, x2: p.x, y2: p.y,
-                  color: ed.color, width: ed.penWidth, text: "", labelSize: 14 };
+                  color: ed.color, width: ed.penWidth, text: "", labelSize: ed.labelSize };
       pushEdUndo();
       annotsFor(i).push(a);
       ed.sel = a.id;
@@ -3704,11 +3713,11 @@
     texthl: ["color"],
     // No "arrowrev" here: reversing needs an arrow to reverse, and under the arrow
     // TOOL nothing is selected yet. It is a KIND_CTLS-only control (see below).
-    arrow: ["color", "penwidth", "dash", "arrowlabel"],
+    arrow: ["color", "penwidth", "dash", "arrowlabel", "labelsize"],
     note: ["color"],
     image: [],
     redact: ["redact"],
-    measure: ["color", "penwidth", "measure"],
+    measure: ["color", "penwidth", "labelsize", "measure"],
     check: ["color", "penwidth"],
     cross: ["color", "penwidth"],
   };
@@ -3725,11 +3734,11 @@
     cloudpen: ["color", "penwidth", "fill", "cloudsize"],
     poly: ["color", "penwidth", "dash", "fill"],
     texthl: ["color"],
-    arrow: ["color", "penwidth", "dash", "arrowlabel", "arrowrev"],
+    arrow: ["color", "penwidth", "dash", "arrowlabel", "labelsize", "arrowrev"],
     note: ["color"],
     image: ["imgpages"],
     redact: ["redact"],
-    dim: ["color", "penwidth"],
+    dim: ["color", "penwidth", "labelsize"],
     check: ["color", "penwidth"],
     cross: ["color", "penwidth"],
   };
@@ -3787,6 +3796,8 @@
     // switching tool has to bring back the width the NEXT stroke will get.
     const wpick = $("ed-penwidth");
     if (wpick) wpick.value = String(ed.penWidth);
+    const lpick = $("ed-labelsize"); // ...and Cỡ nhãn (P7, BI-112), for the same reason
+    if (lpick) lpick.value = String(ed.labelSize);
     const dpick = $("ed-dash"); // ...and the Kieu net box, for the same reason
     if (dpick) dpick.value = ed.dash;
     // Same reason as the colour picker above: switching to the Hộp văn bản tool must
@@ -4810,6 +4821,23 @@
       }
     }
   };
+  // Cỡ nhãn (P7, BI-112). Sets the size of the NEXT arrow / dimension line and, like Nét, applies
+  // to every arrow / dimension line in the selection. One undo step per edit burst (the
+  // key coalesces the spinner's repeats). `input` paints live while typing "2" of "24";
+  // `change` writes the CLAMPED value back so the box never shows a size nothing has.
+  const applyLabelSize = (raw, final) => {
+    const v = window.AnnotGeom.normLabelSize(raw);
+    ed.labelSize = v;
+    if (final) $("ed-labelsize").value = String(v);
+    const targets = selAnnots().filter((a) => LABEL_SIZE_KINDS.has(a.kind) && window.AnnotGeom.normLabelSize(a.labelSize) !== v);
+    if (targets.length) {
+      pushEdUndo("labelsize:" + ed.sel);
+      for (const a of targets) a.labelSize = v;
+      syncOverlays();
+    }
+  };
+  $("ed-labelsize").oninput = (e) => applyLabelSize(e.target.value, false);
+  $("ed-labelsize").onchange = (e) => applyLabelSize(e.target.value, true);
   // Cloud scallop size (smaller = denser, hugs the marked area more tightly).
   $("ed-cloudsize").oninput = (e) => {
     const v = Math.min(CLOUD_BUMP_MAX, Math.max(CLOUD_BUMP_MIN, +e.target.value || CLOUD_BUMP));
