@@ -576,6 +576,29 @@
           <label class="fmt-chk"><input type="checkbox" id="fmt-strike" /> Gạch ngang</label>
         </div>
 
+        <!-- Ký tự kỹ thuật: inserted at the caret of the OPEN text editor (editor.js
+             ed._taInsert). Unicode characters, not super/subscript formatting — a box has
+             ONE style, so m² is the character ², exactly as Word's "Symbol" inserts it. -->
+        <div class="fmt-section">
+          <div class="fmt-title">Ký tự đặc biệt</div>
+          <div class="fmt-grid fmt-sym" id="fmt-symbols">
+            <button class="fmt-ic" data-ch="²">²</button><button class="fmt-ic" data-ch="³">³</button><button class="fmt-ic" data-ch="±">±</button><button class="fmt-ic" data-ch="⌀">⌀</button><button class="fmt-ic" data-ch="°">°</button>
+            <button class="fmt-ic" data-ch="×">×</button><button class="fmt-ic" data-ch="≤">≤</button><button class="fmt-ic" data-ch="≥">≥</button><button class="fmt-ic" data-ch="‰">‰</button><button class="fmt-ic" data-ch="µ">µ</button>
+          </div>
+          <p class="fmt-note">Chèn vào chỗ con trỏ khi đang gõ chữ.</p>
+        </div>
+
+        <!-- Kiểu mặc định (editor.js TEXT_DEFAULT_LS): "Đặt làm mặc định" = new boxes take
+             this style, remembered per machine; "Xoá định dạng" = the SELECTED box back to the
+             factory style. Neither touches colour, background, rotation or wrap width. -->
+        <div class="fmt-section">
+          <div class="fmt-title">Kiểu chữ</div>
+          <div class="fmt-grid">
+            <button class="fmt-btn" id="fmt-set-default" title="Hộp chữ mới sẽ dùng kiểu của hộp đang chọn (hoặc kiểu đang đặt): font, cỡ, đậm / nghiêng / gạch, căn lề, giãn, danh sách, độ mờ. App nhớ cho lần sau.">Đặt làm mặc định</button>
+            <button class="fmt-btn" id="fmt-clear" title="Đưa hộp chữ đang chọn về kiểu gốc của app. Giữ nguyên màu, nền, góc xoay và bề rộng khung.">Xoá định dạng</button>
+          </div>
+        </div>
+
         <div class="fmt-section">
           <div class="fmt-title">Sắp xếp theo trang</div>
           <div class="fmt-grid">

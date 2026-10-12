@@ -376,6 +376,49 @@ function listDisplayText(text, style) {
     .join("\n");
 }
 
+// ---- the text default: "Đặt làm mặc định" / "Xoá định dạng" -----------------
+//
+// WHAT a text default carries: every field the user sets with the font bar or the
+// Format panel, plus the size. Deliberately NOT colour (Cài đặt → Màu mặc định owns it,
+// shared by every kind), background, rotation or wrap width — those belong to one box's
+// placement on one page, not to a "kiểu chữ". `opacity` is the annot's key; the palette
+// keeps it as `ed.textOpacity` (edTextStyle maps it).
+const TEXT_DEFAULT_KEYS = [
+  "font", "fontSize", "bold", "italic", "underline", "strike", "align", "lineHeight",
+  "paraSpacing", "letterSpacing", "wordSpacing", "charScale", "indent", "listType", "opacity",
+];
+// #ed-fontsize's min / max / initial value. The factory size has to equal `ed.fontSize`
+// in editor.js and the markup's value="16" (test:fmtpanel pins all three).
+const TEXT_SIZE_MIN = 6;
+const TEXT_SIZE_MAX = 120;
+const TEXT_SIZE_DEFAULT = 16;
+
+// The default style read off anything annot-shaped (a box, the palette bundle, or a
+// parsed localStorage value a human may have edited). Every field goes through
+// normTextStyle — the same normaliser the layout engine reads — so a stored default can
+// never hold a value a box could not; `{}` gives the factory style.
+function pickTextDefault(src) {
+  const a = src || {};
+  const s = normTextStyle(a);
+  const out = {};
+  for (const k of TEXT_DEFAULT_KEYS) out[k] = s[k];
+  const fs = +a.fontSize;
+  out.fontSize = isFinite(fs) && fs > 0 ? Math.min(TEXT_SIZE_MAX, Math.max(TEXT_SIZE_MIN, fs)) : TEXT_SIZE_DEFAULT;
+  // A font is a family NAME: anything else (a number, an object, a novel) is junk.
+  if (typeof out.font !== "string" || !out.font.trim() || out.font.length > 200) out.font = "sans";
+  return out;
+}
+// localStorage → a default, or null for "none saved / unreadable" (never throws).
+function parseTextDefault(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" && !Array.isArray(o) ? pickTextDefault(o) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 // ---- rotating a text box (v0.2.63) ---------------------------------------
 //
 // SIGN CONVENTION, decided once here so nothing has to guess: a POSITIVE angle turns
@@ -425,6 +468,7 @@ if (typeof module !== "undefined" && module.exports) {
     layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
     isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
+    TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
   };
 }
 if (typeof window !== "undefined") {
@@ -433,5 +477,6 @@ if (typeof window !== "undefined") {
     layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
     isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
+    TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
   };
 }

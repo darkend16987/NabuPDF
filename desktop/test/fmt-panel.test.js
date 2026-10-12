@@ -226,5 +226,202 @@ check("C7 collapse is a class, independent of `hidden` (updateFmtPanel still dec
     /fmt-collapse[^\n]*\.title\s*=/.test(ED), false);
 }
 
+// =============================================================================
+// P3 · Ký tự đặc biệt
+// =============================================================================
+const AT = require("../renderer/annot-text.js");
+const INSERT_SRC = cut("    ed._taInsert = (str) => {", "    // Width hook for the \"textbox\" drag");
+function insertRig(execOk) {
+  const calls = [];
+  const ta = {
+    selectionStart: 2, selectionEnd: 4,
+    focus: () => calls.push("focus"),
+    setRangeText: (s, a, b, mode) => calls.push(["setRangeText", s, a, b, mode]),
+    dispatchEvent: (ev) => calls.push(["dispatch", ev.type, ev.bubbles]),
+  };
+  const document = { execCommand: (cmd, ui, s) => (calls.push(["exec", cmd, s]), execOk) };
+  const ed = {};
+  class Event { constructor(type, o) { this.type = type; this.bubbles = !!(o && o.bubbles); } }
+  new Function("ed", "ta", "document", "Event", INSERT_SRC)(ed, ta, document, Event);
+  ed._taInsert("²");
+  return calls;
+}
+check("S1 the insert goes through insertText (keeps the field's own Ctrl+Z, fires input)",
+  insertRig(true), ["focus", ["exec", "insertText", "²"]]);
+check("S1b …and falls back to setRangeText + an 'input' event if the command is refused",
+  insertRig(false), ["focus", ["exec", "insertText", "²"], ["setRangeText", "²", 2, 4, "end"], ["dispatch", "input", true]]);
+check("S2 closing the editor drops the insert hook with the others (no write into a dead field)",
+  /function clearTaHooks\(\) \{[\s\S]{0,300}?ed\._taInsert = null;/.test(ED), true);
+
+const SYM_SRC = cut("  // Ký tự đặc biệt. Only while a text editor is open", "  // ---- the text default (Đặt làm mặc định");
+function symRig(withEditor) {
+  const inserted = [];
+  const toasts = [];
+  let prevented = 0;
+  const btns = ["²", "⌀"].map((ch) => el({ dataset: { ch } }));
+  const document = { querySelectorAll: (q) => (q === "#fmt-symbols [data-ch]" ? btns : []) };
+  const ed = withEditor ? { _taInsert: (s) => inserted.push(s) } : {};
+  const window = { t: (s) => "EN:" + s };
+  const toast = (m, k) => toasts.push([m, k]);
+  new Function("document", "ed", "window", "toast", SYM_SRC)(document, ed, window, toast);
+  btns[1].fire("mousedown", { preventDefault: () => prevented++ });
+  btns[1].fire("click");
+  return { inserted, toasts, prevented };
+}
+{
+  const r = symRig(true);
+  check("S3 with the editor open, a symbol button inserts ITS character", r.inserted, ["⌀"]);
+  check("S3b …and its mousedown keeps the field focused (preventDefault)", r.prevented, 1);
+  const r2 = symRig(false);
+  check("S4 no editor open: nothing inserted, a translated hint instead", [r2.inserted.length, r2.toasts.length, /^EN:/.test(r2.toasts[0][0])], [0, 1, true]);
+}
+{
+  const m = /<div class="fmt-grid fmt-sym" id="fmt-symbols">([\s\S]*?)<\/div>/.exec(HTML);
+  const chs = m ? [...m[1].matchAll(/data-ch="([^"]+)">([^<]+)</g)].map((x) => [x[1], x[2]]) : [];
+  check("S5 the symbol set (RESEARCH P3): m² m³ ± ⌀ ° × ≤ ≥ ‰ µ, each button labelled with its own character",
+    chs, [["²", "²"], ["³", "³"], ["±", "±"], ["⌀", "⌀"], ["°", "°"], ["×", "×"], ["≤", "≤"], ["≥", "≥"], ["‰", "‰"], ["µ", "µ"]]);
+}
+
+// =============================================================================
+// P4 · Đặt làm mặc định / Xoá định dạng
+// =============================================================================
+const DEF_SRC = cut("  const TEXT_DEFAULT_LS = ", '  $("ed-penwidth").oninput');
+// The palette's factory state, as the `ed` literal in editor.js declares it.
+const edFactory = () => ({
+  sel: null, font: "sans", fontSize: 16, bold: false, italic: false, underline: false, strike: false, align: "left",
+  lineHeight: 1.3, paraSpacing: 0, letterSpacing: 0, wordSpacing: 0, charScale: 1, indent: 0, listType: "none",
+  textOpacity: 1, textRot: 0,
+});
+function defRig(opts) {
+  const o = opts || {};
+  const ed = edFactory();
+  const ctl = { "ed-font": el(), "ed-fontsize": el(), "fmt-set-default": el(), "fmt-clear": el() };
+  const btnState = {};
+  const writes = [];
+  const toasts = [];
+  const log = [];
+  const box = o.box || null;
+  if (box) ed.sel = 7;
+  const localStorage = {
+    getItem: () => { if (o.throwGet) throw new Error("denied"); return o.stored == null ? null : o.stored; },
+    setItem: (k, v) => { if (o.throwSet) throw new Error("denied"); writes.push([k, v]); },
+  };
+  const env = {
+    $: (id) => ctl[id] || null,
+    ed,
+    findAnnot: (id) => (id === 7 && box ? { a: box, page: 0 } : null),
+    localStorage,
+    window: { AnnotText: AT, t: (s) => s },
+    toast: (m, k) => toasts.push([m, k]),
+    setFmtBtn: (id, on) => (btnState[id] = !!on),
+    syncFmtPanel: () => log.push("syncFmtPanel"),
+    syncControls: () => log.push("syncControls"),
+    syncOverlays: () => log.push("syncOverlays"),
+    pushEdUndo: (k) => log.push("undo:" + k),
+    measureText: (t, size, st) => ({ w: size * 10 + (st.bold ? 1 : 0), h: size * 2 }),
+    textStyle: (a) => AT.normTextStyle(a),
+    // editor.js edTextStyle: the palette bundle a NEW box inherits (opacity ← textOpacity).
+    edTextStyle: () => ({ font: ed.font, bold: ed.bold, italic: ed.italic, underline: ed.underline, strike: ed.strike,
+      align: ed.align, lineHeight: ed.lineHeight, paraSpacing: ed.paraSpacing, letterSpacing: ed.letterSpacing,
+      wordSpacing: ed.wordSpacing, charScale: ed.charScale, indent: ed.indent, listType: ed.listType,
+      opacity: ed.textOpacity, rot: ed.textRot, fill: "none", fillOpacity: 1 }),
+  };
+  new Function(...Object.keys(env), DEF_SRC)(...Object.values(env));
+  return { ed, ctl, btnState, writes, toasts, log, box };
+}
+{
+  const saved = JSON.stringify(Object.assign(AT.pickTextDefault({}), { font: "Tahoma", fontSize: 12, bold: true, align: "center", opacity: 0.5 }));
+  const r = defRig({ stored: saved });
+  check("D1 a saved default seeds the palette at load (opacity → ed.textOpacity)",
+    [r.ed.font, r.ed.fontSize, r.ed.bold, r.ed.align, r.ed.textOpacity, "opacity" in r.ed], ["Tahoma", 12, true, "center", 0.5, false]);
+  check("D1b …and the font bar shows it", [r.ctl["ed-font"].value, r.ctl["ed-fontsize"].value, r.btnState["ed-bold"]], ["Tahoma", "12", true]);
+  check("D1c nothing saved → the palette stays factory, nothing written", [JSON.stringify(defRig().ed), defRig().writes.length],
+    [JSON.stringify(edFactory()), 0]);
+  check("D1d junk in storage → factory (re-validated, never reaches a box)", JSON.stringify(defRig({ stored: "{oops" }).ed), JSON.stringify(edFactory()));
+  let ok = true;
+  try { defRig({ throwGet: true, throwSet: true }).ctl["fmt-set-default"].fire("click"); } catch (_) { ok = false; }
+  check("D1e unreadable / unwritable storage never throws", ok, true);
+}
+{
+  // Đặt làm mặc định with NOTHING selected: the palette as it stands, size included.
+  const r = defRig();
+  r.ed.fontSize = 20;
+  r.ed.italic = true;
+  r.ed.textOpacity = 0.7;
+  r.ctl["fmt-set-default"].fire("click");
+  const w = r.writes[0] && JSON.parse(r.writes[0][1]);
+  check("D2 nothing selected: the palette is saved (size + italic + opacity), under its own key",
+    [r.writes.length, r.writes[0] && r.writes[0][0], w && w.fontSize, w && w.italic, w && w.opacity], [1, "nabu-text-default", 20, true, 0.7]);
+  check("D2b …the payload is exactly a pickTextDefault (no colour / rotation / fill)", w && Object.keys(w).sort(), AT.TEXT_DEFAULT_KEYS.slice().sort());
+  check("D2c …and says so", r.toasts, [["Hộp chữ mới sẽ dùng kiểu này.", "good"]]);
+}
+{
+  const box = { kind: "text", text: "a", font: "Arial", fontSize: 30, bold: true, align: "right", listType: "bullet", color: "#00f", rot: 45, boxW: 100, opacity: 0.6 };
+  const r = defRig({ box });
+  r.ctl["ed-font"].value = "Arial (box)"; // what syncControls put there for the selected box
+  r.ctl["fmt-set-default"].fire("click");
+  check("D3 a selected box: ITS style becomes the default for new boxes",
+    [r.ed.font, r.ed.fontSize, r.ed.bold, r.ed.align, r.ed.listType, r.ed.textOpacity], ["Arial", 30, true, "right", "bullet", 0.6]);
+  check("D3b …colour and rotation are NOT carried into the palette", [r.ed.textRot, "color" in r.ed, "rot" in r.ed], [0, false, false]);
+  check("D3c …the font bar keeps showing the selected box (not overwritten)", r.ctl["ed-font"].value, "Arial (box)");
+  check("D3d …no undo step: a preference, not an edit of the document", r.log.filter((x) => /^undo:/.test(x)), []);
+  check("D3e the box itself is untouched", [box.font, box.rot, box.color], ["Arial", 45, "#00f"]);
+}
+{
+  const r = defRig({ throwSet: true });
+  r.ed.bold = true;
+  r.ctl["fmt-set-default"].fire("click");
+  check("D4 storage refuses: the default still applies for this session, and the toast says it was not saved",
+    [r.ed.bold, r.toasts[0] && r.toasts[0][1]], [true, "bad"]);
+}
+{
+  const r = defRig();
+  r.ctl["fmt-clear"].fire("click");
+  check("D5 Xoá định dạng with nothing selected does nothing", r.log, []);
+  const box = { kind: "text", text: "abc", font: "Arial", fontSize: 30, bold: true, italic: true, underline: true, strike: true,
+    align: "justify", lineHeight: 2, paraSpacing: 6, letterSpacing: 1, wordSpacing: 3, charScale: 0.8, indent: 36, listType: "number",
+    opacity: 0.4, color: "#0000ff", fill: "#ffff00", fillOpacity: 0.5, rot: 30, boxW: 150, x: 10, y: 20, w: 1, h: 1 };
+  const r2 = defRig({ box, stored: JSON.stringify(Object.assign(AT.pickTextDefault({}), { fontSize: 40 })) });
+  r2.ctl["fmt-clear"].fire("click");
+  const f = AT.pickTextDefault({});
+  check("D6 a selected box returns to the FACTORY style (not the saved default)",
+    AT.TEXT_DEFAULT_KEYS.map((k) => box[k]), AT.TEXT_DEFAULT_KEYS.map((k) => f[k]));
+  check("D6b …keeping colour, background, rotation, wrap width, text and position",
+    [box.color, box.fill, box.fillOpacity, box.rot, box.boxW, box.text, box.x, box.y], ["#0000ff", "#ffff00", 0.5, 30, 150, "abc", 10, 20]);
+  check("D6c …re-measured at the new size", [box.w, box.h], [160, 32]);
+  check("D6d …one undo step keyed per box, then overlay + font bar + panel redrawn",
+    r2.log.slice(-4), ["undo:clearfmt:7", "syncOverlays", "syncControls", "syncFmtPanel"]);
+}
+check("D7 syncFmtPanel: Xoá định dạng is enabled only with a text box selected",
+  /clr\.disabled = !\(hit && hit\.a\.kind === "text"\);/.test(ED), true);
+{
+  // The factory has three spellings that must agree: ed's literal, the size field's
+  // markup, and pickTextDefault({}) (what Xoá định dạng writes).
+  const f = AT.pickTextDefault({});
+  const lit = (k) => { const m = new RegExp("^    " + k + ": ([^,]+),", "m").exec(ED); return m ? m[1].trim() : null; };
+  check("D8 the ed literal's text fields equal the factory style",
+    ["fontSize", "font", "bold", "italic", "underline", "strike", "align", "lineHeight", "paraSpacing", "letterSpacing",
+      "wordSpacing", "charScale", "indent", "listType", "textOpacity"].map(lit),
+    [String(f.fontSize), '"sans"', "false", "false", "false", "false", '"left"', "1.3", "0", "0", "0", "1", "0", '"none"', "1"]);
+  const fs_ = /<input type="number" id="ed-fontsize" min="(\d+)" max="(\d+)" value="(\d+)"/.exec(HTML);
+  check("D8b #ed-fontsize min / max / value = TEXT_SIZE_MIN / MAX / DEFAULT",
+    fs_ && [+fs_[1], +fs_[2], +fs_[3]], [AT.TEXT_SIZE_MIN, AT.TEXT_SIZE_MAX, AT.TEXT_SIZE_DEFAULT]);
+}
+check("D9 the system-font list arriving late puts the palette's font back into the picker",
+  /grp\.appendChild\(frag\);\s*fontsLoaded = true;[\s\S]{0,500}?if \(!\(selHit && selHit\.a\.kind === "text"\)\) \$\("ed-font"\)\.value = ed\.font;/.test(ED), true);
+check("D10 editor.js reaches the pure half through window.AnnotText, never new bare names (BI-14)",
+  /[^.\w](pickTextDefault|parseTextDefault|TEXT_DEFAULT_KEYS)\(/.test(DEF_SRC.replace(/window\.AnnotText\.\w+/g, "")), false);
+{
+  const STR = ["Ký tự đặc biệt", "Chèn vào chỗ con trỏ khi đang gõ chữ.",
+    "Bấm vào trang (hoặc bấm đúp một hộp chữ) để gõ, rồi bấm ký tự cần chèn.",
+    "Kiểu chữ", "Đặt làm mặc định", "Xoá định dạng",
+    "Hộp chữ mới sẽ dùng kiểu của hộp đang chọn (hoặc kiểu đang đặt): font, cỡ, đậm / nghiêng / gạch, căn lề, giãn, danh sách, độ mờ. App nhớ cho lần sau.",
+    "Đưa hộp chữ đang chọn về kiểu gốc của app. Giữ nguyên màu, nền, góc xoay và bề rộng khung.",
+    "Hộp chữ mới sẽ dùng kiểu này.", "Đã đặt cho lần làm việc này — không lưu được cho lần mở sau."];
+  check("D11 every new P3/P4 string has an EN entry", STR.map((s) => I18N.includes(JSON.stringify(s) + ":")), STR.map(() => true));
+  check("D11b …and each one is spelled exactly as the markup / editor.js writes it",
+    STR.map((s) => HTML.includes(s) || ED.includes(s)), STR.map(() => true));
+}
+
 console.log(`\nfmt-panel: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

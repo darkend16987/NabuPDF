@@ -2962,6 +2962,17 @@
     // moment it becomes verifiable.
     ed._taPreview = paint;
     ed._taFocus = () => ta.focus();
+    // Ký tự đặc biệt (Format panel): insert at the caret, replacing a selection.
+    // execCommand keeps the textarea's OWN undo (Ctrl+Z inside the field takes the symbol
+    // back out) and fires 'input', so growDown / the fixed-box sizing run exactly as for a
+    // typed key; setRangeText is the fallback should Chromium ever drop the command.
+    ed._taInsert = (str) => {
+      ta.focus();
+      if (!document.execCommand("insertText", false, str)) {
+        ta.setRangeText(str, ta.selectionStart, ta.selectionEnd, "end");
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    };
     // Width hook for the "textbox" drag in onDown: dragging out the field right after
     // the click that opened it turns it into a fixed-width box (leftX, width in pt).
     ed._taSetBox = setBox;
@@ -2994,6 +3005,7 @@
     ed._taPreview = null;
     ed._taFocus = null;
     ed._taSetBox = null;
+    ed._taInsert = null;
   }
 
   // ---- note editor (comment anchored to a point) ---------------------------
@@ -3805,6 +3817,11 @@
       }
       grp.appendChild(frag);
       fontsLoaded = true;
+      // A saved default (or an earlier pick) may be one of these families: until now the
+      // <select> had no such option and showed blank. Only with no text box selected —
+      // otherwise the picker is showing that box's font (syncControls).
+      const selHit = ed.sel != null ? findAnnot(ed.sel) : null;
+      if (!(selHit && selHit.a.kind === "text")) $("ed-font").value = ed.font;
     } catch (_) {
       /* keep built-in font choices */
     }
@@ -4295,6 +4312,8 @@
       wrapC.disabled = !(hit && hit.a.kind === "text");
       if (wrapC !== active) wrapC.checked = !wrapC.disabled && s.boxW > 0;
     }
+    const clr = $("fmt-clear");
+    if (clr) clr.disabled = !(hit && hit.a.kind === "text");
     // Bề rộng khung: only a selected FIXED box has a wrap width to show or set.
     const bw = $("fmt-boxw");
     if (bw) {
@@ -4471,6 +4490,96 @@
     b.addEventListener("mousedown", (ev) => ev.preventDefault());
     b.addEventListener("click", () => arrangeSelected(kind));
   });
+
+  // Ký tự đặc biệt. Only while a text editor is open — there is no caret otherwise, and
+  // appending to a box that is merely selected would put the symbol somewhere the user
+  // did not choose. mousedown-preventDefault keeps the field focused (it would commit
+  // on blur otherwise — PALETTE_KEEP_SEL only covers focus moving INTO the panel).
+  document.querySelectorAll("#fmt-symbols [data-ch]").forEach((b) => {
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => {
+      if (ed._taInsert) return ed._taInsert(b.dataset.ch);
+      const msg = "Bấm vào trang (hoặc bấm đúp một hộp chữ) để gõ, rồi bấm ký tự cần chèn.";
+      toast(window.t ? window.t(msg) : msg, "");
+    });
+  });
+
+  // ---- the text default (Đặt làm mặc định / Xoá định dạng) ----
+  // The pure half (which fields, how they are validated, the factory style) is
+  // annot-text.js pickTextDefault — through window.AnnotText, not new bare names (BI-14).
+  // Stored renderer-side like the annotation colour (see ANNOT_COLOR_KEY), read once at
+  // load. A default only seeds NEW boxes: no existing box is touched, so a file saved
+  // before this existed re-saves to the same bytes (BI-59).
+  const TEXT_DEFAULT_LS = "nabu-text-default";
+  function setEdTextDefault(d) {
+    for (const k of window.AnnotText.TEXT_DEFAULT_KEYS) ed[k === "opacity" ? "textOpacity" : k] = d[k];
+  }
+  // The font bar shows the palette when no text box is selected; with one selected it
+  // shows THAT box (syncControls), so leave it alone then.
+  function syncTextPalette() {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (!(hit && hit.a.kind === "text")) {
+      $("ed-font").value = ed.font;
+      $("ed-fontsize").value = String(ed.fontSize);
+      setFmtBtn("ed-bold", ed.bold);
+      setFmtBtn("ed-italic", ed.italic);
+      setFmtBtn("ed-underline", ed.underline);
+    }
+    syncFmtPanel();
+  }
+  {
+    let d = null;
+    try {
+      d = window.AnnotText.parseTextDefault(localStorage.getItem(TEXT_DEFAULT_LS));
+    } catch (_) {}
+    if (d) {
+      setEdTextDefault(d);
+      syncTextPalette();
+    }
+  }
+  {
+    const b = $("fmt-set-default");
+    if (b) {
+      b.addEventListener("mousedown", (ev) => ev.preventDefault());
+      b.addEventListener("click", () => {
+        const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+        const src = hit && hit.a.kind === "text" ? hit.a : Object.assign(edTextStyle(), { fontSize: ed.fontSize });
+        const d = window.AnnotText.pickTextDefault(src);
+        setEdTextDefault(d);
+        let saved = true;
+        try {
+          localStorage.setItem(TEXT_DEFAULT_LS, JSON.stringify(d));
+        } catch (_) {
+          saved = false;
+        }
+        syncTextPalette();
+        const msg = saved
+          ? "Hộp chữ mới sẽ dùng kiểu này."
+          : "Đã đặt cho lần làm việc này — không lưu được cho lần mở sau.";
+        toast(window.t ? window.t(msg) : msg, saved ? "good" : "bad");
+      });
+    }
+  }
+  {
+    const b = $("fmt-clear");
+    if (b) {
+      b.addEventListener("mousedown", (ev) => ev.preventDefault());
+      b.addEventListener("click", () => {
+        const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+        if (!hit || hit.a.kind !== "text") return;
+        const a = hit.a;
+        pushEdUndo("clearfmt:" + ed.sel);
+        const f = window.AnnotText.pickTextDefault({});
+        for (const k of window.AnnotText.TEXT_DEFAULT_KEYS) a[k] = f[k];
+        const m = measureText(a.text, a.fontSize, textStyle(a));
+        a.w = m.w;
+        a.h = m.h;
+        syncOverlays();
+        syncControls();
+        syncFmtPanel();
+      });
+    }
+  }
 
   $("ed-penwidth").oninput = (e) => {
     ed.penWidth = Math.max(1, +e.target.value || DEFAULT_PEN_WIDTH);

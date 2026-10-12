@@ -408,16 +408,23 @@ check("the input string is not mutated and markers are not idempotent-safe by ac
 
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(A).sort(),
-  ["FONT_STACKS", "fontFamily",
+  ["FONT_STACKS",
+   // the text default (Đặt làm mặc định / Xoá định dạng): which fields, the size range
+   "TEXT_DEFAULT_KEYS", "TEXT_SIZE_DEFAULT", "TEXT_SIZE_MAX", "TEXT_SIZE_MIN",
+   "fontFamily",
    // justify on screen (isLastOfPara: the one ragged-line rule; justifiedDisplayLines:
    // the overlay's per-line elements for a justified box)
    "isLastOfPara", "justifiedDisplayLines",
    "layoutTextBox", "listDisplayText", "measureCtx",
-   "measureText", "normRot", "normTextStyle", "rotatedBox", "textFont", "textStyle",
+   "measureText", "normRot", "normTextStyle",
+   // the text default: validate a stored / picked style
+   "parseTextDefault", "pickTextDefault",
+   "rotatedBox", "textFont", "textStyle",
    // fixed-width boxes (wrapLine: the break rule; wrappedDisplayText: the overlay text)
    "wrapLine", "wrappedDisplayText"]);
-check("every export is callable (or the stacks table)",
-  Object.keys(A).map((k) => (k === "FONT_STACKS" ? typeof A[k] === "object" : typeof A[k] === "function")).every(Boolean), true);
+// UPPER_CASE exports are data (tables / numbers); everything else must be a function.
+check("every export is callable (or a data constant)",
+  Object.keys(A).map((k) => (/^[A-Z_]+$/.test(k) ? typeof A[k] === "object" || typeof A[k] === "number" : typeof A[k] === "function")).every(Boolean), true);
 
 
 // ==========================================================================
@@ -711,6 +718,44 @@ check("J4 isLastOfPara (point box): the last line and the line before a blank",
   check("J5d the list marker is atomic (justify must not widen the gap after it)",
     /\.an-text-mk \{[^}]*display: inline-block/.test(css), true);
 }
+
+// T — the text default ("Đặt làm mặc định" / "Xoá định dạng"). pickTextDefault decides
+// WHICH fields a default carries and validates them; parseTextDefault reads what a human
+// (or an older / newer build) may have left in localStorage. Wrong here = a junk value
+// reaches every new box, or a default silently carries colour / rotation / width.
+const { pickTextDefault, parseTextDefault, TEXT_DEFAULT_KEYS } = A;
+check("T1 the factory style is the plain box every fresh install has always drawn",
+  pickTextDefault({}),
+  { font: "sans", fontSize: 16, bold: false, italic: false, underline: false, strike: false, align: "left",
+    lineHeight: 1.3, paraSpacing: 0, letterSpacing: 0, wordSpacing: 0, charScale: 1, indent: 0, listType: "none", opacity: 1 });
+{
+  const box = { kind: "text", text: "x", font: "Arial", fontSize: 22, bold: true, italic: true, underline: true, strike: true,
+    align: "justify", lineHeight: 1.6, paraSpacing: 4, letterSpacing: 0.5, wordSpacing: 2, charScale: 0.9, indent: 18,
+    listType: "number", opacity: 0.8, color: "#123456", fill: "#ffff00", fillOpacity: 0.5, rot: 90, boxW: 200, x: 3, y: 4, w: 50, h: 20 };
+  const d = pickTextDefault(box);
+  check("T2 a box's style is carried field for field", d,
+    { font: "Arial", fontSize: 22, bold: true, italic: true, underline: true, strike: true, align: "justify", lineHeight: 1.6,
+      paraSpacing: 4, letterSpacing: 0.5, wordSpacing: 2, charScale: 0.9, indent: 18, listType: "number", opacity: 0.8 });
+  check("T2b …and NEVER colour, background, rotation, wrap width, text or geometry",
+    ["color", "fill", "fillOpacity", "rot", "boxW", "text", "kind", "x", "y", "w", "h"].filter((k) => k in d), []);
+  check("T2c the key list is exactly the output (one list, two readers: editor.js copies by it)",
+    Object.keys(d).sort(), TEXT_DEFAULT_KEYS.slice().sort());
+}
+check("T3 size is clamped to the size field's own range (#ed-fontsize 6…120)",
+  [2, 500, -1, "abc", undefined, "24"].map((v) => pickTextDefault({ fontSize: v }).fontSize), [6, 120, 16, 16, 16, 24]);
+check("T4 junk values fall back like normTextStyle (align, list, opacity, font)",
+  pickTextDefault({ align: "diagonal", listType: "stars", opacity: 7, font: 42 }),
+  Object.assign(pickTextDefault({}), { opacity: 1 }));
+check("T4b a font name that is not a sane string is dropped to sans",
+  [{ font: "   " }, { font: "x".repeat(500) }, { font: { a: 1 } }].map((o) => pickTextDefault(o).font), ["sans", "sans", "sans"]);
+check("T5 parseTextDefault: nothing saved / not JSON / not an object → null (never throws)",
+  [null, "", "{", "[1,2]", "42", "null", undefined].map(parseTextDefault), [null, null, null, null, null, null, null]);
+check("T5b …a saved default round-trips exactly",
+  parseTextDefault(JSON.stringify(pickTextDefault({ font: "Tahoma", fontSize: 12, align: "center" }))),
+  pickTextDefault({ font: "Tahoma", fontSize: 12, align: "center" }));
+check("T5c …and a hand-edited one is re-validated, extra keys dropped",
+  parseTextDefault('{"fontSize": 999, "color": "#ff0000", "bold": "yes"}'),
+  Object.assign(pickTextDefault({}), { fontSize: 120, bold: true }));
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

@@ -97,6 +97,20 @@
     "Bề rộng chữ xuống dòng của hộp đang chọn (chỉ hộp tự xuống dòng theo khung).":
       "The width the selected box wraps its text to (wrap-to-frame boxes only).",
     "Thu gọn / mở rộng bảng Định dạng": "Collapse / expand the formatting panel",
+    // --- Ký tự đặc biệt + kiểu mặc định (editor.js Format panel) ---
+    "Ký tự đặc biệt": "Special characters",
+    "Chèn vào chỗ con trỏ khi đang gõ chữ.": "Inserted at the cursor while you type.",
+    "Bấm vào trang (hoặc bấm đúp một hộp chữ) để gõ, rồi bấm ký tự cần chèn.":
+      "Click the page (or double-click a text box) to type, then press the character to insert.",
+    "Kiểu chữ": "Text style",
+    "Đặt làm mặc định": "Set as default",
+    "Xoá định dạng": "Clear formatting",
+    "Hộp chữ mới sẽ dùng kiểu của hộp đang chọn (hoặc kiểu đang đặt): font, cỡ, đậm / nghiêng / gạch, căn lề, giãn, danh sách, độ mờ. App nhớ cho lần sau.":
+      "New text boxes take the selected box's style (or the current one): font, size, bold / italic / underline, alignment, spacing, list, opacity. Remembered for next time.",
+    "Đưa hộp chữ đang chọn về kiểu gốc của app. Giữ nguyên màu, nền, góc xoay và bề rộng khung.":
+      "Returns the selected text box to the app's original style. Keeps its colour, background, rotation and frame width.",
+    "Hộp chữ mới sẽ dùng kiểu này.": "New text boxes will use this style.",
+    "Đã đặt cho lần làm việc này — không lưu được cho lần mở sau.": "Set for this session — it could not be saved for next time.",
     "Chữ xuống dòng theo bề rộng khung (kéo tay nắm để đổi bề rộng); chiều cao tự giãn. Cũng tạo được bằng cách kéo chuột khi đặt hộp chữ.":
       "Text wraps to the frame width (drag a grip to change it); the height grows by itself. You can also drag out the box when placing it.",
     // --- Tạo bản theo mẫu (batch-variants.js) ---

@@ -2910,6 +2910,38 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** gõ số đầu tiên làm hộp co về 24 pt; ô sửa được hộp thường; kéo tay nắm xong ô vẫn hiện số cũ; mở lại app
   bảng không nhớ thu gọn; bảng thu gọn vẫn đè 236 px; bấm nút thu gọn làm mất focus ô gõ / bỏ chọn hộp.
 
+### BI-108 · Bảng Định dạng: Ký tự đặc biệt + kiểu chữ mặc định ("Đặt làm mặc định" / "Xoá định dạng")
+- `index.html` `#fmt-symbols` (10 nút `data-ch`), `#fmt-set-default`, `#fmt-clear`; `annot-text.js` `TEXT_DEFAULT_KEYS`,
+  `TEXT_SIZE_MIN/MAX/DEFAULT`, `pickTextDefault`, `parseTextDefault` (thuần, `test:text` nhóm T); `editor.js` `ed._taInsert`
+  (trong `openTextEditor`, xoá ở `clearTaHooks`), khối "Ký tự đặc biệt", khối `TEXT_DEFAULT_LS`, `clr.disabled` trong
+  `syncFmtPanel`, dòng gán lại `#ed-font` cuối `loadSystemFonts`. Lưới: `npm run test:fmtpanel` nhóm S + D. Nghiên cứu
+  gốc: `docs/RESEARCH-2026-10-12-text-format-panel.md` P3, P4.
+- **Ký tự đặc biệt** chỉ chèn khi **ô gõ đang mở** (vào đúng con trỏ, thay vùng đang bôi đen) — không có ô gõ thì báo cách
+  mở, không tự nối vào hộp đang chọn. `document.execCommand("insertText")` để Ctrl+Z **trong ô gõ** gỡ được ký tự và
+  `input` chạy như phím gõ (growDown, hộp cố định bề rộng); `setRangeText` + `input` là đường dự phòng. Nút có
+  `mousedown` preventDefault — mất focus là ô gõ **chốt** hộp (`blur` → commit). Là ký tự Unicode, không phải chỉ số
+  trên/dưới (một hộp một kiểu). Glyph: bake là raster canvas ⇒ font dự phòng của hệ thống vẽ; đã đo cả 10 ký tự có
+  glyph thật ở sans/serif/mono trên Windows 11 (khác hẳn BI-102, nơi font **nhúng** của sidecar thiếu glyph).
+- **Đặt làm mặc định**: lấy kiểu của hộp đang chọn (không chọn ⇒ kiểu bảng đang đặt, **kèm cỡ chữ**) qua
+  `pickTextDefault` ⇒ ghi `localStorage["nabu-text-default"]` + nạp vào `ed` (`opacity` → `ed.textOpacity`). Mang:
+  font, cỡ, B/I/U, gạch ngang, căn lề, giãn dòng/đoạn/ký tự/từ, co giãn ngang, thụt lề, danh sách, độ mờ. **Không** mang:
+  màu (Cài đặt → Màu mặc định giữ, dùng chung mọi loại), nền, góc xoay, bề rộng khung. Không phải bước hoàn tác (là tuỳ chọn,
+  không sửa tài liệu). Nạp lúc load: chuỗi hỏng / sửa tay ⇒ kiểm lại từng trường hoặc bỏ qua; storage lỗi ⇒ không ném.
+  Chỉ hộp **mới** đổi — không đụng hộp nào đã có ⇒ file cũ lưu lại vẫn y byte (BI-59).
+- **Xoá định dạng**: chỉ bật khi đang chọn hộp chữ; đưa đúng các trường `TEXT_DEFAULT_KEYS` về kiểu **gốc của app**
+  (`pickTextDefault({})`), **không** về kiểu mặc định đã lưu — đó là lối thoát nếu đã lỡ đặt một mặc định lạ (chọn hộp → Xoá
+  định dạng → Đặt làm mặc định). Giữ màu, nền, góc xoay, bề rộng khung, chữ, vị trí; đo lại kích thước; một bước hoàn tác.
+- ⚠️ Ba cách viết kiểu gốc phải khớp: literal `ed` trong editor.js, `#ed-fontsize` min/max/value trong index.html, và
+  `pickTextDefault({})` (lưới D8/D8b). Font máy (`/fonts`) nạp trễ: trước đây `<select>` hiện trống nếu kiểu đang đặt là
+  một font máy — giờ `loadSystemFonts` gán lại `#ed-font` (khi không có hộp chữ đang chọn).
+- E2E (2026-10-12, app thật, chuột/phím thật, hai lần mở cùng hồ sơ): 17/17 — glyph 10 ký tự × 3 font; "S = 120 m" + ² + " ±5"
+  ⇒ đúng chuỗi, ô vẫn focus; ← ×3 + ⌀ ⇒ chèn giữa đúng chỗ; Ctrl+Z trong ô gỡ ⌀; không có ô gõ ⇒ gợi ý, hộp không đổi; hộp
+  24 pt + đậm + giữa ⇒ Đặt làm mặc định ⇒ lưu đúng 15 trường, không màu/xoay; hộp mới 24/đậm/giữa; Xoá định dạng ⇒ 16/thường/
+  trái, giữ màu; Ctrl+Z ⇒ về 24/đậm/giữa; EN đúng; mở lại app ⇒ bảng bắt đầu ở 24/đậm/giữa, hộp mới đúng kiểu.
+- **Vỡ khi:** bấm ký tự làm ô gõ đóng/chốt; ký tự vào cuối thay vì chỗ con trỏ; ô vuông thay ký tự trong file lưu; hộp
+  mới không theo mặc định sau khi mở lại app; Đặt làm mặc định đổi màu/góc xoay của hộp mới; Xoá định dạng xoá màu/nền/
+  xoay hoặc về kiểu đã lưu thay vì kiểu gốc; mở file cũ thấy hộp chữ đổi kiểu.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2984,6 +3016,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Hộp chữ cố định bề rộng (`boxW`, `wrapItemsPt`, drag `"textbox"`, `#fmt-wrap`) | BI-104 · `npm run test:text` **và** `npm test -- rotate managed bake-split` · **test tay**: Chú thích → T → **bấm** → gõ dòng dài → vẫn 1 dòng (như cũ) · **kéo** khi đặt → gõ → xuống dòng theo khung · chọn hộp → kéo tay nắm → dòng đổi, cao tự giãn · Xong → mở lại file → **cùng** chỗ ngắt · mở file **cũ** có hộp chữ → **không** đổi gì · hộp xoay → không có tay nắm · tiếng Việt có dấu sát mép phải |
 | Căn đều hộp chữ (`justifiedDisplayLines`, `isLastOfPara`, `renderJustifiedLines`, `.an-text-line`) | BI-106 · `npm run test:text` (nhóm J) · **test tay**: Chú thích → T → **Căn đều** → kéo hộp ~240 pt → gõ 2 đoạn tiếng Việt → Ctrl+Enter: mọi dòng trừ dòng cuối mỗi đoạn **thẳng mép phải** · hộp thường nhiều dòng có dòng trống → dòng trống còn nguyên · Xong → mở lại file → **cùng** hình · đổi sang Căn trái → về như cũ |
 | Bảng Định dạng: thu gọn (`#fmt-collapse`, `FMT_COLLAPSED_KEY`) / Bề rộng khung (`#fmt-boxw`) | BI-107 · `npm run test:fmtpanel` · **test tay**: Chú thích → T → bảng mở rộng → bấm **›** → dải hẹp, trang lộ ra · đóng app → mở lại → T → bảng vẫn thu gọn · bấm lại → mở · kéo hộp chữ ~240 pt → chọn → ô Bề rộng khung = 240 · gõ 150 → hộp hẹp, nhiều dòng hơn · Ctrl+Z → 240 · xoay 90° → gõ 120 → đổi dòng · Xong → mở lại file → cùng chỗ ngắt · hộp thường → ô tắt |
+| Bảng Định dạng: Ký tự đặc biệt (`#fmt-symbols`, `ed._taInsert`) / kiểu mặc định (`#fmt-set-default`, `#fmt-clear`, `pickTextDefault`, `TEXT_DEFAULT_LS`) | BI-108 · `npm run test:fmtpanel` + `test:text` (nhóm T) · **test tay**: T → bấm trang → gõ "m" → bấm ² → gõ tiếp: ô không đóng · Ctrl+Z trong ô → mất ² · Xong → mở lại file → ² còn đúng (không ô vuông) · chọn hộp → cỡ 24 + Đậm + Căn giữa → Đặt làm mặc định → hộp mới đúng kiểu, **màu không đổi** · đóng app → mở lại → hộp mới vẫn kiểu đó · chọn hộp → Xoá định dạng → về 16/thường/trái, giữ màu/nền/xoay · Ctrl+Z → về lại · mở file **cũ** → hộp chữ không đổi |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
