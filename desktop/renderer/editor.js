@@ -2621,6 +2621,9 @@
     const page = drag.page;
     drag = null;
     renderLayer(layer, page);
+    // A grip drag on a fixed text box moved its wrap width: "Bề rộng khung" must show
+    // the new number (a no-op while the panel is hidden).
+    syncFmtPanel();
   }
 
   // Finish a click-to-add-vertex cloud: needs ≥3 points, else it's discarded.
@@ -4292,6 +4295,12 @@
       wrapC.disabled = !(hit && hit.a.kind === "text");
       if (wrapC !== active) wrapC.checked = !wrapC.disabled && s.boxW > 0;
     }
+    // Bề rộng khung: only a selected FIXED box has a wrap width to show or set.
+    const bw = $("fmt-boxw");
+    if (bw) {
+      bw.disabled = !(hit && hit.a.kind === "text" && s.boxW > 0);
+      if (bw !== active) bw.value = bw.disabled ? "" : String(Math.round(s.boxW));
+    }
     setVal("fmt-linehl", s.lineHeight);
     setVal("fmt-para", s.paraSpacing);
     setVal("fmt-letter", s.letterSpacing);
@@ -4309,6 +4318,38 @@
     const selText = !!(hit && hit.a.kind === "text");
     panel.hidden = !(ed.active && (ed.tool === "text" || selText));
     if (!panel.hidden) syncFmtPanel();
+  }
+
+  // Thu gọn / mở rộng the panel. Independent of `hidden` above: updateFmtPanel still
+  // decides WHEN the panel is shown, this only decides how much of it — so a collapsed
+  // panel comes back collapsed next time a text box is selected, and next launch.
+  // Stored renderer-side like the annotation colour (see ANNOT_COLOR_KEY for why not
+  // prefs.json); every access in try/catch — unreadable storage just means "expanded".
+  const FMT_COLLAPSED_KEY = "nabu-fmt-collapsed";
+  function setFmtCollapsed(on, save) {
+    const panel = $("fmt-panel");
+    if (!panel) return;
+    panel.classList.toggle("collapsed", on);
+    const b = $("fmt-collapse");
+    if (b) b.setAttribute("aria-expanded", String(!on));
+    if (save) {
+      try {
+        localStorage.setItem(FMT_COLLAPSED_KEY, on ? "1" : "0");
+      } catch (_) {}
+    }
+  }
+  {
+    let on = false;
+    try {
+      on = localStorage.getItem(FMT_COLLAPSED_KEY) === "1";
+    } catch (_) {}
+    setFmtCollapsed(on, false);
+    const b = $("fmt-collapse");
+    if (b) {
+      // mousedown-preventDefault like every panel button: an open text editor keeps focus.
+      b.addEventListener("mousedown", (ev) => ev.preventDefault());
+      b.addEventListener("click", () => setFmtCollapsed(!$("fmt-panel").classList.contains("collapsed"), true));
+    }
   }
 
   // Alignment buttons (mousedown-preventDefault keeps any open editor focused).
@@ -4371,6 +4412,38 @@
       syncOverlays();
       syncFmtPanel();
     });
+  }
+  // Bề rộng khung (pt) — the grip drag's arithmetic, typed: set the wrap width, let the
+  // text decide the height, keep x/y (the grip's east-edge rule). Works on a ROTATED box
+  // too, which has no grips (BI-104) — that is half the reason the field exists.
+  // 'input' applies live but ignores a value below the minimum, so typing "150" does not
+  // squash the box to 24pt at the "1"; 'change' (Enter / leaving the field) clamps and
+  // writes the clamped number back. One coalesced undo step per burst of typing.
+  {
+    const bw = $("fmt-boxw");
+    const applyBoxW = (final) => {
+      const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+      if (!hit || hit.a.kind !== "text" || !(hit.a.boxW > 0)) return;
+      const a = hit.a;
+      const v = +bw.value;
+      if (!isFinite(v) || v <= 0 || (!final && v < MIN_BOX_W)) {
+        if (final) bw.value = String(Math.round(a.boxW));
+        return;
+      }
+      const w = Math.min(+bw.max || 14400, Math.max(MIN_BOX_W, v));
+      if (final) bw.value = String(Math.round(w));
+      if (w === a.boxW) return;
+      pushEdUndo("boxw:" + ed.sel);
+      a.boxW = w;
+      const m = measureText(a.text, a.fontSize, textStyle(a));
+      a.w = m.w;
+      a.h = m.h;
+      syncOverlays();
+    };
+    if (bw) {
+      bw.addEventListener("input", () => applyBoxW(false));
+      bw.addEventListener("change", () => applyBoxW(true));
+    }
   }
   // Numeric spacing / scale / opacity (live via 'input', coalesced undo per field)
   $("fmt-linehl").addEventListener("input", (e) =>

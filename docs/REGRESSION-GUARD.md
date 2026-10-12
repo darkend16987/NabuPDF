@@ -2882,6 +2882,34 @@ _Ghi 2026-09-30 (v0.2.73)._
   giãn trên màn hình; khoảng sau "1."/"•" bị nới; dòng trống giữa hai đoạn biến mất trên màn hình; hộp căn
   trái/giữa/phải đổi bố cục.
 
+### BI-107 · Bảng Định dạng văn bản: thu gọn / mở rộng (nhớ theo máy) + ô "Bề rộng khung"
+- `index.html` `#fmt-collapse` (trong `.fmt-head`), `#fmt-boxw` (ngay sau `#fmt-wrap`); `editor.js` banner
+  Format panel: `FMT_COLLAPSED_KEY`/`setFmtCollapsed`, khối "Bề rộng khung (pt)", nửa `bw` của `syncFmtPanel`,
+  `syncFmtPanel()` cuối `onUp`; `app.css` `.fmt-panel.collapsed`. Lưới: `npm run test:fmtpanel` (cắt từng khối khỏi
+  editor.js chạy trên DOM giả + chốt markup/CSS/i18n). Nghiên cứu gốc: `docs/RESEARCH-2026-10-12-text-format-panel.md` P1, P2.
+- **Thu gọn** là một **class**, độc lập với `hidden`: `updateFmtPanel` vẫn quyết **khi nào** bảng hiện, nút chỉ quyết hiện
+  **bao nhiêu** (dải 40 px chỉ còn nút). Lưu `localStorage["nabu-fmt-collapsed"]` ("1"/"0"), mọi truy cập trong
+  try/catch (không đọc được = mở rộng). Tiêu đề nút **tĩnh** — không có chữ động nên không cần `SKIP_IDS` (BI-10).
+  `mousedown` preventDefault như mọi nút của bảng (ô gõ đang mở không mất focus; `#fmt-panel` nằm trong
+  `PALETTE_KEEP_SEL` nên bấm nút không bỏ chọn hộp).
+- **Bề rộng khung**: cùng số học với kéo tay nắm (đặt `boxW`, đo lại `w/h`, giữ `x/y`). Chỉ bật cho hộp **cố định bề
+  rộng** đang chọn — ô này **không** biến hộp thường thành hộp cố định (việc đó là của `#fmt-wrap`). `input` áp ngay
+  nhưng **bỏ qua** số < `MIN_BOX_W` (gõ "150" không bóp hộp về 24 pt ở chữ "1"); `change` (Enter / rời ô) kẹp vào
+  [`MIN_BOX_W`, max của ô] và ghi lại số đã kẹp; rác/rỗng ⇒ hiện lại bề rộng hiện tại. `min` của markup **phải bằng**
+  `MIN_BOX_W` (lưới K8). Hộp **đã xoay** (không có tay nắm, BI-104) đổi được bề rộng qua ô này.
+- Hoàn tác: một bước cho mỗi đợt gõ (khoá `boxw:<id>`, gộp 800 ms như mọi ô số của bảng). Hai lần sửa cách nhau < 800 ms
+  gộp làm một — cùng luật với Giãn dòng/Giãn ký tự…, không phải lỗi riêng của ô này.
+- E2E (2026-10-12, app thật, chuột/phím thật, hai lần mở app cùng hồ sơ): 17/17 — mở lần đầu: bảng mở rộng 236 px, chưa lưu
+  gì; ô tắt khi chưa chọn; hộp kéo 240 pt ⇒ ô hiện 240; gõ "1" không đổi hộp, "150" ⇒ hộp hẹp lại 3 → 5 dòng; Tab với "5" ⇒
+  24; Ctrl+Z hai lần ⇒ 150 rồi 240; xoay 90° ⇒ không tay nắm, ô vẫn bật, 120 ⇒ 6 dòng; thu gọn ⇒ dải 40 px, vẫn giữ chọn;
+  EN dịch đúng; mở lại app ⇒ bảng **vẫn thu gọn**, bấm ⇒ mở 236 px. (Bẫy probe: Chromium ghi localStorage xuống đĩa trễ
+  ~5 s — giết tiến trình sớm hơn thì "mất"; thoát bình thường thì không.)
+- Chưa làm (cố ý): hộp xoay đổi bề rộng giữ `x/y` như tay nắm, nên tâm xoay dịch theo — giống hệt trên file đã lưu (không
+  lệch BI-40), chỉ là hộp "trượt" một chút trên màn hình. Hoàn tác (`edRestore`) bỏ chọn nhưng không gọi
+  `updateFmtPanel` — có từ trước, ô Tự xuống dòng cũng vậy; ô Bề rộng khung khi đó gõ vào không làm gì.
+- **Vỡ khi:** gõ số đầu tiên làm hộp co về 24 pt; ô sửa được hộp thường; kéo tay nắm xong ô vẫn hiện số cũ; mở lại app
+  bảng không nhớ thu gọn; bảng thu gọn vẫn đè 236 px; bấm nút thu gọn làm mất focus ô gõ / bỏ chọn hộp.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2955,6 +2983,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | "Khớp nguyên mã" (`code_boundary` của `_find_occurrences` / `/text-find(-bin)`) | `.venv\Scripts\python test_text_find.py` (C1–C7c) · mặc định **tắt** ⇒ Ctrl+H không đổi gì · trên bộ bản vẽ khách: `I1` + khớp nguyên mã = 25 chỗ (đủ 12 số hiệu `I1_BD-S-…`), **không** khớp `I10`/`I11`/`PI1`; "Đúng nguyên từ" chỉ ra 13 (coi `_` là chữ — cố ý giữ nguyên) |
 | Hộp chữ cố định bề rộng (`boxW`, `wrapItemsPt`, drag `"textbox"`, `#fmt-wrap`) | BI-104 · `npm run test:text` **và** `npm test -- rotate managed bake-split` · **test tay**: Chú thích → T → **bấm** → gõ dòng dài → vẫn 1 dòng (như cũ) · **kéo** khi đặt → gõ → xuống dòng theo khung · chọn hộp → kéo tay nắm → dòng đổi, cao tự giãn · Xong → mở lại file → **cùng** chỗ ngắt · mở file **cũ** có hộp chữ → **không** đổi gì · hộp xoay → không có tay nắm · tiếng Việt có dấu sát mép phải |
 | Căn đều hộp chữ (`justifiedDisplayLines`, `isLastOfPara`, `renderJustifiedLines`, `.an-text-line`) | BI-106 · `npm run test:text` (nhóm J) · **test tay**: Chú thích → T → **Căn đều** → kéo hộp ~240 pt → gõ 2 đoạn tiếng Việt → Ctrl+Enter: mọi dòng trừ dòng cuối mỗi đoạn **thẳng mép phải** · hộp thường nhiều dòng có dòng trống → dòng trống còn nguyên · Xong → mở lại file → **cùng** hình · đổi sang Căn trái → về như cũ |
+| Bảng Định dạng: thu gọn (`#fmt-collapse`, `FMT_COLLAPSED_KEY`) / Bề rộng khung (`#fmt-boxw`) | BI-107 · `npm run test:fmtpanel` · **test tay**: Chú thích → T → bảng mở rộng → bấm **›** → dải hẹp, trang lộ ra · đóng app → mở lại → T → bảng vẫn thu gọn · bấm lại → mở · kéo hộp chữ ~240 pt → chọn → ô Bề rộng khung = 240 · gõ 150 → hộp hẹp, nhiều dòng hơn · Ctrl+Z → 240 · xoay 90° → gõ 120 → đổi dòng · Xong → mở lại file → cùng chỗ ngắt · hộp thường → ô tắt |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

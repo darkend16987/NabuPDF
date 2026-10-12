@@ -455,7 +455,14 @@ body.presenting .sidebar-resizer { display: none; }
   display: flex; flex-direction: column;
   box-shadow: -8px 0 24px rgba(0,0,0,0.3); z-index: 21; overflow-y: auto;
 }
-.fmt-head { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.fmt-head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* Thu gọn: a 40px strip with only the toggle (chevron turns to point back out). */
+.fmt-collapse { width: 26px; height: 26px; flex: none; }
+.fmt-collapse svg { transition: transform .15s; }
+.fmt-panel.collapsed { width: 40px; overflow: hidden; }
+.fmt-panel.collapsed > :not(.fmt-head), .fmt-panel.collapsed .fmt-head b { display: none; }
+.fmt-panel.collapsed .fmt-head { padding: 8px 6px; border-bottom: 0; justify-content: center; }
+.fmt-panel.collapsed .fmt-collapse svg { transform: rotate(180deg); }
 .fmt-head b { font-size: 13px; }
 .fmt-section { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .fmt-title { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
