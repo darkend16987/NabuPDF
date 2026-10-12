@@ -1129,6 +1129,29 @@ function readManaged(doc) {
               stubCtx._calls.findIndex((c) => c[0] === "rotate"), true);
         }
 
+        // ---- Where a turned box turns (BI-110) -----------------------------------
+        // The bake puts the PNG at (a.x − padPt + ox, a.y − padPt + oy), padPt = 0.15·size,
+        // and the canvas turns about its own centre — so the point the FILE turns about,
+        // measured from the box's top-left, is (−padPt + ox + wPt/2, −padPt + oy + hPt/2).
+        // The overlay and the inline editor turn about annot-text.js textRotationPivot; the
+        // two must be the same number or a turned box sits somewhere else on screen than in
+        // the file (measured before the fix: 90° ≈ 4.9pt at 16pt, 14.7pt at 48pt).
+        for (const deg of [30, 90, 180, -45]) {
+          const st = Object.assign({ rot: deg }, style);
+          const r = renderTextPng("Nghiem thu", FS, "#000000", st);
+          const padPt = FS * 0.15;
+          const filePivot = { x: -padPt + r.ox + r.wPt / 2, y: -padPt + r.oy + r.hPt / 2 };
+          const pv = A.textRotationPivot("Nghiem thu", st, FS, stubCtx);
+          check(`pivot rot ${deg}: the overlay turns about the very point the bake does`,
+            [+pv.x.toFixed(6), +pv.y.toFixed(6)], [+filePivot.x.toFixed(6), +filePivot.y.toFixed(6)]);
+        }
+        {
+          const BAKE = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "editor-bake.js"), "utf8");
+          const pads = BAKE.match(/const padPt = a\.fontSize \* ([\d.]+);/g) || [];
+          check("pivot: every bake placement pad is TEXT_PLACE_PAD_EM (the number the pivot subtracts)",
+            pads.length >= 2 && pads.every((m) => +/\* ([\d.]+);/.exec(m)[1] === A.TEXT_PLACE_PAD_EM), true);
+        }
+
         // ---- Viền khung (BI-109) on the raster --------------------------------
         const SR = (calls) => calls.filter((c) => c[0] === "strokeRect");
         stubCtx._calls.length = 0;

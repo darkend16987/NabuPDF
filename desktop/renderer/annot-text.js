@@ -442,6 +442,22 @@ function textRasterBoxPt(text, style, fontSizePt, ctx) {
   return { w: g.cw / TEXT_RS, h: g.chh / TEXT_RS };
 }
 
+// Where a TURNED text box turns, as an offset (pt) from its top-left (a.x, a.y): the
+// centre of its raster. renderTextPng turns the canvas about the canvas's own centre and
+// the bake puts that canvas down at (a.x − 0.15·size, a.y − 0.15·size) — so the pivot the
+// SAVED FILE uses is (rasterW/2 − pad, rasterH/2 − pad). The overlay used to turn about the
+// element's centre (a.w/2, a.h/2) instead, which sits `pad` right and down of it (BI-71
+// measured the two centres: a.x + 46.50 vs a.x + 44.27 at 16pt). Turning one picture about
+// two different points adds a translation of 2·pad·√2·sin(θ/2): 90° ≈ 4.4pt measured at
+// 16pt, growing with the font size — the box on screen was not where the file put it.
+// One pivot, read by the element AND by the inline editor that retypes it (BI-110).
+const TEXT_PLACE_PAD_EM = 0.15; // the bake's padPt = a.fontSize * 0.15 (drawOneAnnot / addManagedAnnot)
+function textRotationPivot(text, style, fontSizePt, ctx) {
+  const rb = textRasterBoxPt(text, style, fontSizePt, ctx);
+  const pad = fontSizePt * TEXT_PLACE_PAD_EM;
+  return { x: rb.w / 2 - pad, y: rb.h / 2 - pad };
+}
+
 // ---- viền khung (border) of a text box ---------------------------------------
 //
 // `borderColor` present (a #rrggbb) ⇔ the box has a border; `borderWidth` (pt) and
@@ -564,7 +580,7 @@ if (typeof module !== "undefined" && module.exports) {
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
     TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
-    copyTextFormat, applyTextFormat,
+    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot,
   };
 }
 if (typeof window !== "undefined") {
@@ -575,6 +591,6 @@ if (typeof window !== "undefined") {
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
     TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
-    copyTextFormat, applyTextFormat,
+    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot,
   };
 }

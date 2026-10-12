@@ -1248,21 +1248,26 @@
       // the only writer here.
       //
       // Read right to left, which is the order they apply: squeeze the glyphs inside
-      // the box about its top-left (unchanged), then turn the result about the box's
-      // VISUAL CENTRE. The centre is spelled out as translate·rotate·translate rather
-      // than switching `transform-origin` to `50% 50%`, because the element was
-      // deliberately WIDENED by 1/charScale above — its own 50% is not the centre of
-      // what the user sees. The raster turns about the same visual centre, so the two
-      // agree. `-st.rot`: CSS rotate() is clockwise, our angle is anti-clockwise
-      // (annot-text.js normRot), the same minus the watermark element carries.
+      // the box about its top-left (unchanged), then turn the result about the point the
+      // SAVED FILE turns it about — the centre of the box's raster (annot-text.js
+      // textRotationPivot), NOT the element's centre. They differ by `pad` on each axis
+      // (the raster starts at −pad, the element at 0 — BI-71), and turning about the
+      // element's centre put a 90° box ~4.4pt (16pt text) away from where the file has it
+      // (BI-110). The pivot is in VISUAL px — the rotation applies after scaleX — so it is
+      // not divided by charScale. Spelled out as translate·rotate·translate rather than a
+      // `transform-origin`, because the element was deliberately WIDENED by 1/charScale
+      // above and no percentage of it names this point. `-st.rot`: CSS rotate() is
+      // clockwise, our angle is anti-clockwise (annot-text.js normRot), the same minus the
+      // watermark element carries.
       //
       // Selecting and dragging need no extra maths: hit-testing here is
       // `e.target.closest(".an")`, so the browser tests the TURNED shape for us, and a
       // move is a translation, which does not care about the angle.
       const tf = [];
       if (st.rot) {
-        const cxPx = (a.w * s) / 2;
-        const cyPx = (a.h * s) / 2;
+        const pv = window.AnnotText.textRotationPivot(a.text, st, a.fontSize);
+        const cxPx = pv.x * s;
+        const cyPx = pv.y * s;
         tf.push(`translate(${cxPx}px, ${cyPx}px)`, `rotate(${-st.rot}deg)`,
                 `translate(${-cxPx}px, ${-cyPx}px)`);
       }
@@ -2917,8 +2922,8 @@
     }) : null;
     if (ro) ro.observe(ta);
     // Retyping a TURNED box types at the same angle, so the words never jump between
-    // editing and not editing. The pivot is the ANNOT's visual centre, not the
-    // textarea's: the textarea is a fixed TA_ROWS x TA_COLS slab that has nothing to
+    // editing and not editing. The pivot is the one the annot turns about on screen and
+    // in the file (annot-text.js textRotationPivot, BI-110), not the textarea's: the textarea is a fixed TA_ROWS x TA_COLS slab that has nothing to
     // do with the box's size, so `transform-origin: 50% 50%` would spin it about a
     // different point and the text would slide out from under the cursor. Measured
     // after appendChild because offsetWidth is 0 before layout.
@@ -2927,8 +2932,9 @@
     // box, and typing into a slanted empty field to create one is a worse first
     // experience than typing straight and then turning it.
     if (existing && st.rot) {
-      const cx = (existing.x + existing.w / 2) * state.scale;
-      const cy = (existing.y + existing.h / 2) * state.scale;
+      const pv = window.AnnotText.textRotationPivot(existing.text, st, existing.fontSize);
+      const cx = (existing.x + pv.x) * state.scale;
+      const cy = (existing.y + pv.y) * state.scale;
       ta.style.transformOrigin = "left top";
       ta.style.transform =
         `translate(${cx - p.x * state.scale}px, ${cy - p.y * state.scale}px) ` +

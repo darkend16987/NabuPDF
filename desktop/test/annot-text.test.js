@@ -413,6 +413,8 @@ check("node import exposes exactly the surface editor.js calls by bare name",
    "TEXT_BORDER_MAX", "TEXT_BORDER_MIN",
    // the text default (Đặt làm mặc định / Xoá định dạng): which fields, the size range
    "TEXT_DEFAULT_KEYS",
+   // the bake's placement pad (0.15em) — what the rotation pivot subtracts
+   "TEXT_PLACE_PAD_EM",
    // the raster's supersample factor (renderTextPng + the overlay border)
    "TEXT_RS",
    "TEXT_SIZE_DEFAULT", "TEXT_SIZE_MAX", "TEXT_SIZE_MIN",
@@ -432,6 +434,8 @@ check("node import exposes exactly the surface editor.js calls by bare name",
    "rotatedBox", "textFont",
    // the raster's rectangle — renderTextPng's arithmetic, read back by the overlay
    "textRasterBoxPt", "textRasterGeom",
+   // where a turned box turns (the raster's centre) — overlay + inline editor (BI-110)
+   "textRotationPivot",
    "textStyle",
    // fixed-width boxes (wrapLine: the break rule; wrappedDisplayText: the overlay text)
    "wrapLine", "wrappedDisplayText"]);
@@ -837,6 +841,38 @@ check("V4 textRasterGeom is renderTextPng's arithmetic: pad = ceil(0.15·fpx), s
   check("V6c a dotted one writes its dash", MC.serializeManaged(Object.assign({}, base, { borderColor: "#ff0000", borderDash: "dot" })).borderDash, "dot");
   check("V6d junk border keys are not written (normalised on the way out)",
     Object.keys(MC.serializeManaged(Object.assign({}, base, { borderColor: "nope", borderWidth: 3 }))).filter((k) => /^border/.test(k)), []);
+}
+
+// X — where a TURNED box turns (BI-110). The overlay used to turn about the element's
+// centre (a.w/2, a.h/2); the file turns about the raster's centre, `pad` up-left of it,
+// so a 90° box landed ~4.9pt (16pt) / ~14.7pt (48pt) away from the screen. The bake half
+// of this invariant is in test:managed (renderTextPng's own arithmetic); here: the pure
+// function and the two editor.js call sites.
+const { textRotationPivot, TEXT_PLACE_PAD_EM } = A;
+check("X1 the placement pad is the bake's 0.15em", TEXT_PLACE_PAD_EM, 0.15);
+{
+  const hint = () => {
+    const c = { font: "10px x", measureText(str) { const px = parseFloat(/([\d.]+)px/.exec(c.font)[1]); return { width: [...str].length * Math.round(px * 0.55 + 0.4) }; } };
+    return c;
+  };
+  for (const size of [16, 48]) {
+    const rb = textRasterBoxPt("Nhãn ghi chú", { rot: 90 }, size, hint());
+    check(`X2 ${size}pt: pivot = raster centre measured from the box's top-left (rb/2 − 0.15·size)`,
+      textRotationPivot("Nhãn ghi chú", { rot: 90 }, size, hint()), { x: rb.w / 2 - 0.15 * size, y: rb.h / 2 - 0.15 * size });
+    const m = measureText("Nhãn ghi chú", size, { rot: 90 }, hint());
+    const pv = textRotationPivot("Nhãn ghi chú", { rot: 90 }, size, hint());
+    check(`X2b ${size}pt: …and it is NOT the element's centre (that was the bug: ~pad up-left of it)`,
+      Math.abs(m.w / 2 - pv.x) > 0.1 * size && Math.abs(m.h / 2 - pv.y) > 0.1 * size, true);
+  }
+}
+{
+  const ed = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "editor.js"), "utf8");
+  check("X3 renderAnnot turns a box about textRotationPivot (visual px, not divided by charScale)",
+    /if \(st\.rot\) \{\s*const pv = window\.AnnotText\.textRotationPivot\(a\.text, st, a\.fontSize\);\s*const cxPx = pv\.x \* s;\s*const cyPx = pv\.y \* s;/.test(ed), true);
+  check("X3b …and the inline editor that retypes it turns about the SAME point (no jump on open/close)",
+    /if \(existing && st\.rot\) \{\s*const pv = window\.AnnotText\.textRotationPivot\(existing\.text, st, existing\.fontSize\);\s*const cx = \(existing\.x \+ pv\.x\) \* state\.scale;\s*const cy = \(existing\.y \+ pv\.y\) \* state\.scale;/.test(ed), true);
+  check("X3c no rotation pivot left on the element's centre (a.w / 2 · a.h / 2)",
+    /const cxPx = \(a\.w \* s\) \/ 2;|existing\.x \+ existing\.w \/ 2/.test(ed), false);
 }
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);

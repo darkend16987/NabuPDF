@@ -1825,7 +1825,7 @@ _Ghi 2026-08-13. **Đo được, không suy luận.**_
   còn dựa vào DOM — chuyển sang hit-test hình học thì **phải** xoay ngược con trỏ trước.
 - **Transform của overlay là MỘT chuỗi.** `charScale` từng là writer duy nhất của
   `el.style.transform`; thuộc tính này **không cộng dồn**, nên gán hai lần là mất cái đầu.
-  Và tâm được viết thẳng ra bằng `translate·rotate·translate` chứ **không** đổi
+  Và tâm (từ v0.2.79: **tâm raster**, `textRotationPivot` — xem BI-110) được viết thẳng ra bằng `translate·rotate·translate` chứ **không** đổi
   `transform-origin` sang `50% 50%`: phần tử đã bị **nới rộng** `1/charScale`, nên 50% của
   nó không phải tâm người dùng nhìn thấy.
 - **Vỡ khi:** xoay hộp rồi Lưu → mở lại **thẳng lại** (quên `rot` trong payload) · chữ
@@ -2972,7 +2972,7 @@ _Ghi 2026-09-30 (v0.2.73)._
   viewer, BI-4): viền 2 pt — mép file vs màn hình lệch ≤ **0,27 pt**; nét đứt + co giãn ngang 60% ≤ **0,24 pt**; vào lại Chú
   thích ⇒ viền đọc lại từ file; Ctrl+Shift+C → chọn 2 hộp (Ctrl+click) → Ctrl+Shift+V ⇒ cả hai 22 pt/đậm/viền đỏ đứt, số vật thể
   không đổi (phím không dán vật thể); một Ctrl+Z gỡ cả hai; nút Dán định dạng cũng chạy; EN đúng. 15/15.
-- ⚠️ **Hộp đã xoay — lệch CÓ TỪ v0.2.63, viền chỉ làm lộ ra** (đo cùng probe): xoay 90° ⇒ khung trong file dịch (+0,4; −4,2) pt
+- ✅ (đã sửa ở BI-110) **Hộp đã xoay — lệch CÓ TỪ v0.2.63, viền chỉ làm lộ ra** (đo cùng probe): xoay 90° ⇒ khung trong file dịch (+0,4; −4,2) pt
   so với màn hình, cùng kích thước; 30° ⇒ 1,7 pt. Nguyên nhân: `renderAnnot` xoay phần tử quanh tâm **phần tử** (a.w/2, a.h/2),
   `renderTextPng` xoay quanh tâm **raster** = tâm phần tử − (pad, pad); hai tâm khác nhau ⇒ thêm tịnh tiến
   2·pad·√2·sin(θ/2) (90° ≈ 4,8 pt ở 16 pt, tỉ lệ cỡ chữ). Glyph lệch y như viền (cùng khung xoay). File là đúng, màn hình sai;
@@ -2981,6 +2981,33 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** file lưu có viền lệch / dày / mảnh khác màn hình; hộp không viền đổi byte; co giãn ngang làm cạnh dọc mảnh đi trên
   màn hình; dán định dạng đổi góc xoay / bề rộng khung / chữ, hoặc dán vào hình vuông/mây; FreeText đối tác bị thêm viền Nabu;
   Ctrl+Shift+V dán cả vật thể.
+
+### BI-110 · Hộp chữ XOAY: màn hình xoay quanh **tâm raster**, đúng điểm file đã lưu xoay
+- `annot-text.js` `textRotationPivot` (+ `TEXT_PLACE_PAD_EM` = 0,15 — `padPt` của bake); `editor.js` `renderAnnot` (khối
+  `if (st.rot)`) **và** `openTextEditor` (khối `if (existing && st.rot)`). Lưới: `test:text` nhóm X (hàm thuần + chốt hai chỗ gọi),
+  `test:managed` "pivot rot …" (so với **chính số học** của `renderTextPng` + vị trí đặt của bake trên canvas giả), 7/7 đột biến đỏ.
+- **Lỗi cũ (từ v0.2.63, lộ ra khi làm viền BI-109):** overlay xoay phần tử quanh tâm **phần tử** (a.w/2, a.h/2); raster xoay quanh
+  tâm **canvas** và bake đặt canvas ở (a.x − pad, a.y − pad) ⇒ điểm file xoay = (rasterW/2 − pad, rasterH/2 − pad) tính từ góc hộp.
+  Hai tâm cách nhau ≈ (pad, pad) (BI-71 đã đo: a.x + 46,50 vs a.x + 44,27 ở 16 pt). Xoay một hình quanh hai điểm khác nhau = thêm
+  tịnh tiến 2·pad·√2·sin(θ/2). Comment cũ "the raster turns about the same visual centre, so the two agree" là **sai**.
+- **Đo (app thật, chuột/phím thật, pixel đỏ của viền trong file đã lưu render bằng pdf.js 2× vs rect `<svg>` trên màn hình; viền
+  dính cứng với glyph trong cùng khung xoay):**
+  ```
+                 16pt 30° / 90° / 180°        48pt 30° / 90° / 180°
+  trước (HEAD)   1,67  / 4,89 / 5,39 pt       5,00 / 14,69 / 14,69 pt
+  sau            0,34  / 0,22 / 0,42 pt       0,50 /  0,52 /  0,21 pt
+  sau, co ngang 60%: 0,51 / 0,44 / 0,43        0,59 /  0,19 /  0,21 pt
+  ```
+  Phần dư ≤ 0,6 pt là hạt ceil 1/RS + chênh `pad` placement (0,15·size) với `pad` raster (ceil ở 3×) — cùng cỡ BI-71.
+- ⚠️ **Tâm tính bằng px HIỂN THỊ, không chia `charScale`:** phép xoay áp SAU `scaleX`, nên toạ độ tâm là toạ độ người dùng thấy
+  (đo: co ngang 60% vẫn ≤ 0,59 pt). Đừng "sửa" cho giống `el.style.width` (chia `charScale`) — lưới X3 đỏ.
+- ⚠️ **Ô gõ của hộp xoay phải xoay quanh CÙNG điểm** (`textRotationPivot(existing.text, …)`), nếu không chữ nhảy khi mở/đóng ô
+  gõ. Đo: điểm bất động của transform ô gõ trùng điểm của phần tử (lệch 0,000 pt, cả khi co ngang — phải tách `scaleX` khỏi ma
+  trận phần tử trước khi giải, nếu không "điểm bất động" của rotate∘scale không phải tâm).
+- Hộp **không xoay** không đổi gì (khối chỉ chạy khi `st.rot`); chọn / kéo vẫn nhờ DOM hit-test (BI-70). Tốn một
+  `layoutTextBox` ở 3× mỗi lần vẽ, chỉ cho hộp đang xoay.
+- **Vỡ khi:** hộp xoay trên màn hình và trong file đã lưu không trùng (rõ nhất ở 90°/180° chữ to); bấm đúp hộp xoay để sửa thì
+  chữ nhảy chỗ; hộp xoay có co giãn ngang lệch ngang khi lưu.
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
@@ -3058,6 +3085,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Bảng Định dạng: thu gọn (`#fmt-collapse`, `FMT_COLLAPSED_KEY`) / Bề rộng khung (`#fmt-boxw`) | BI-107 · `npm run test:fmtpanel` · **test tay**: Chú thích → T → bảng mở rộng → bấm **›** → dải hẹp, trang lộ ra · đóng app → mở lại → T → bảng vẫn thu gọn · bấm lại → mở · kéo hộp chữ ~240 pt → chọn → ô Bề rộng khung = 240 · gõ 150 → hộp hẹp, nhiều dòng hơn · Ctrl+Z → 240 · xoay 90° → gõ 120 → đổi dòng · Xong → mở lại file → cùng chỗ ngắt · hộp thường → ô tắt |
 | Bảng Định dạng: Ký tự đặc biệt (`#fmt-symbols`, `ed._taInsert`) / kiểu mặc định (`#fmt-set-default`, `#fmt-clear`, `pickTextDefault`, `TEXT_DEFAULT_LS`) | BI-108 · `npm run test:fmtpanel` + `test:text` (nhóm T) · **test tay**: T → bấm trang → gõ "m" → bấm ² → gõ tiếp: ô không đóng · Ctrl+Z trong ô → mất ² · Xong → mở lại file → ² còn đúng (không ô vuông) · chọn hộp → cỡ 24 + Đậm + Căn giữa → Đặt làm mặc định → hộp mới đúng kiểu, **màu không đổi** · đóng app → mở lại → hộp mới vẫn kiểu đó · chọn hộp → Xoá định dạng → về 16/thường/trái, giữ màu/nền/xoay · Ctrl+Z → về lại · mở file **cũ** → hộp chữ không đổi |
 | Viền khung hộp chữ (`borderColor/Width/Dash`, `normTextBorder`, `textRasterGeom`/`textRasterBoxPt`, `.an-text-border`, `writeBorder`) · Sao chép / Dán định dạng (`copyTextFormat`, `applyTextFormat`, `fmtClip`, Ctrl+Shift+C/V) | BI-109 · `npm run test:text` (V, F) + `test:fmtpanel` (P5, B) + `npm test -- managed` (raster + round-trip) · **test tay**: chọn hộp chữ → Viền quanh hộp chữ → đỏ 2 pt → Xong → mở lại file: viền **đúng chỗ, cùng độ dày** · nét đứt + Co giãn ngang 60% → cạnh dọc không mảnh hơn cạnh ngang · hộp đã xoay có viền → Xong → so · mở file **cũ** → không hộp nào có viền · Ctrl+Shift+C một hộp → Ctrl+click 2 hộp khác → Ctrl+Shift+V → đúng kiểu, góc xoay/bề rộng giữ · Ctrl+Z một lần → cả hai về · nhóm có cả hình vuông → hình vuông không đổi · FreeText từ Acrobat → ô Viền tắt |
+| Tâm xoay hộp chữ (`textRotationPivot`, khối `if (st.rot)` của `renderAnnot`, `if (existing && st.rot)` của `openTextEditor`) | BI-110 · `npm run test:text` (X) + `npm test -- managed` (pivot) · **test tay**: hộp chữ 48 pt có Viền → xoay 90° → nhớ chỗ khung trên màn hình → Xong → **mở lại file** (hoặc xem bằng Foxit) → khung **cùng chỗ** · lặp 30°, 180° và với Co giãn ngang 60% · bấm đúp hộp xoay → ô gõ **không nhảy** khỏi chữ · hộp không xoay → không đổi gì |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
