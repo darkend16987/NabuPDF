@@ -171,9 +171,7 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
   items.forEach((it, idx) => {
     if (!it.blank) {
       const lw = lineTextWidth(it.str);
-      // A fixed-width box justifies every wrapped line except the one that ends its
-      // paragraph (Word's rule); a point box keeps the rule it always had.
-      const lastOfPara = boxW ? !!it.endsPara : idx === items.length - 1 || items[idx + 1].blank;
+      const lastOfPara = isLastOfPara(items, idx, !!boxW);
       let offset = 0;
       let justifyExtra = 0;
       if (s.align === "center") offset = (blockW - lw) / 2;
@@ -209,6 +207,15 @@ function layoutTextBox(text, style, ctx, fpx, upp) {
   // fixed-width box) — read by wrappedDisplayText so the on-screen element shows the
   // very same breaks.
   return { width: Math.max(1, textLeft + blockW), height: Math.max(lh, y), ops, decos, style: s, lines: items };
+}
+
+// Which laid-out line is the last of its paragraph — the one line justify leaves
+// ragged. A fixed-width box: the last wrapped piece of each "\n" line (Word's rule);
+// a point box keeps the rule it always had (the last line, or one before a blank).
+// ONE rule with two readers — the bake (layoutTextBox) and the on-screen element
+// (justifiedDisplayLines) — so the screen cannot justify a line the file leaves ragged.
+function isLastOfPara(items, idx, fixed) {
+  return fixed ? !!items[idx].endsPara : idx === items.length - 1 || items[idx + 1].blank;
 }
 
 // ---- fixed-width boxes: where the lines break ------------------------------
@@ -303,6 +310,33 @@ function wrappedDisplayText(text, style, fontSizePt, ctx) {
     .join("\n");
 }
 
+// The on-screen lines of a JUSTIFIED box, one entry per drawn line, for renderAnnot to
+// build one element each. Why not one string like wrappedDisplayText: the overlay is
+// `white-space: pre` with the breaks already made, and CSS treats every line before a
+// hard break as a paragraph's last line — so `text-align: justify` justified NOTHING
+// on screen while the bake justified (measured in Electron's Chromium: line 1 of a
+// 400px box ended at 129px with `left` and with `justify` alike). Per line, the
+// element can say "justify me" (text-align-last) or not, by the bake's own rule.
+//   marker  — the list marker text, as listDisplayText / wrappedDisplayText write it
+//             ("• ", "1. ", or three spaces on a wrapped continuation line);
+//   str     — the line's text, exactly the run layoutTextBox lays out;
+//   justify — the bake stretches this line: not blank, not last of its paragraph, and
+//             it has a space to stretch (layoutTextBox spreads the extra over spaces).
+// `width` (pt) is where a stretched line ends, measured from the indent (the element's
+// padding-left): the bake runs it to textLeft + blockW = the layout's width.
+function justifiedDisplayLines(text, style, fontSizePt, ctx) {
+  const s = normTextStyle(style);
+  const lay = layoutTextBox(text, style, ctx || measureCtx(), fontSizePt, 1);
+  const isList = s.listType !== "none";
+  const fixed = s.boxW > 0;
+  const lines = lay.lines.map((it, idx) => ({
+    marker: isList && !it.blank ? (it.marker ? it.marker + " " : "   ") : "",
+    str: it.str,
+    justify: !it.blank && !isLastOfPara(lay.lines, idx, fixed) && it.str.indexOf(" ") >= 0,
+  }));
+  return { width: Math.max(0, lay.width - s.indent), lines };
+}
+
 // One throwaway 2d context, reused for every measurement (creating a canvas per
 // keystroke was measurable). node has no `document`: rather than crash somewhere
 // deep in layout, say so — callers there are expected to pass their own ctx.
@@ -389,6 +423,7 @@ if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
     layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
+    isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
   };
 }
@@ -396,6 +431,7 @@ if (typeof window !== "undefined") {
   window.AnnotText = {
     FONT_STACKS, fontFamily, textFont, normTextStyle, textStyle,
     layoutTextBox, measureCtx, measureText, listDisplayText, wrapLine, wrappedDisplayText,
+    isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
   };
 }

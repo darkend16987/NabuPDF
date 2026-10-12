@@ -2859,6 +2859,29 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** đang Chú thích/Sửa nội dung mà menu Trang vẫn đổi được trang; chưa mở file mà Ghép/Chèn mở hộp chọn
   file; Ảnh → PDF bị từ chối khi chưa mở file; Phóng to/Lưu bị từ chối khi đang chỉnh sửa.
 
+### BI-106 · Căn đều (justify): màn hình căn **đúng những dòng** file lưu căn
+- `annot-text.js` `isLastOfPara` (luật "dòng cuối đoạn" — một hàm, hai người đọc) + `justifiedDisplayLines`;
+  `editor.js` `renderJustifiedLines` (nhánh `st.align === "justify"` của `renderAnnot`); `app.css`
+  `.an-text-line` / `.jl` / `.an-text-mk`. Lưới: `npm run test:text` nhóm J (J1 so cờ màn hình với dòng mà
+  `layoutTextBox` **thật sự** giãn, đọc từ ops; J6 nửa "hộp cố định" của luật; J5 chốt nguồn editor.js/app.css).
+  Nghiên cứu gốc: `docs/RESEARCH-2026-10-12-text-format-panel.md` F1.
+- Lỗi cũ (đã đo): overlay là `white-space: pre` với dòng ngắt sẵn bằng `\n` ⇒ CSS coi **mọi** dòng là dòng cuối đoạn
+  ⇒ `text-align: justify` không giãn dòng nào; bake (`layoutTextBox`) giãn mọi dòng trừ dòng cuối đoạn. App thật
+  (HEAD cũ): hộp thường "a b" trên màn hình kết thúc ở 21,9 pt, trong file ở 203,7 pt (lệch 182 pt); hộp cố định lệch
+  7,3 pt. Màn hình căn trái, file căn đều — khuôn im lặng BI-40.
+- Sửa: hộp **căn đều** dựng **một phần tử mỗi dòng**; dòng nào bake giãn thì mang `.jl` (`text-align-last:
+  justify` — một dòng đơn là "dòng cuối" của chính nó), rộng đúng `width` của bake tính từ thụt lề (chia
+  `charScale` như `el.style.width`). Dấu đầu dòng là `inline-block` (nguyên khối) để giãn không nới khoảng sau
+  "1.". Dòng trống giữ cao một dòng (`min-height: 1lh`). Căn trái/giữa/phải **không đổi gì** (vẫn một chuỗi).
+- E2E (2026-10-12, app thật, chuột/phím thật qua CDP): hộp cố định 240 pt + hộp thường có dòng trống, gõ tiếng Việt
+  ⇒ đầu mỗi từ và mép phải mỗi dòng **trùng bake ≤ 0,02 pt**; hàng dọc đúng bội số line-height (kể cả dòng trống);
+  hộp căn trái vẫn một nút chữ. 11/11. Chưa đo: danh sách + căn đều (cột dấu đầu dòng trên màn hình vốn là xấp xỉ),
+  `charScale` ≠ 100%, ô gõ (`<textarea>`) của hộp thường lúc đang gõ vẫn hiện căn trái (trình duyệt không giãn
+  dòng có ngắt cứng) — chỉ là bản xem trước lúc gõ, Ctrl+Enter là thấy đúng.
+- **Vỡ khi:** hộp căn đều trên màn hình thẳng mép phải mà file lưu lởm chởm (hoặc ngược lại); dòng cuối đoạn bị
+  giãn trên màn hình; khoảng sau "1."/"•" bị nới; dòng trống giữa hai đoạn biến mất trên màn hình; hộp căn
+  trái/giữa/phải đổi bố cục.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2931,6 +2954,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Cỡ/hình học chữ vẽ lại (`hscale`, `vscale`, `orig_text`, `orig_size`, `_bbox_is_size_fallback`, `_page_font_programs_exact`) | `test_edit_text_metrics.py` · sửa 1 dòng trên hoá đơn thật → **không** dài ra đè chữ bên cạnh, **không** cao hơn dòng chưa sửa · **và** trên bản vẽ PDFsharp (khung tên) → số hiệu thay vào **cao bằng** `DAOL.` đứng cạnh, không thấp/bè (BI-25) |
 | "Khớp nguyên mã" (`code_boundary` của `_find_occurrences` / `/text-find(-bin)`) | `.venv\Scripts\python test_text_find.py` (C1–C7c) · mặc định **tắt** ⇒ Ctrl+H không đổi gì · trên bộ bản vẽ khách: `I1` + khớp nguyên mã = 25 chỗ (đủ 12 số hiệu `I1_BD-S-…`), **không** khớp `I10`/`I11`/`PI1`; "Đúng nguyên từ" chỉ ra 13 (coi `_` là chữ — cố ý giữ nguyên) |
 | Hộp chữ cố định bề rộng (`boxW`, `wrapItemsPt`, drag `"textbox"`, `#fmt-wrap`) | BI-104 · `npm run test:text` **và** `npm test -- rotate managed bake-split` · **test tay**: Chú thích → T → **bấm** → gõ dòng dài → vẫn 1 dòng (như cũ) · **kéo** khi đặt → gõ → xuống dòng theo khung · chọn hộp → kéo tay nắm → dòng đổi, cao tự giãn · Xong → mở lại file → **cùng** chỗ ngắt · mở file **cũ** có hộp chữ → **không** đổi gì · hộp xoay → không có tay nắm · tiếng Việt có dấu sát mép phải |
+| Căn đều hộp chữ (`justifiedDisplayLines`, `isLastOfPara`, `renderJustifiedLines`, `.an-text-line`) | BI-106 · `npm run test:text` (nhóm J) · **test tay**: Chú thích → T → **Căn đều** → kéo hộp ~240 pt → gõ 2 đoạn tiếng Việt → Ctrl+Enter: mọi dòng trừ dòng cuối mỗi đoạn **thẳng mép phải** · hộp thường nhiều dòng có dòng trống → dòng trống còn nguyên · Xong → mở lại file → **cùng** hình · đổi sang Căn trái → về như cũ |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

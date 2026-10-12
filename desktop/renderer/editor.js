@@ -589,6 +589,37 @@
       [s.underline && "underline", s.strike && "line-through"].filter(Boolean).join(" ") || "none";
   }
 
+  // A justified text box on screen: one block per drawn line, each told whether to
+  // stretch by the bake's own rule (annot-text.js justifiedDisplayLines — through
+  // window.AnnotText, not a new bare name, BI-14). One string in a `white-space: pre`
+  // element cannot do it: every line ends in a hard break, so CSS justifies none of
+  // them while the saved file justifies all but each paragraph's last (BI-40).
+  //   · each line is exactly as wide as the bake's stretched line (`width`, from the
+  //     indent), pre-divided by charScale like el.style.width — the parent's scaleX()
+  //     multiplies it back; the trailing letter-space CSS adds after the last glyph
+  //     is added on so the last GLYPH, not the spacing after it, meets the edge;
+  //   · the list marker is an inline-block (atomic), so justify never widens the gap
+  //     after "1." — the bake puts the extra only between the line's own words.
+  // Same text, same markers as the one-string path: only the alignment differs.
+  function renderJustifiedLines(el, a, st, s) {
+    const jl = window.AnnotText.justifiedDisplayLines(a.text, st, a.fontSize);
+    const wPx = (jl.width * s) / st.charScale + st.letterSpacing * s + "px";
+    el.textContent = "";
+    for (const ln of jl.lines) {
+      const row = document.createElement("div");
+      row.className = ln.justify ? "an-text-line jl" : "an-text-line";
+      row.style.width = wPx;
+      if (ln.marker) {
+        const mk = document.createElement("span");
+        mk.className = "an-text-mk";
+        mk.textContent = ln.marker;
+        row.appendChild(mk);
+      }
+      row.appendChild(document.createTextNode(ln.str));
+      el.appendChild(row);
+    }
+  }
+
   // Live background wash on the inline <textarea>, so "màu nền + % mờ" can be JUDGED
   // while the words are being typed instead of only after the box exists. `a` is the box
   // being retyped, or null for a new one (then the remembered text slot decides).
@@ -1203,7 +1234,9 @@
       // breaks renderTextPng draws (annot-text.js wrappedDisplayText), never the
       // browser's own wrapping (BI-40). Through window.AnnotText, not a new bare name
       // (BI-14); a point box gets listDisplayText exactly as before.
-      el.textContent = st.boxW > 0
+      // Justify is the exception: one element per line (renderJustifiedLines).
+      if (st.align === "justify") renderJustifiedLines(el, a, st, s);
+      else el.textContent = st.boxW > 0
         ? window.AnnotText.wrappedDisplayText(a.text, st, a.fontSize)
         : listDisplayText(a.text, st);
       // Horizontal character scale — approximate preview (baked PNG is exact).

@@ -765,6 +765,14 @@ body.editing .annot-layer .an { cursor: move; }
    i.e. the background silently disappears. 0 (not a positive value) keeps text boxes
    painting in tree order with every other `.an`, so nothing restacks. */
 .an-text { white-space: pre; line-height: 1.3; z-index: 0; }
+/* A JUSTIFIED box is built one block per drawn line (renderJustifiedLines in editor.js):
+   `.jl` marks the lines the bake stretches. A single line is its own "last line", so it is
+   text-align-LAST that stretches it; lines without `.jl` stay ragged like the saved file.
+   min-height keeps a blank line one line tall (an empty block has no line box).
+   The list marker is atomic so justify never widens the gap after it. */
+.an-text-line { display: block; min-height: 1lh; }
+.an-text-line.jl { text-align: justify; text-align-last: justify; }
+.an-text-mk { display: inline-block; }
 /* Wash behind the glyphs of a text box. Geometry (the −pad offset that lines it up with
    the baked PNG) is set inline by renderAnnot — see the comment there before touching it.
    `pointer-events: none` so the wash never steals a click from the box itself. */

@@ -408,7 +408,11 @@ check("the input string is not mutated and markers are not idempotent-safe by ac
 
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(A).sort(),
-  ["FONT_STACKS", "fontFamily", "layoutTextBox", "listDisplayText", "measureCtx",
+  ["FONT_STACKS", "fontFamily",
+   // justify on screen (isLastOfPara: the one ragged-line rule; justifiedDisplayLines:
+   // the overlay's per-line elements for a justified box)
+   "isLastOfPara", "justifiedDisplayLines",
+   "layoutTextBox", "listDisplayText", "measureCtx",
    "measureText", "normRot", "normTextStyle", "rotatedBox", "textFont", "textStyle",
    // fixed-width boxes (wrapLine: the break rule; wrappedDisplayText: the overlay text)
    "wrapLine", "wrappedDisplayText"]);
@@ -629,6 +633,84 @@ check("B10b …and of a point box exactly what listDisplayText gives",
 
 check("B10c a list item's continuation line is indented, its marker not repeated",
   wrappedDisplayText("aa bb cc", { boxW: 70, listType: "bullet" }, 10, flat()), "• aa bb\n   cc");
+
+// J — justify on screen = justify in the file. The overlay builds one element per line
+// (editor.js renderJustifiedLines) and stretches exactly the lines justifiedDisplayLines
+// flags. The flags must be the lines layoutTextBox ACTUALLY stretches, read off its ops:
+// a line is stretched iff its glyphs span more than their natural width. Before this,
+// the screen stretched none of them (CSS treats every pre-broken line as a paragraph
+// end) while the bake stretched most of them (BI-40).
+const { justifiedDisplayLines, isLastOfPara } = A;
+{
+  // Which lines does the BAKE stretch? Row by row from the ops (flat 10-wide glyphs,
+  // line height 13, no paragraph spacing in these cases).
+  const bakeStretched = (text, style) => {
+    const lay = layoutTextBox(text, style, flat(), 10, 1);
+    const rows = new Map();
+    for (const o of lay.ops) {
+      if (!rows.has(o.y)) rows.set(o.y, []);
+      rows.get(o.y).push(o);
+    }
+    return lay.lines.map((it, i) => {
+      const r = rows.get(i * 13) || [];
+      if (it.blank || !r.length) return false;
+      const n = [...it.str].length;
+      const textOps = r.slice(r.length - n);
+      const spanned = textOps[n - 1].x + 10 - textOps[0].x;
+      return spanned > n * 10 + 1e-9;
+    });
+  };
+  const flags = (text, style) => justifiedDisplayLines(text, style, 10, flat()).lines.map((l) => l.justify);
+  const CASES = [
+    ["fixed box, two paragraphs", "aa bb cc dd ee\nff gg hh ii", { boxW: 70, align: "justify" }],
+    ["point box, blank line splits paragraphs", "a b\nccc ddd eee\n\nf g\nhhhh iiii", { align: "justify" }],
+    ["fixed box, numbered list", "aa bb cc dd\nee ff gg hh", { boxW: 80, align: "justify", listType: "number" }],
+    ["fixed box, a line with no space is never stretched", "abcdefghijklmnop qq rr ss tt", { boxW: 60, align: "justify" }],
+    ["point box, bullets + indent", "aa bb\nc d\ndd ee ff", { align: "justify", listType: "bullet", indent: 18 }],
+  ];
+  for (const [name, text, style] of CASES) {
+    check("J1 screen stretches exactly the lines the bake stretches — " + name, flags(text, style), bakeStretched(text, style));
+  }
+  check("J1b …and every case stretches something AND leaves something ragged (else J1 proves nothing)",
+    CASES.map(([, t, st]) => { const b = bakeStretched(t, st); return b.includes(true) && b.includes(false); }),
+    CASES.map(() => true));
+}
+check("J2 the stretched width is the bake's line end, measured from the indent (fixed box)",
+  justifiedDisplayLines("aa bb cc", { boxW: 70, align: "justify", indent: 12 }, 10, flat()).width, 70 - 12);
+check("J2b …and for a point box the longest line plus the list column",
+  justifiedDisplayLines("a b\nccc ddd", { align: "justify", listType: "number" }, 10, flat()).width,
+  layoutTextBox("a b\nccc ddd", { align: "justify", listType: "number" }, flat(), 10, 1).width);
+check("J3 same text and markers as the one-string overlay (fixed box)",
+  justifiedDisplayLines("aa bb cc", { boxW: 70, listType: "bullet", align: "justify" }, 10, flat()).lines.map((l) => l.marker + l.str).join("\n"),
+  wrappedDisplayText("aa bb cc", { boxW: 70, listType: "bullet", align: "justify" }, 10, flat()));
+check("J3b …and (point box) the same as listDisplayText",
+  justifiedDisplayLines("x y\n\nz", { listType: "number", align: "justify" }, 10, flat()).lines.map((l) => l.marker + l.str).join("\n"),
+  listDisplayText("x y\n\nz", { listType: "number" }));
+{
+  // The fixed-box half of the rule, in the BAKE. B5 cannot see it (its one paragraph
+  // ends on the box's last line, where both halves agree); here paragraph 1 ends on a
+  // wrapped line that is NOT followed by a blank — Word leaves it ragged, and so must we.
+  const lay = layoutTextBox("aa bb cc dd\nee ff gg", { boxW: 60, align: "justify" }, flat(), 10, 1);
+  const rows = {};
+  for (const o of lay.ops) (rows[o.y] = rows[o.y] || []).push(o);
+  check("J6 a paragraph's last WRAPPED line stays ragged even with more text below",
+    Object.values(rows).map((r) => r[r.length - 1].x + 10), [60, 50, 60, 20]);
+}
+check("J4 isLastOfPara (point box): the last line and the line before a blank",
+  [0, 1, 2, 3].map((i) => isLastOfPara([{ blank: false }, { blank: false }, { blank: true }, { blank: false }], i, false)),
+  [false, true, false, true]);
+{
+  const ed = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "editor.js"), "utf8");
+  const css = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "app.css"), "utf8");
+  check("J5 renderAnnot sends a justified box down the per-line path",
+    /st\.align === "justify"\) renderJustifiedLines\(el, a, st, s\)/.test(ed), true);
+  check("J5b …which flags each row from justifiedDisplayLines (never a rule of its own)",
+    /window\.AnnotText\.justifiedDisplayLines\(a\.text, st, a\.fontSize\)[\s\S]{0,600}?ln\.justify \? "an-text-line jl"/.test(ed), true);
+  check("J5c the stretch is text-align-LAST (a lone line is its own last line)",
+    /\.an-text-line\.jl \{[^}]*text-align-last: justify/.test(css), true);
+  check("J5d the list marker is atomic (justify must not widen the gap after it)",
+    /\.an-text-mk \{[^}]*display: inline-block/.test(css), true);
+}
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
