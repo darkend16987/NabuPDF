@@ -2837,6 +2837,9 @@ _Ghi 2026-09-30 (v0.2.73)._
   accelerator thật của menu nên chặn ở đây = đổi cả bàn phím).
 - Thêm lệnh menu mới ⇒ thêm `send("x")` ở `main.js` **và** khoá `x` trong `actions` (test đỏ nếu lệch); lệnh đổi cấu
   trúc trang ⇒ thêm vào tập `PAGE` của `menuBlockReason`. Không viết lại guard trong từng hàm.
+- Đổi tên / gom lại menu cấp 1 ⇒ `test:menu` nhóm E đỏ cho tới khi `help.js` gọi đúng tên mới (Hướng dẫn từng
+  mô tả sai menu Tập tin suốt từ v0.2.53 — REVIEW M3). Mục mới trên menu ⇒ cập nhật câu “cũng có trong menu …” của
+  `help.js`: lưới chỉ kiểm được **tên menu**, không kiểm được danh sách lệnh trong câu.
 - E2E (2026-10-12, app thật, CDP + Node inspector): bản sửa 28/28 + 7/7 (không tài liệu); bản HEAD cũ đỏ đúng 4 ca.
 - **Vỡ khi:** đang Chú thích/Sửa nội dung mà menu Trang vẫn đổi được trang; chưa mở file mà Ghép/Chèn mở hộp chọn
   file; Ảnh → PDF bị từ chối khi chưa mở file; Phóng to/Lưu bị từ chối khi đang chỉnh sửa.

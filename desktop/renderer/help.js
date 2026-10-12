@@ -82,8 +82,8 @@
         },
         {
           p: T(
-            "Menu **Tập tin** còn có **Tách ra cửa sổ riêng** và **Chuyển tới cửa sổ** để dời một tab sang cửa sổ khác. Muốn chọn file mới mở vào tab hay cửa sổ: **Cài đặt → Mở file mới trong**.",
-            "The **Tập tin** (File) menu also has **Tách ra cửa sổ riêng** (move tab to a new window) and **Chuyển tới cửa sổ** (move tab to another window). To choose whether new files open in a tab or a window: **Cài đặt → Mở file mới trong**."
+            "Dời một tab sang cửa sổ khác: **bấm chuột phải lên tab** → **Tách ra cửa sổ riêng** (khi cửa sổ có từ 2 tab), hoặc **Chuyển tới cửa sổ** (khi đang mở cửa sổ khác). Cũng có thể **kéo tab** thả ra ngoài thanh tab để tách, hoặc thả lên thanh tab của cửa sổ khác để chuyển sang đó. Muốn chọn file mới mở vào tab hay cửa sổ: **Cài đặt → Mở file mới trong**.",
+            "To move a tab to another window: **right-click the tab** → **Tách ra cửa sổ riêng** (move to a new window — when the window has 2 or more tabs) or **Chuyển tới cửa sổ** (move to another window — when another window is open). You can also **drag the tab** off the tab strip to tear it out, or drop it on another window's tab strip to move it there. To choose whether new files open in a tab or a window: **Cài đặt → Mở file mới trong**."
           ),
         },
         { h: T("Lưu", "Saving") },
@@ -241,8 +241,8 @@
       blocks: [
         {
           p: T(
-            "Tick chọn trang ở **cột trang** bên trái (nút **Chọn tất cả** ở đầu cột). Mọi lệnh dưới đây nằm trong nút **Trang ▾** trên thanh công cụ, và cũng có trong menu **Trang**.",
-            "Tick pages in the **page list** on the left (**Chọn tất cả** selects all). Everything below is under the **Trang ▾** toolbar button, and also on the **Trang** menu."
+            "Tick chọn trang ở **cột trang** bên trái (nút **Chọn tất cả** ở đầu cột). Phần lớn lệnh dưới đây nằm trong nút **Trang ▾** trên thanh công cụ; các lệnh dùng nhiều nhất — xoay, xoá, ghép, chèn, thay và tách trang đang chọn — cũng có trong menu **Trang**.",
+            "Tick pages in the **page list** on the left (**Chọn tất cả** selects all). Most of the commands below are under the **Trang ▾** toolbar button; the most used ones — rotate, delete, merge, insert, replace and extract the selected pages — are also on the **Trang** menu."
           ),
         },
         { h: T("Thêm / ghép", "Adding & merging") },

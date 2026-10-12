@@ -161,5 +161,26 @@ for (const name of ["mergeFiles", "insertFile"]) {
 }
 ok("D3 rotateSelected toasts when nothing is selected", /state\.selected\.size === 0\) \{\s*toast\(/.test(fnSource(APP, "rotateSelected")));
 
+// ---- E. the guide names only menus that exist ---------------------------------
+// help.js told users for a year that "Tập tin" had "Tách ra cửa sổ riêng" — an item of
+// the TAB's right-click menu (REVIEW-2026-10-12 M3). Prose cannot be checked for truth,
+// but a menu name can: every `menu **X**` (vi) / `**X** … menu` (en) in the guide must be
+// a top-level menu of the real template, so renaming or regrouping a menu (Đợt 3) turns
+// this red until the guide follows.
+// eslint-disable-next-line no-eval
+const MENU_STR = eval("(" + MAIN.match(/const MENU_STR = (\{[\s\S]*?\n\});/)[1] + ")");
+const topKeys = [...tpl.matchAll(/^\s{6}label: L\.([A-Za-z]+),$/gm)].map((m) => m[1]);
+ok("E0 parsed the top-level menus", topKeys.length >= 5);
+const TOP_VI = new Set(topKeys.map((k) => MENU_STR.vi[k]));
+const HELP = fs.readFileSync(path.join(__dirname, "..", "renderer", "help.js"), "utf8");
+const named2 = [
+  ...[...HELP.matchAll(/[Mm]enu \*\*([^*]+)\*\*/g)].map((m) => m[1]),
+  ...[...HELP.matchAll(/\*\*([^*]+)\*\*(?: \([^)]*\))? menu\b/g)].map((m) => m[1]),
+]
+  .filter((x) => !/ ▾$/.test(x)) // "Trang ▾" is the TOOLBAR button, not the menu
+  .filter((x) => !x.includes(" / ")); // "menu **Sao chép / Dán…**" lists a right-click menu's ITEMS
+ok("E1 found menu references in help.js", named2.length >= 3);
+for (const x of new Set(named2)) ok(`E2 help.js names menu "${x}" — it exists`, TOP_VI.has(x));
+
 console.log(`menu-guard: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

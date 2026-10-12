@@ -1,6 +1,12 @@
 # Review 2026-10-12 — Thanh menu gốc (native menu bar) sau loạt v0.2.5x → v0.2.78
 
-> Trạng thái: **Đợt 1 (M1, M2) ĐÃ LÀM — BI-105**; Đợt 2, 3 chưa làm. Mọi phát hiện dưới đây có
+> Trạng thái: **Đợt 1 (M1, M2) ĐÃ LÀM — BI-105**; **Đợt 2 (M3) ĐÃ LÀM**; Đợt 3 chưa làm.
+>
+> **Kết quả Đợt 2 (2026-10-12):** sửa câu về menu Tập tin trong `help.js` (thành: chuột phải lên tab, hoặc
+> kéo tab). Khi rà còn thấy thêm câu sai thứ hai ở mục *Quản lý trang*: "Mọi lệnh dưới đây … cũng có trong
+> menu **Trang**", trong khi menu Trang chỉ có 7/12 lệnh; đã sửa luôn. `test:menu` thêm nhóm E: mọi tên
+> menu Hướng dẫn nhắc tới phải là menu cấp 1 có thật (Đợt 3 đổi tên/nhóm menu ⇒ đỏ cho tới khi sửa
+> Hướng dẫn); 2 đột biến đều đỏ. Probe app thật: mở Hướng dẫn bằng mục menu thật, vi + en 8/8. Mọi phát hiện dưới đây có
 > dẫn chứng dòng mã; phần nào mới suy ra từ đọc mã (chưa probe runtime) được ghi rõ là **cần probe**.
 >
 > **Kết quả Đợt 1 (2026-10-12):** cổng `menuBlockReason()` ở dispatcher menu + `mergeFiles`/`insertFile`
