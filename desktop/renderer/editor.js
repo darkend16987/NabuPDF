@@ -303,6 +303,11 @@
   // The kinds that carry a Cỡ nhãn (P7, BI-112). Up here, not beside its handler: syncControls
   // reads it and must never meet it in the temporal dead zone.
   const LABEL_SIZE_KINDS = new Set(["arrow", "dim"]);
+  // The kinds whose stroke the Nét box sets — exactly the KIND_CTLS entries that SHOW it
+  // (test:penwidth pins the two together). Two hand-copied lists used to stand here and
+  // both left out "dim": a selected dimension line showed Nét, took no notice of it, and
+  // the box kept the typed number as if it had (BI-113).
+  const PEN_WIDTH_KINDS = new Set(["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "dim", "check", "cross"]);
 
   const ed = {
     active: false,
@@ -2000,7 +2005,7 @@
       setFmtBtn("ed-italic", a.italic);
       setFmtBtn("ed-underline", a.underline);
     }
-    if (["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
+    if (PEN_WIDTH_KINDS.has(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
     if (LABEL_SIZE_KINDS.has(a.kind)) $("ed-labelsize").value = String(window.AnnotGeom.normLabelSize(a.labelSize));
     if (DASH_KINDS.has(a.kind)) $("ed-dash").value = normDash(a.dash);
@@ -4783,9 +4788,7 @@
   $("ed-penwidth").oninput = (e) => {
     ed.penWidth = Math.max(1, +e.target.value || DEFAULT_PEN_WIDTH);
     // Applies to the whole selection, same reasoning as the colour picker above.
-    const targets = selAnnots().filter((a) =>
-      ["draw", "box", "ellipse", "cloud", "cloudpen", "poly", "arrow", "check", "cross"].includes(a.kind)
-    );
+    const targets = selAnnots().filter((a) => PEN_WIDTH_KINDS.has(a.kind));
     if (targets.length) {
       pushEdUndo("pwidth:" + ed.sel);
       for (const a of targets) a.width = ed.penWidth;

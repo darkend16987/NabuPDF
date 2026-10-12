@@ -3053,6 +3053,17 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** ô Cỡ nhãn không hiện ở Mũi tên/Đo, hoặc hiện ở loại khác; nhãn trên màn hình khác cỡ trong file đã lưu; mũi tên mở
   lại mất cỡ; mũi tên cũ đổi cỡ / /NabuData đổi byte dù không ai chỉnh.
 
+### BI-113 · Ô Nét áp cho MỌI loại mà nó hiện ra — kể cả đường đo
+- `editor.js` `PEN_WIDTH_KINDS` (khai trước `ed`) dùng chung cho handler `ed-penwidth` và `syncControls`. Lưới:
+  `npm run test:penwidth` (13 ý; ghim tập này == các kind mà `KIND_CTLS` hiện "penwidth"; cắt handler chạy với vùng chọn giả),
+  6/6 đột biến đỏ.
+- **Lỗi cũ:** `KIND_CTLS.dim` hiện ô Nét cho đường đo đang chọn, nhưng hai danh sách chép tay phía sau (handler + syncControls) đều
+  thiếu `"dim"`. Đo app thật: gõ Nét 6 ⇒ nét vẫn 1 pt trên màn hình **và** trong file đã lưu, còn ô vẫn hiện 6 như thể đã áp.
+- **Luật:** thêm kind hiện ô Nét ⇒ thêm vào `PEN_WIDTH_KINDS` (test đỏ nếu lệch hai chiều). Không viết lại danh sách kind tại chỗ.
+- E2E (2026-10-12): 6/6 — đường đo Nét 1 → chọn → gõ 6 ⇒ đường + 2 vạch 6 pt; Ctrl+Z một bước về 1; chọn lại hiện 6; Xong ⇒ file
+  đã lưu dày **6 pt** (trước khi sửa: 1 pt, đỏ 3/6).
+- **Vỡ khi:** chọn một hình có ô Nét, đổi số mà nét không đổi (hoặc đổi trên màn hình mà file vẫn nét cũ).
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3132,6 +3143,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Tâm xoay hộp chữ (`textRotationPivot`, khối `if (st.rot)` của `renderAnnot`, `if (existing && st.rot)` của `openTextEditor`) | BI-110 · `npm run test:text` (X) + `npm test -- managed` (pivot) · **test tay**: hộp chữ 48 pt có Viền → xoay 90° → nhớ chỗ khung trên màn hình → Xong → **mở lại file** (hoặc xem bằng Foxit) → khung **cùng chỗ** · lặp 30°, 180° và với Co giãn ngang 60% · bấm đúp hộp xoay → ô gõ **không nhảy** khỏi chữ · hộp không xoay → không đổi gì |
 | Ô gõ hộp chữ: ResizeObserver + `pressed` (`openTextEditor`, `userResized`) | BI-111 · `npm run test:taresize` · **test tay**: Chú thích → T → **bấm** lên trang → gõ vài chữ → bấm **Đậm**, đổi **cỡ** 24, đổi **font** → Ctrl+Enter → chọn hộp: "Tự xuống dòng theo khung" **không** tick, hộp vừa khít chữ · **kéo góc** ô gõ của hộp thường → thành hộp cố định (đúng BI-104) · kéo góc thu hẹp, nhả chuột **ngoài** ô gõ → vẫn nhận |
 | Cỡ nhãn mũi tên / đường đo (`normLabelSize`, `applyLabelSize`, `#ed-labelsize`, mọi `labelSize \|\| 14`) | BI-112 · `npm run test:labelsize` + `test:annot-geom` · **test tay**: Chú thích → Mũi tên: ô **Cỡ nhãn** = 14 → đặt 28 → vẽ mũi tên, gõ nhãn → chữ to · chọn mũi tên → ô hiện 28, gõ 10 → chỉ mũi tên đó đổi, Ctrl+Z về 28 · Đo: đặt 20 → số đo to · Xong → nhãn trong file đúng cỡ trên màn hình · mở lại Chú thích → mũi tên vẫn 28 |
+| Ô Nét (`PEN_WIDTH_KINDS`, handler `ed-penwidth`, `syncControls`) | BI-113 · `npm run test:penwidth` · **test tay**: Đo → kéo một đoạn → Chọn đoạn đó → Nét 6 → đường + 2 vạch dày lên · Ctrl+Z về 1 · Xong → file đã lưu nét 6 |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
