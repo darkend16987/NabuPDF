@@ -419,6 +419,100 @@ function parseTextDefault(raw) {
   }
 }
 
+// ---- the text raster's own rectangle ----------------------------------------
+//
+// renderTextPng rasterises a box at TEXT_RS× and pads it by ceil(0.15em) on every side;
+// the bake then places that PNG at (a.x − 0.15·size, a.y − 0.15·size). So the rectangle
+// the saved file paints is cw × chh RASTER pixels — NOT a.w × a.h, which measureText
+// ceil()s in whole points from a 1× layout. The two differ by up to ~1pt. A background
+// wash never showed it; a BORDER does (its right/bottom edge would sit up to 1pt off on
+// screen). So the overlay asks for the raster's rectangle from the same arithmetic the
+// raster uses: one function, two readers (BI-40).
+const TEXT_RS = 3;
+function textRasterGeom(layWidth, layHeight, fpx) {
+  const pad = Math.ceil(fpx * 0.15);
+  return { pad, cw: Math.ceil(layWidth) + pad * 2, chh: Math.ceil(layHeight) + pad * 2 };
+}
+// The same rectangle in pt, for the overlay: one layout at the bake's own scale (canvas
+// text at 3× is not exactly 3× as wide — see wrapItemsPt), then the raster's ceil()s.
+function textRasterBoxPt(text, style, fontSizePt, ctx) {
+  const fpx = fontSizePt * TEXT_RS;
+  const lay = layoutTextBox(text, style, ctx || measureCtx(), fpx, TEXT_RS);
+  const g = textRasterGeom(lay.width, lay.height, fpx);
+  return { w: g.cw / TEXT_RS, h: g.chh / TEXT_RS };
+}
+
+// ---- viền khung (border) of a text box ---------------------------------------
+//
+// `borderColor` present (a #rrggbb) ⇔ the box has a border; `borderWidth` (pt) and
+// `borderDash` ("dash" | "dot"; absent = solid) only mean something with it. ABSENCE is
+// "no border", which is what every box written before this existed has — so its
+// /NabuData and its raster stay byte-identical (BI-59). Not in normTextStyle on purpose:
+// a border is drawn AROUND the layout and must never reach layoutTextBox (same reason
+// fill/fillOpacity are kept out of it). null = no border.
+const TEXT_BORDER_MIN = 0.25;
+const TEXT_BORDER_MAX = 12;
+function normTextBorder(a) {
+  const c = a && a.borderColor;
+  if (typeof c !== "string" || !/^#[0-9a-fA-F]{6}$/.test(c)) return null;
+  const w = +a.borderWidth;
+  return {
+    color: c,
+    width: isFinite(w) && w > 0 ? Math.min(TEXT_BORDER_MAX, Math.max(TEXT_BORDER_MIN, w)) : 1,
+    dash: a.borderDash === "dash" || a.borderDash === "dot" ? a.borderDash : "solid",
+  };
+}
+
+// ---- Sao chép / Dán định dạng (format painter) ---------------------------------
+//
+// The LOOK of a label: everything a text default carries, plus colour, background and
+// border. Not rotation, wrap width, text or position — those say where a box sits and
+// how wide it wraps, not what it looks like (pasting a 90° turn onto a row of labels
+// would be a surprise, not a format).
+function copyTextFormat(a) {
+  const f = pickTextDefault(a);
+  f.color = typeof a.color === "string" && a.color ? a.color : "#000000";
+  if (a.fill && a.fill !== "none") {
+    f.fill = a.fill;
+    f.fillOpacity = a.fillOpacity != null ? +a.fillOpacity : 1;
+  }
+  const bd = normTextBorder(a);
+  if (bd) {
+    f.borderColor = bd.color;
+    f.borderWidth = bd.width;
+    if (bd.dash !== "solid") f.borderDash = bd.dash;
+  }
+  return f;
+}
+// Write a copied format onto box `a` (mutates it). A key the format LACKS is removed from
+// the box — no background on the source ⇒ none on the target — so "dán định dạng" means
+// "look like that one", not "merge into this one". Keys are deleted, never set to a
+// "none" value, so a target that ends up plain has exactly the shape of a box that never
+// had them (BI-59). `opts.noBorder`: a partner's FreeText keeps the border its file gave
+// it (BI-100 — writeFreeText draws that one itself).
+function applyTextFormat(a, f, opts) {
+  for (const k of TEXT_DEFAULT_KEYS) a[k] = f[k];
+  a.color = f.color;
+  if (f.fill) {
+    a.fill = f.fill;
+    a.fillOpacity = f.fillOpacity;
+  } else {
+    delete a.fill;
+    delete a.fillOpacity;
+  }
+  if (!(opts && opts.noBorder)) {
+    delete a.borderColor;
+    delete a.borderWidth;
+    delete a.borderDash;
+    if (f.borderColor) {
+      a.borderColor = f.borderColor;
+      a.borderWidth = f.borderWidth;
+      if (f.borderDash) a.borderDash = f.borderDash;
+    }
+  }
+  return a;
+}
+
 // ---- rotating a text box (v0.2.63) ---------------------------------------
 //
 // SIGN CONVENTION, decided once here so nothing has to guess: a POSITIVE angle turns
@@ -469,6 +563,8 @@ if (typeof module !== "undefined" && module.exports) {
     isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
+    TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
+    copyTextFormat, applyTextFormat,
   };
 }
 if (typeof window !== "undefined") {
@@ -478,5 +574,7 @@ if (typeof window !== "undefined") {
     isLastOfPara, justifiedDisplayLines,
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
+    TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
+    copyTextFormat, applyTextFormat,
   };
 }

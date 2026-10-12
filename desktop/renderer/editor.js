@@ -1291,6 +1291,12 @@
       //     drift away from its own text, which is what the raster does too (background
       //     and glyphs share one rotated canvas there).
       // Appended LAST: `el.textContent` above wipes children, so any earlier insert dies.
+      // Viền khung (BI-109). A bordered box puts BOTH the wash and the border on the
+      // raster's own rectangle (textRasterBoxPt — up to ~1pt larger than a.w × a.h), so
+      // they line up with each other and with the saved file. An unbordered box keeps
+      // a.w × a.h exactly as before.
+      const bd = window.AnnotText.normTextBorder(a);
+      const rb = bd ? window.AnnotText.textRasterBoxPt(a.text, st, a.fontSize) : { w: a.w, h: a.h };
       if (a.fill && a.fill !== "none") {
         // `a.fontSize * 0.15` is the BAKE's `padPt` — the number drawOneAnnot and
         // addManagedAnnot use to place the image — NOT renderTextPng's internal `pad`,
@@ -1302,10 +1308,44 @@
         bg.className = "an-text-bg";
         bg.style.left = -padPx / st.charScale + "px";
         bg.style.top = -padPx + "px";
-        bg.style.width = (a.w * s) / st.charScale + "px";
-        bg.style.height = a.h * s + "px";
+        bg.style.width = (rb.w * s) / st.charScale + "px";
+        bg.style.height = rb.h * s + "px";
         bg.style.background = hexToRgba(a.fill, a.fillOpacity != null ? a.fillOpacity : 1);
         el.appendChild(bg);
+      }
+      // The border as an <svg> in PT (viewBox = the raster rectangle) stretched with
+      // preserveAspectRatio="none" to (w/charScale) × h px. That non-uniform viewBox
+      // mapping exactly cancels the parent's scaleX(charScale), so the stroke and its
+      // dashes come out UNIFORM — the raster draws the border before the per-glyph scale
+      // and so never squeezes it. Inset by half the pen (strokeRect's rule), dash from
+      // dashSpec — the numbers renderTextPng uses.
+      if (bd) {
+        const padPx = a.fontSize * 0.15 * s;
+        const NS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(NS, "svg");
+        svg.setAttribute("class", "an-text-border");
+        svg.setAttribute("viewBox", `0 0 ${rb.w} ${rb.h}`);
+        svg.setAttribute("preserveAspectRatio", "none");
+        svg.style.left = -padPx / st.charScale + "px";
+        svg.style.top = -padPx + "px";
+        svg.style.width = (rb.w * s) / st.charScale + "px";
+        svg.style.height = rb.h * s + "px";
+        const r = document.createElementNS(NS, "rect");
+        const lw = bd.width;
+        r.setAttribute("x", String(lw / 2));
+        r.setAttribute("y", String(lw / 2));
+        r.setAttribute("width", String(Math.max(0.01, rb.w - lw)));
+        r.setAttribute("height", String(Math.max(0.01, rb.h - lw)));
+        r.setAttribute("fill", "none");
+        r.setAttribute("stroke", bd.color);
+        r.setAttribute("stroke-width", String(lw));
+        const ds = dashSpec(bd.dash, bd.width);
+        if (ds) {
+          r.setAttribute("stroke-dasharray", ds.array.join(" "));
+          r.setAttribute("stroke-linecap", ds.cap);
+        }
+        svg.appendChild(r);
+        el.appendChild(svg);
       }
     } else if (a.kind === "redact") {
       el.style.background = a.color || "#000";
@@ -4246,6 +4286,9 @@
   });
   // ---- text-box Format panel (paragraph / spacing / list / arrange) --------
   const INDENT_STEP = 18; // pt per indent click (~0.25")
+  // Sao chép / Dán định dạng: the copied look (annot-text.js copyTextFormat) or null.
+  // Declared here, ahead of syncFmtPanel and every load-time call into it.
+  let fmtClip = null;
 
   // Apply a formatting field to the palette default (for new boxes) AND, when a
   // text box is selected, to that box — re-measuring when the change alters size.
@@ -4314,6 +4357,26 @@
     }
     const clr = $("fmt-clear");
     if (clr) clr.disabled = !(hit && hit.a.kind === "text");
+    // Sao chép / Dán định dạng: copy needs a text box; paste needs a clip AND at least one
+    // selected text box (the whole selection is pasted onto, Ctrl+click groups included).
+    const cpy = $("fmt-copy-style");
+    if (cpy) cpy.disabled = !(hit && hit.a.kind === "text");
+    const pst = $("fmt-paste-style");
+    if (pst) pst.disabled = !fmtClip || !selAnnots().some((x) => x.kind === "text");
+    // Viền khung: the selected box's border, or its text colour as the colour a new
+    // border would start with. A partner's FreeText keeps the border its file gave it.
+    const bdC = $("fmt-border");
+    if (bdC) {
+      const box = hit && hit.a.kind === "text" ? hit.a : null;
+      const bd = box ? window.AnnotText.normTextBorder(box) : null;
+      bdC.disabled = !box || !!box._foreign;
+      if (bdC !== active) bdC.checked = !!bd;
+      const off = bdC.disabled || !bd;
+      for (const id of ["fmt-border-color", "fmt-border-width", "fmt-border-dash"]) $(id).disabled = off;
+      setVal("fmt-border-color", bd ? bd.color : box && /^#[0-9a-fA-F]{6}$/.test(box.color || "") ? box.color : "#000000");
+      setVal("fmt-border-width", bd ? bd.width : 1);
+      setVal("fmt-border-dash", bd ? bd.dash : "solid");
+    }
     // Bề rộng khung: only a selected FIXED box has a wrap width to show or set.
     const bw = $("fmt-boxw");
     if (bw) {
@@ -4579,6 +4642,96 @@
         syncFmtPanel();
       });
     }
+  }
+
+  // ---- Sao chép / Dán định dạng (format painter) ----
+  // Copy one box's LOOK (annot-text.js copyTextFormat), paste it onto every selected text
+  // box in one undo step. Two buttons + Word's chords rather than an "armed" painter mode:
+  // no new pointer state for onDown to get wrong, and a Ctrl+click group takes the format
+  // in one go — a row of labels across a sheet is the case this exists for. The clip lives
+  // outside `ed` like the object clipboard, so it survives Xong / a page change.
+  // (`fmtClip` itself is declared at the top of this banner — syncFmtPanel reads it.)
+  function copyTextFmt() {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (!hit || hit.a.kind !== "text") return false;
+    fmtClip = window.AnnotText.copyTextFormat(hit.a);
+    syncFmtPanel();
+    const msg = "Đã sao chép định dạng — chọn hộp chữ khác rồi bấm Dán định dạng (Ctrl+Shift+V).";
+    toast(window.t ? window.t(msg) : msg, "good");
+    return true;
+  }
+  function pasteTextFmt() {
+    const targets = selAnnots().filter((x) => x.kind === "text");
+    if (!fmtClip || !targets.length) return false;
+    pushEdUndo(); // one step for the whole selection; never coalesced with a previous paste
+    for (const a of targets) {
+      window.AnnotText.applyTextFormat(a, fmtClip, { noBorder: !!a._foreign });
+      const m = measureText(a.text, a.fontSize, textStyle(a));
+      a.w = m.w;
+      a.h = m.h;
+    }
+    syncOverlays();
+    syncControls();
+    syncFmtPanel();
+    const msg = "Đã dán định dạng vào {n} hộp chữ.";
+    const tr = window.t ? window.t(msg) : msg;
+    toast(tr.replace("{n}", String(targets.length)), "good");
+    return true;
+  }
+  [["fmt-copy-style", copyTextFmt], ["fmt-paste-style", pasteTextFmt]].forEach(([id, fn]) => {
+    const b = $(id);
+    if (!b) return;
+    b.addEventListener("mousedown", (ev) => ev.preventDefault());
+    b.addEventListener("click", () => fn());
+  });
+
+  // ---- Viền khung ----
+  // All four controls write the SELECTED box from what they show, so there is one writer
+  // and no control can disagree with the others. Off ⇒ the three keys are DELETED (a box
+  // with no border has the shape of one written before borders existed — BI-59). No
+  // re-measure: a border is drawn inside the raster's rectangle and moves no glyph.
+  function writeBorder(final) {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (!hit || hit.a.kind !== "text" || hit.a._foreign) return;
+    const a = hit.a;
+    const on = $("fmt-border").checked;
+    const AT = window.AnnotText;
+    let w = +$("fmt-border-width").value;
+    if (!isFinite(w) || w <= 0) {
+      if (!final) return; // mid-typing ("0." of "0.5")
+      w = 1;
+    }
+    w = Math.min(AT.TEXT_BORDER_MAX, Math.max(AT.TEXT_BORDER_MIN, w));
+    if (final) $("fmt-border-width").value = String(w);
+    const color = $("fmt-border-color").value;
+    const dash = $("fmt-border-dash").value;
+    const want = on ? { color, width: w, dash: dash === "dash" || dash === "dot" ? dash : "solid" } : null;
+    const cur = AT.normTextBorder(a);
+    if (JSON.stringify(want) === JSON.stringify(cur)) return;
+    pushEdUndo("border:" + ed.sel);
+    delete a.borderColor;
+    delete a.borderWidth;
+    delete a.borderDash;
+    if (want) {
+      a.borderColor = want.color;
+      a.borderWidth = want.width;
+      if (want.dash !== "solid") a.borderDash = want.dash;
+    }
+    syncOverlays();
+    syncFmtPanel();
+  }
+  {
+    const on = $("fmt-border");
+    if (on) on.addEventListener("change", () => writeBorder(true));
+    const col = $("fmt-border-color");
+    if (col) col.addEventListener("input", () => writeBorder(false));
+    const wid = $("fmt-border-width");
+    if (wid) {
+      wid.addEventListener("input", () => writeBorder(false));
+      wid.addEventListener("change", () => writeBorder(true));
+    }
+    const dsh = $("fmt-border-dash");
+    if (dsh) dsh.addEventListener("change", () => writeBorder(true));
   }
 
   $("ed-penwidth").oninput = (e) => {
@@ -4890,6 +5043,13 @@
     if ((e.key === "c" || e.key === "C") && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && !typing && ed.sel != null) {
       const sel = window.getSelection && window.getSelection();
       if (!(sel && String(sel).length)) copyGesture();
+    }
+    // Sao chép / Dán định dạng — Word's chords. `e.code`: the physical key, whatever
+    // the layout. Only claimed when it did something (a text box selected / a clip to
+    // paste), so the chord stays free otherwise; never while typing in a field.
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !typing && !e.repeat &&
+        (e.code === "KeyC" || e.code === "KeyV")) {
+      if (e.code === "KeyC" ? copyTextFmt() : pasteTextFmt()) e.preventDefault();
     }
     // Thứ tự chồng, the Office/Illustrator chord: Ctrl+] / Ctrl+[ one step, with Shift all
     // the way. `e.code`, not `e.key`: Shift turns "]" into "}" on a US layout and into

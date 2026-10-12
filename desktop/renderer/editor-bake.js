@@ -73,14 +73,14 @@
   // Callers add them to the anchor they already computed, so at rot 0 they are 0 and
   // every existing call site is byte-for-byte unchanged.
   function renderTextPng(text, fontSizePt, colorHex, opts) {
-    const RS = 3; // supersample for crisp text
+    const RS = window.AnnotText.TEXT_RS; // supersample for crisp text (3)
     const s = normTextStyle(opts);
     const fpx = fontSizePt * RS;
     // Same layout the on-screen box was measured with (fpx=sizePt*RS, upp=RS).
     const lay = layoutTextBox(text, s, measureCtx(), fpx, RS);
-    const pad = Math.ceil(fpx * 0.15);
-    const cw = Math.ceil(lay.width) + pad * 2;
-    const chh = Math.ceil(lay.height) + pad * 2;
+    // The raster's rectangle — the very arithmetic the overlay's border reads back
+    // (annot-text.js textRasterBoxPt), so the two cannot drift (BI-40).
+    const { pad, cw, chh } = window.AnnotText.textRasterGeom(lay.width, lay.height, fpx);
     // The canvas is the TURNED box; the glyphs are laid out in the untouched one and
     // the context is rotated about the shared centre. Ceil, so a half-pixel of the
     // turned box is never clipped away.
@@ -118,6 +118,26 @@
       cx.globalAlpha = s.opacity;
       cx.fillStyle = hexToRgba(bgFill, opts.fillOpacity != null ? opts.fillOpacity : 1);
       cx.fillRect(0, 0, cw, chh);
+      cx.restore();
+    }
+    // Viền khung: on the SAME rectangle as the wash, stroked INSIDE it (half the pen in
+    // from each edge) so the raster never has to grow — an unbordered box keeps exactly
+    // the canvas it always had. After the wash, before any glyph; in the rotated frame;
+    // dimmed by the text opacity like everything else on this canvas. The dash pattern is
+    // annot-geom.js dashSpec — the one the overlay's <svg> border reads too.
+    const bd = window.AnnotText.normTextBorder(opts);
+    if (bd) {
+      const lw = bd.width * RS;
+      cx.save();
+      cx.globalAlpha = s.opacity;
+      cx.strokeStyle = bd.color;
+      cx.lineWidth = lw;
+      const ds = dashSpec(bd.dash, bd.width);
+      if (ds) {
+        cx.setLineDash(ds.array.map((v) => v * RS));
+        cx.lineCap = ds.cap;
+      }
+      cx.strokeRect(lw / 2, lw / 2, Math.max(0.01, cw - lw), Math.max(0.01, chh - lw));
       cx.restore();
     }
     cx.font = textFont(fpx, s);
@@ -328,6 +348,13 @@
       }
       // Fixed-width box: left off a point box, the same arm as the background above.
       if (s.boxW > 0) a.boxW = s.boxW;
+      // Viền khung: same arm again — keys only for a box that has one.
+      const bd = window.AnnotText.normTextBorder(data);
+      if (bd) {
+        a.borderColor = bd.color;
+        a.borderWidth = bd.width;
+        if (bd.dash !== "solid") a.borderDash = bd.dash;
+      }
       return a;
     }
     if (data.k === "arrow") {
@@ -831,6 +858,7 @@
     const map = makeMap(vp1, "orig");
     const style = Object.assign({}, a);
     delete style.fill; // the background covers the whole BOX, drawn below — not just the glyphs
+    delete style.borderColor; // a partner's box keeps ITS border (drawn below), never a Nabu one
     const { bytes, wPt, hPt, ox, oy } = renderTextPng(a.text, a.fontSize, a.color, style);
     const img = await doc.embedPng(bytes);
     const padPt = a.fontSize * 0.15;

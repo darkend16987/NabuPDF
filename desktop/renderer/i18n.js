@@ -111,6 +111,22 @@
       "Returns the selected text box to the app's original style. Keeps its colour, background, rotation and frame width.",
     "Hộp chữ mới sẽ dùng kiểu này.": "New text boxes will use this style.",
     "Đã đặt cho lần làm việc này — không lưu được cho lần mở sau.": "Set for this session — it could not be saved for next time.",
+    // --- Sao chép / Dán định dạng + Viền khung (editor.js Format panel) ---
+    "Sao chép định dạng": "Copy formatting",
+    "Dán định dạng": "Paste formatting",
+    "Sao chép định dạng của hộp chữ đang chọn: font, cỡ, đoạn văn, màu, nền, viền (Ctrl+Shift+C).":
+      "Copy the selected text box's formatting: font, size, paragraph, colour, background, border (Ctrl+Shift+C).",
+    "Áp định dạng đã sao chép vào các hộp chữ đang chọn (Ctrl+Shift+V). Không đổi chữ, góc xoay, bề rộng khung.":
+      "Apply the copied formatting to the selected text boxes (Ctrl+Shift+V). Text, rotation and frame width stay as they are.",
+    "Đã sao chép định dạng — chọn hộp chữ khác rồi bấm Dán định dạng (Ctrl+Shift+V).":
+      "Formatting copied — select other text boxes, then press Dán định dạng (Ctrl+Shift+V).",
+    "Đã dán định dạng vào {n} hộp chữ.": "Formatting pasted onto {n} text box(es).",
+    "Viền khung": "Frame border",
+    "Viền quanh hộp chữ": "Border around the text box",
+    "Kẻ khung quanh hộp chữ đang chọn — dùng cho nhãn, ghi chú trên bản vẽ.":
+      "Draw a frame around the selected text box — for labels and notes on drawings.",
+    "Màu viền": "Border colour",
+    "Độ dày": "Thickness",
     "Chữ xuống dòng theo bề rộng khung (kéo tay nắm để đổi bề rộng); chiều cao tự giãn. Cũng tạo được bằng cách kéo chuột khi đặt hộp chữ.":
       "Text wraps to the frame width (drag a grip to change it); the height grows by itself. You can also drag out the box when placing it.",
     // --- Tạo bản theo mẫu (batch-variants.js) ---

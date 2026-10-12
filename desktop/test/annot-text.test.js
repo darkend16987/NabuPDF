@@ -409,17 +409,30 @@ check("the input string is not mutated and markers are not idempotent-safe by ac
 check("node import exposes exactly the surface editor.js calls by bare name",
   Object.keys(A).sort(),
   ["FONT_STACKS",
+   // viền khung: the border width range
+   "TEXT_BORDER_MAX", "TEXT_BORDER_MIN",
    // the text default (Đặt làm mặc định / Xoá định dạng): which fields, the size range
-   "TEXT_DEFAULT_KEYS", "TEXT_SIZE_DEFAULT", "TEXT_SIZE_MAX", "TEXT_SIZE_MIN",
+   "TEXT_DEFAULT_KEYS",
+   // the raster's supersample factor (renderTextPng + the overlay border)
+   "TEXT_RS",
+   "TEXT_SIZE_DEFAULT", "TEXT_SIZE_MAX", "TEXT_SIZE_MIN",
+   // Sao chép / Dán định dạng
+   "applyTextFormat", "copyTextFormat",
    "fontFamily",
    // justify on screen (isLastOfPara: the one ragged-line rule; justifiedDisplayLines:
    // the overlay's per-line elements for a justified box)
    "isLastOfPara", "justifiedDisplayLines",
    "layoutTextBox", "listDisplayText", "measureCtx",
-   "measureText", "normRot", "normTextStyle",
+   "measureText", "normRot",
+   // viền khung: null | { color, width, dash }
+   "normTextBorder",
+   "normTextStyle",
    // the text default: validate a stored / picked style
    "parseTextDefault", "pickTextDefault",
-   "rotatedBox", "textFont", "textStyle",
+   "rotatedBox", "textFont",
+   // the raster's rectangle — renderTextPng's arithmetic, read back by the overlay
+   "textRasterBoxPt", "textRasterGeom",
+   "textStyle",
    // fixed-width boxes (wrapLine: the break rule; wrappedDisplayText: the overlay text)
    "wrapLine", "wrappedDisplayText"]);
 // UPPER_CASE exports are data (tables / numbers); everything else must be a function.
@@ -756,6 +769,75 @@ check("T5b …a saved default round-trips exactly",
 check("T5c …and a hand-edited one is re-validated, extra keys dropped",
   parseTextDefault('{"fontSize": 999, "color": "#ff0000", "bold": "yes"}'),
   Object.assign(pickTextDefault({}), { fontSize: 120, bold: true }));
+
+// V — viền khung + the raster rectangle. normTextBorder is the one reader of the three
+// border keys (overlay, raster, payload, deserialiser all go through it); the raster
+// rectangle is what the overlay draws the border on, so it must be renderTextPng's own.
+const { normTextBorder, textRasterGeom, textRasterBoxPt, TEXT_RS, copyTextFormat, applyTextFormat } = A;
+check("V1 no / junk borderColor ⇒ no border (every box written before borders existed)",
+  [{}, { borderColor: "red" }, { borderColor: "#12345" }, { borderColor: 7 }, { borderWidth: 3 }].map(normTextBorder),
+  [null, null, null, null, null]);
+check("V2 a border: width defaults to 1 and is clamped to 0.25…12, dash defaults to solid",
+  [{ borderColor: "#ff0000" }, { borderColor: "#ff0000", borderWidth: 0.1 }, { borderColor: "#ff0000", borderWidth: 99 },
+   { borderColor: "#ff0000", borderWidth: "2", borderDash: "dot" }, { borderColor: "#ff0000", borderDash: "wavy" }].map(normTextBorder),
+  [{ color: "#ff0000", width: 1, dash: "solid" }, { color: "#ff0000", width: 0.25, dash: "solid" },
+   { color: "#ff0000", width: 12, dash: "solid" }, { color: "#ff0000", width: 2, dash: "dot" },
+   { color: "#ff0000", width: 1, dash: "solid" }]);
+check("V3 a border never reaches layout (normTextStyle drops it, so no glyph can move)",
+  JSON.stringify(layoutTextBox("ab cd", { borderColor: "#000000", borderWidth: 4 }, flat(), 10, 1)),
+  JSON.stringify(layoutTextBox("ab cd", {}, flat(), 10, 1)));
+check("V4 textRasterGeom is renderTextPng's arithmetic: pad = ceil(0.15·fpx), size = ceil(layout) + 2·pad",
+  textRasterGeom(100.2, 39, 48), { pad: Math.ceil(48 * 0.15), cw: 101 + 2 * 8, chh: 39 + 2 * 8 });
+{
+  // The overlay asks at the BAKE's scale (3×), not at 1× — with a non-linear (hinted) ctx
+  // the two disagree, and the border has to sit where the raster's edge is.
+  const hint = () => {
+    const c = { font: "10px x", measureText(str) { const px = parseFloat(/([\d.]+)px/.exec(c.font)[1]); return { width: [...str].length * Math.round(px * 0.55 + 0.4) }; } };
+    return c;
+  };
+  const lay3 = layoutTextBox("Nhãn ghi chú", {}, hint(), 16 * TEXT_RS, TEXT_RS);
+  const g = textRasterGeom(lay3.width, lay3.height, 16 * TEXT_RS);
+  check("V5 textRasterBoxPt = the 3× raster rectangle in pt (what the saved file paints)",
+    textRasterBoxPt("Nhãn ghi chú", {}, 16, hint()), { w: g.cw / TEXT_RS, h: g.chh / TEXT_RS });
+  check("V5b …and it is NOT measureText's a.w × a.h in general (else the helper buys nothing)",
+    JSON.stringify(textRasterBoxPt("Nhãn ghi chú", {}, 16, hint())) !== JSON.stringify(measureText("Nhãn ghi chú", 16, {}, hint())), true);
+}
+// P5 — Sao chép / Dán định dạng
+{
+  const src = { kind: "text", text: "A", x: 1, y: 2, w: 3, h: 4, rot: 30, boxW: 120, font: "Tahoma", fontSize: 20, bold: true,
+    align: "center", color: "#0000ff", fill: "#ffff00", fillOpacity: 0.6, borderColor: "#ff0000", borderWidth: 2, borderDash: "dash" };
+  const f = copyTextFormat(src);
+  check("F1 the copied look: style + colour + background + border",
+    [f.font, f.fontSize, f.bold, f.align, f.color, f.fill, f.fillOpacity, f.borderColor, f.borderWidth, f.borderDash],
+    ["Tahoma", 20, true, "center", "#0000ff", "#ffff00", 0.6, "#ff0000", 2, "dash"]);
+  check("F1b …never rotation, wrap width, text or geometry", ["rot", "boxW", "text", "x", "y", "w", "h", "kind"].filter((k) => k in f), []);
+  const dst = { kind: "text", text: "B", x: 9, y: 9, w: 9, h: 9, rot: 90, boxW: 50, color: "#000000", fontSize: 10 };
+  applyTextFormat(dst, f);
+  check("F2 pasting makes the target LOOK like the source",
+    [dst.font, dst.fontSize, dst.bold, dst.align, dst.color, dst.fill, dst.borderColor, dst.borderDash], ["Tahoma", 20, true, "center", "#0000ff", "#ffff00", "#ff0000", "dash"]);
+  check("F2b …and keeps its own text, position, rotation, wrap width", [dst.text, dst.x, dst.rot, dst.boxW], ["B", 9, 90, 50]);
+  const plain = copyTextFormat({ kind: "text", color: "#111111" });
+  applyTextFormat(dst, plain);
+  check("F3 a plain source REMOVES background and border from the target (keys deleted, not set to none)",
+    ["fill", "fillOpacity", "borderColor", "borderWidth", "borderDash"].filter((k) => k in dst), []);
+  const foreign = { kind: "text", text: "C", color: "#000000", fontSize: 10, _foreign: {} };
+  applyTextFormat(foreign, f, { noBorder: true });
+  check("F4 a partner's FreeText takes the look but NOT a border (it keeps its file's own)",
+    [foreign.font, foreign.fill, "borderColor" in foreign], ["Tahoma", "#ffff00", false]);
+  check("F5 copy → paste → copy round-trips exactly", copyTextFormat(applyTextFormat({ kind: "text" }, f)), f);
+}
+// The payload: a border travels only when there is one (BI-59 byte identity otherwise).
+{
+  const MC = require("../renderer/managed-codec.js");
+  const base = { kind: "text", x: 1, y: 2, w: 30, h: 20, text: "aa", fontSize: 12, color: "#000000" };
+  check("V6 a box with no border writes no border key at all", Object.keys(MC.serializeManaged(base)).filter((k) => /^border/.test(k)), []);
+  check("V6b a solid border writes colour + width, no dash key",
+    (({ borderColor, borderWidth, borderDash }) => [borderColor, borderWidth, borderDash])(MC.serializeManaged(Object.assign({}, base, { borderColor: "#ff0000", borderWidth: 1.5 }))),
+    ["#ff0000", 1.5, undefined]);
+  check("V6c a dotted one writes its dash", MC.serializeManaged(Object.assign({}, base, { borderColor: "#ff0000", borderDash: "dot" })).borderDash, "dot");
+  check("V6d junk border keys are not written (normalised on the way out)",
+    Object.keys(MC.serializeManaged(Object.assign({}, base, { borderColor: "nope", borderWidth: 3 }))).filter((k) => /^border/.test(k)), []);
+}
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

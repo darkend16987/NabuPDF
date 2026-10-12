@@ -92,6 +92,11 @@ const {
 // `normTextStyle` is what serializeManaged's text branch normalises through; required
 // here too so the LIFTED addManagedAnnot resolves it the same way the browser does.
 const { normTextStyle } = require("../renderer/annot-text.js");
+// The browser's `window.AnnotText`, which the lifted deserializeManaged / renderTextPng
+// reach the text raster geometry and the border through (no new bare names — BI-14).
+// Module scope, so only the eval'd editor code sees it; managed-codec.js is its own
+// module and takes its require() path, exactly as it does under node anywhere else.
+const window = { AnnotText: require("../renderer/annot-text.js") };
 // The LIFTED deserializeManaged branches on the shape families, and addManagedAnnot's
 // tô-sáng-theo-chữ branch reads the wash strength — both by bare name, so both have to
 // exist in this module's scope the way they do in the browser's shared script scope.
@@ -912,6 +917,18 @@ function readManaged(doc) {
       const plain = deserializeManaged({ k: "text", x: 1, y: 2, w: 3, h: 4, text: "a" }, null);
       check("… and a payload written BEFORE backgrounds existed has no fill key at all",
         ["fill" in plain, "fillOpacity" in plain], [false, false]);
+      // Viền khung, the same arm: round-trips when present, absent when not.
+      const bord = deserializeManaged(serializeManaged(txt({ borderColor: "#00ff00", borderWidth: 2.5, borderDash: "dot" })), null);
+      check("deserializeManaged brings a border back (colour, width, dash)",
+        [bord.borderColor, bord.borderWidth, bord.borderDash], ["#00ff00", 2.5, "dot"]);
+      const solid = deserializeManaged(serializeManaged(txt({ borderColor: "#00ff00" })), null);
+      check("… a solid one has no dash key; width defaults to 1",
+        [solid.borderWidth, "borderDash" in solid], [1, false]);
+      check("… and an old payload has no border key at all",
+        Object.keys(plain).filter((k) => /^border/.test(k)), []);
+      check("… nor does a payload with a junk colour (normalised on the way in)",
+        Object.keys(deserializeManaged({ k: "text", x: 1, y: 2, w: 3, h: 4, text: "a", borderColor: "red", borderWidth: 3 }, null))
+          .filter((k) => /^border/.test(k)), []);
     }
     // The background must never reach the layout engine: normTextStyle builds a fresh
     // object from a fixed field list, which is what guarantees a wash cannot move a
@@ -945,6 +962,9 @@ function readManaged(doc) {
       // `dataUrlToBytes` already do, so they are not re-bound.)
       // eslint-disable-next-line no-unused-vars
       const { textFont, layoutTextBox, rotatedBox } = A;
+      // Viền khung reads the dash pattern by bare name, like every other dashed writer.
+      // eslint-disable-next-line no-unused-vars
+      const { dashSpec } = require("../renderer/annot-geom.js");
       // A fixed-advance stub: every glyph is 0.6em wide. Makes the expected sizes
       // arithmetic instead of font-dependent, so this grid cannot drift with Windows.
       const stubCtx = {
@@ -952,6 +972,12 @@ function readManaged(doc) {
         measureText: (str) => ({ width: str.length * 0.6 * (parseFloat(stubCtx.font) || 1) }),
         save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
         stroke() {}, scale() {},
+        // Viền khung: recorded with the pen state read AT CALL TIME, like fillRect.
+        setLineDash(a) { this._dash = a.slice(); },
+        strokeRect(x, y, w, h) {
+          this._calls.push(["strokeRect", +x.toFixed(4), +y.toFixed(4), +w.toFixed(4), +h.toFixed(4),
+                            this.strokeStyle, this.lineWidth, this._dash || null, this.lineCap || null, this.globalAlpha]);
+        },
         // Recorded so the grid can prove the wash goes down BEFORE the first glyph.
         // Appended after the pivot's translate/rotate/translate, so the `_calls[0..2]`
         // assertions in the rotation cases below are unaffected.
@@ -1102,6 +1128,49 @@ function readManaged(doc) {
             stubCtx._calls.findIndex((c) => c[0] === "fillRect") >
               stubCtx._calls.findIndex((c) => c[0] === "rotate"), true);
         }
+
+        // ---- Viền khung (BI-109) on the raster --------------------------------
+        const SR = (calls) => calls.filter((c) => c[0] === "strokeRect");
+        stubCtx._calls.length = 0;
+        stubCtx._dash = null;
+        renderTextPng("Nghiem thu", FS, "#000000", style);
+        check("border: an unbordered box strokes NO rectangle (its raster is what it always was)",
+          SR(stubCtx._calls).length, 0);
+        stubCtx._calls.length = 0;
+        stubCtx._dash = null;
+        const withB = renderTextPng("Nghiem thu", FS, "#000000",
+          Object.assign({ borderColor: "#ff0000", borderWidth: 2, fill: "#ffeb3b" }, style));
+        {
+          const sr = SR(stubCtx._calls);
+          const lw = 2 * RS;
+          check("border: one rectangle, INSIDE the padded box (half the pen in), in its colour and width",
+            sr.length === 1 && [sr[0][1], sr[0][2], +(sr[0][3]).toFixed(4), +(sr[0][4]).toFixed(4), sr[0][5], sr[0][6]],
+            [lw / 2, lw / 2, +(up.wPt * RS - lw).toFixed(4), +(up.hPt * RS - lw).toFixed(4), "#ff0000", lw]);
+          check("border: the raster does not grow for it (same size as unbordered)",
+            [withB.wPt, withB.hPt, withB.ox, withB.oy], [up.wPt, up.hPt, 0, 0]);
+          check("border: over the wash, under the glyphs",
+            stubCtx._calls.findIndex((c) => c[0] === "fillRect") < stubCtx._calls.findIndex((c) => c[0] === "strokeRect") &&
+              stubCtx._calls.findIndex((c) => c[0] === "strokeRect") < stubCtx._calls.findIndex((c) => c[0] === "fillText"), true);
+          check("border: solid ⇒ no dash pattern set", sr[0][7], null);
+        }
+        stubCtx._calls.length = 0;
+        stubCtx._dash = null;
+        renderTextPng("Nghiem thu", FS, "#000000",
+          Object.assign({ borderColor: "#ff0000", borderWidth: 1.5, borderDash: "dash", opacity: 0.5 }, style));
+        {
+          const sr = SR(stubCtx._calls)[0];
+          const ds = dashSpec("dash", 1.5);
+          check("border: dashed ⇒ dashSpec's pattern at raster scale + its cap (the overlay svg reads the same)",
+            [sr[7], sr[8]], [ds.array.map((v) => v * RS), ds.cap]);
+          check("border: dimmed by the text opacity like the wash and glyphs", sr[9], 0.5);
+        }
+        stubCtx._calls.length = 0;
+        renderTextPng("Nghiem thu", FS, "#000000", Object.assign({ rot: 30, borderColor: "#ff0000" }, style));
+        check("border: rot 30 — stroked after the pivot, the UPRIGHT box's size (turns with the text)",
+          [stubCtx._calls.findIndex((c) => c[0] === "strokeRect") > stubCtx._calls.findIndex((c) => c[0] === "rotate"),
+           // width = cw − pen (1pt default ⇒ 3 raster px), so + 1pt gives the box back
+           +(SR(stubCtx._calls)[0][3] / RS + 1).toFixed(4)],
+          [true, +up.wPt.toFixed(4)]);
       } finally {
         delete global.document;
       }

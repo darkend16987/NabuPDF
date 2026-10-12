@@ -484,6 +484,8 @@ body.presenting .sidebar-resizer { display: none; }
 /* Ký tự đặc biệt: five to a row, the glyph itself is the label. */
 .fmt-sym .fmt-ic { width: 32px; font-size: 14px; }
 .fmt-btn { flex: 1 1 0; min-width: 0; padding: 5px 6px; font-size: 12px; }
+.fmt-row select { width: 96px; }
+.fmt-row input[type="color"] { width: 44px; height: 24px; padding: 0; }
 .comment-item {
   text-align: left; width: 100%; background: var(--bg-3); border: 1px solid var(--bg-3);
   border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--fg);
@@ -787,6 +789,9 @@ body.editing .annot-layer .an { cursor: move; }
    the baked PNG) is set inline by renderAnnot — see the comment there before touching it.
    `pointer-events: none` so the wash never steals a click from the box itself. */
 .an-text-bg { position: absolute; z-index: -1; pointer-events: none; }
+/* Viền khung — an <svg> on the raster's own rectangle (renderAnnot). After the wash in
+   the DOM, so above it; z-index -1 keeps it under the glyphs, as on the raster. */
+.an-text-border { position: absolute; z-index: -1; pointer-events: none; overflow: visible; }
 .an-highlight { mix-blend-mode: multiply; opacity: 0.4; }
 /* Tô sáng theo đoạn chữ — the wrapper is the union box (it takes the click and the
    drag); each child is one LINE of the selection and carries the wash.

@@ -2942,6 +2942,46 @@ _Ghi 2026-09-30 (v0.2.73)._
   mới không theo mặc định sau khi mở lại app; Đặt làm mặc định đổi màu/góc xoay của hộp mới; Xoá định dạng xoá màu/nền/
   xoay hoặc về kiểu đã lưu thay vì kiểu gốc; mở file cũ thấy hộp chữ đổi kiểu.
 
+### BI-109 · Hộp chữ: Viền khung (vẽ trong raster) + Sao chép / Dán định dạng
+- **Viền khung** — model: `borderColor` (#rrggbb; có ⇔ có viền), `borderWidth` (pt, 0,25…12, mặc định 1), `borderDash`
+  ("dash"|"dot"; vắng = liền). Một người đọc duy nhất: `annot-text.js normTextBorder` (null = không viền). Vắng key = không
+  viền ⇒ hộp cũ: payload /NabuData và raster **y byte** (BI-59). **Không** nằm trong `normTextStyle` (như fill): viền không
+  bao giờ tới `layoutTextBox`, không dời glyph.
+- Sáu chỗ chạm (khuôn "thêm trường"): `renderTextPng` (editor-bake.js: `strokeRect` **bên trong** hình chữ nhật của nền —
+  lùi nửa nét — sau nền, trước glyph, trong khung đã xoay, `globalAlpha` = độ mờ chữ, nét đứt = `dashSpec`×RS; raster
+  **không** lớn thêm), `renderAnnot` (editor.js: `<svg class="an-text-border">`), `serializeManaged` (managed-codec.js
+  `_normTextBorder`, ghi chỉ khi có; dash chỉ khi không liền), `deserializeManaged` (editor-bake.js, cùng nhánh), bảng
+  Format (`writeBorder`, `syncFmtPanel`), `writeFreeText` (`delete style.borderColor` — FreeText của đối tác giữ viền **của
+  file nó**, vẽ bằng vector; điều khiển viền tắt cho `a._foreign`). Copy/paste vật thể, undo, clip liên tab: sao chép
+  nguyên đối tượng ⇒ tự mang theo.
+- ⚠️ **Hình chữ nhật**: raster vẽ trên `cw × chh` px (ceil ở 3×), KHÔNG phải `a.w × a.h` (ceil theo pt từ bố cục 1×) — lệch
+  tới ~1 pt. Nền không lộ, viền thì lộ. Overlay hỏi đúng hình chữ nhật raster: `textRasterBoxPt` (bố cục ở 3×) +
+  `textRasterGeom` (công thức pad/ceil mà `renderTextPng` cũng gọi — một công thức, hai người đọc). Hộp **có viền** đặt cả nền
+  lẫn viền lên hình chữ nhật đó; hộp không viền giữ `a.w × a.h` như cũ.
+- ⚠️ **Co giãn ngang** (`charScale`): phần tử mang `scaleX`; viền là `<svg>` viewBox theo pt, `preserveAspectRatio="none"`,
+  rộng `w/charScale` px — phép co không đều của viewBox triệt tiêu đúng `scaleX` của cha ⇒ nét và nhịp đứt **đều** hai trục,
+  như raster (vẽ viền trước khi co từng glyph). Đo: ma trận màn hình của rect `sx = sy` (0,99994 / 0,99980).
+- **Sao chép / Dán định dạng** — `copyTextFormat`: 15 trường kiểu chữ (`TEXT_DEFAULT_KEYS`) + màu + nền + viền; **không** góc
+  xoay, bề rộng khung, chữ, vị trí. `applyTextFormat`: key nguồn không có ⇒ **xoá** khỏi đích (nguồn không nền ⇒ đích hết nền;
+  xoá chứ không gán "none" — BI-59); `noBorder` cho FreeText đối tác. Dán lên **mọi hộp chữ đang chọn** (Ctrl+click), vật thể
+  khác trong nhóm bỏ qua, đo lại từng hộp, **một** bước hoàn tác. Clip ở cấp banner (`let fmtClip` khai **trước**
+  `syncFmtPanel` — đọc nó; `let` khai sau = TDZ khi gọi sớm), sống qua Xong / đổi trang. Hai nút + phím của Word
+  `Ctrl+Shift+C/V` (`e.code`, không khi đang gõ, chỉ `preventDefault` khi làm được việc); Ctrl+C vật thể vẫn đòi
+  `!e.shiftKey` nên hai đường không cùng chạy. Không có "chế độ chổi" bấm-để-áp: không thêm trạng thái con trỏ cho `onDown`.
+- E2E (2026-10-12, app thật, chuột/phím thật, đối chiếu **pixel đỏ của file đã lưu** render bằng pdf.js ở 2× — không đọc canvas
+  viewer, BI-4): viền 2 pt — mép file vs màn hình lệch ≤ **0,27 pt**; nét đứt + co giãn ngang 60% ≤ **0,24 pt**; vào lại Chú
+  thích ⇒ viền đọc lại từ file; Ctrl+Shift+C → chọn 2 hộp (Ctrl+click) → Ctrl+Shift+V ⇒ cả hai 22 pt/đậm/viền đỏ đứt, số vật thể
+  không đổi (phím không dán vật thể); một Ctrl+Z gỡ cả hai; nút Dán định dạng cũng chạy; EN đúng. 15/15.
+- ⚠️ **Hộp đã xoay — lệch CÓ TỪ v0.2.63, viền chỉ làm lộ ra** (đo cùng probe): xoay 90° ⇒ khung trong file dịch (+0,4; −4,2) pt
+  so với màn hình, cùng kích thước; 30° ⇒ 1,7 pt. Nguyên nhân: `renderAnnot` xoay phần tử quanh tâm **phần tử** (a.w/2, a.h/2),
+  `renderTextPng` xoay quanh tâm **raster** = tâm phần tử − (pad, pad); hai tâm khác nhau ⇒ thêm tịnh tiến
+  2·pad·√2·sin(θ/2) (90° ≈ 4,8 pt ở 16 pt, tỉ lệ cỡ chữ). Glyph lệch y như viền (cùng khung xoay). File là đúng, màn hình sai;
+  comment "the raster turns about the same visual centre" trong renderAnnot là không đúng. Việc riêng (đổi hành vi xoay,
+  không gộp vào đây). Ô gõ chưa xem trước viền lúc đang gõ.
+- **Vỡ khi:** file lưu có viền lệch / dày / mảnh khác màn hình; hộp không viền đổi byte; co giãn ngang làm cạnh dọc mảnh đi trên
+  màn hình; dán định dạng đổi góc xoay / bề rộng khung / chữ, hoặc dán vào hình vuông/mây; FreeText đối tác bị thêm viền Nabu;
+  Ctrl+Shift+V dán cả vật thể.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3017,6 +3057,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Căn đều hộp chữ (`justifiedDisplayLines`, `isLastOfPara`, `renderJustifiedLines`, `.an-text-line`) | BI-106 · `npm run test:text` (nhóm J) · **test tay**: Chú thích → T → **Căn đều** → kéo hộp ~240 pt → gõ 2 đoạn tiếng Việt → Ctrl+Enter: mọi dòng trừ dòng cuối mỗi đoạn **thẳng mép phải** · hộp thường nhiều dòng có dòng trống → dòng trống còn nguyên · Xong → mở lại file → **cùng** hình · đổi sang Căn trái → về như cũ |
 | Bảng Định dạng: thu gọn (`#fmt-collapse`, `FMT_COLLAPSED_KEY`) / Bề rộng khung (`#fmt-boxw`) | BI-107 · `npm run test:fmtpanel` · **test tay**: Chú thích → T → bảng mở rộng → bấm **›** → dải hẹp, trang lộ ra · đóng app → mở lại → T → bảng vẫn thu gọn · bấm lại → mở · kéo hộp chữ ~240 pt → chọn → ô Bề rộng khung = 240 · gõ 150 → hộp hẹp, nhiều dòng hơn · Ctrl+Z → 240 · xoay 90° → gõ 120 → đổi dòng · Xong → mở lại file → cùng chỗ ngắt · hộp thường → ô tắt |
 | Bảng Định dạng: Ký tự đặc biệt (`#fmt-symbols`, `ed._taInsert`) / kiểu mặc định (`#fmt-set-default`, `#fmt-clear`, `pickTextDefault`, `TEXT_DEFAULT_LS`) | BI-108 · `npm run test:fmtpanel` + `test:text` (nhóm T) · **test tay**: T → bấm trang → gõ "m" → bấm ² → gõ tiếp: ô không đóng · Ctrl+Z trong ô → mất ² · Xong → mở lại file → ² còn đúng (không ô vuông) · chọn hộp → cỡ 24 + Đậm + Căn giữa → Đặt làm mặc định → hộp mới đúng kiểu, **màu không đổi** · đóng app → mở lại → hộp mới vẫn kiểu đó · chọn hộp → Xoá định dạng → về 16/thường/trái, giữ màu/nền/xoay · Ctrl+Z → về lại · mở file **cũ** → hộp chữ không đổi |
+| Viền khung hộp chữ (`borderColor/Width/Dash`, `normTextBorder`, `textRasterGeom`/`textRasterBoxPt`, `.an-text-border`, `writeBorder`) · Sao chép / Dán định dạng (`copyTextFormat`, `applyTextFormat`, `fmtClip`, Ctrl+Shift+C/V) | BI-109 · `npm run test:text` (V, F) + `test:fmtpanel` (P5, B) + `npm test -- managed` (raster + round-trip) · **test tay**: chọn hộp chữ → Viền quanh hộp chữ → đỏ 2 pt → Xong → mở lại file: viền **đúng chỗ, cùng độ dày** · nét đứt + Co giãn ngang 60% → cạnh dọc không mảnh hơn cạnh ngang · hộp đã xoay có viền → Xong → so · mở file **cũ** → không hộp nào có viền · Ctrl+Shift+C một hộp → Ctrl+click 2 hộp khác → Ctrl+Shift+V → đúng kiểu, góc xoay/bề rộng giữ · Ctrl+Z một lần → cả hai về · nhóm có cả hình vuông → hình vuông không đổi · FreeText từ Acrobat → ô Viền tắt |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

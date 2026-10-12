@@ -593,10 +593,28 @@
              factory style. Neither touches colour, background, rotation or wrap width. -->
         <div class="fmt-section">
           <div class="fmt-title">Kiểu chữ</div>
+          <!-- Sao chép / Dán định dạng (Ctrl+Shift+C / Ctrl+Shift+V, as in Word): the look of
+               one label — font, size, paragraph, colour, background, border — onto every
+               selected text box. Not rotation, wrap width or text. editor.js fmtClip. -->
+          <div class="fmt-grid">
+            <button class="fmt-btn" id="fmt-copy-style" title="Sao chép định dạng của hộp chữ đang chọn: font, cỡ, đoạn văn, màu, nền, viền (Ctrl+Shift+C).">Sao chép định dạng</button>
+            <button class="fmt-btn" id="fmt-paste-style" title="Áp định dạng đã sao chép vào các hộp chữ đang chọn (Ctrl+Shift+V). Không đổi chữ, góc xoay, bề rộng khung.">Dán định dạng</button>
+          </div>
           <div class="fmt-grid">
             <button class="fmt-btn" id="fmt-set-default" title="Hộp chữ mới sẽ dùng kiểu của hộp đang chọn (hoặc kiểu đang đặt): font, cỡ, đậm / nghiêng / gạch, căn lề, giãn, danh sách, độ mờ. App nhớ cho lần sau.">Đặt làm mặc định</button>
             <button class="fmt-btn" id="fmt-clear" title="Đưa hộp chữ đang chọn về kiểu gốc của app. Giữ nguyên màu, nền, góc xoay và bề rộng khung.">Xoá định dạng</button>
           </div>
+        </div>
+
+        <!-- Viền khung: acts on the SELECTED box only (like Tự xuống dòng). Drawn into the
+             box's raster on the wash's rectangle, so screen and file agree (BI-109). A
+             partner's FreeText keeps the border its file gave it — controls disabled. -->
+        <div class="fmt-section">
+          <div class="fmt-title">Viền khung</div>
+          <label class="fmt-chk" title="Kẻ khung quanh hộp chữ đang chọn — dùng cho nhãn, ghi chú trên bản vẽ."><input type="checkbox" id="fmt-border" /> Viền quanh hộp chữ</label>
+          <label class="fmt-row">Màu viền <input type="color" id="fmt-border-color" value="#000000" /></label>
+          <label class="fmt-row">Độ dày <input type="number" id="fmt-border-width" min="0.25" max="12" step="0.25" value="1" /><span class="fmt-unit">pt</span></label>
+          <label class="fmt-row">Kiểu nét <select id="fmt-border-dash"><option value="solid">Liền</option><option value="dash">Nét đứt</option><option value="dot">Chấm</option></select></label>
         </div>
 
         <div class="fmt-section">

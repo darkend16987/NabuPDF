@@ -85,6 +85,11 @@
     if (typeof normTextStyle === "function") return normTextStyle(a);
     return require("./annot-text.js").normTextStyle(a);
   }
+  // Through window.AnnotText in the browser (no new bare name — BI-14), require()d in node.
+  function _normTextBorder(a) {
+    if (typeof window !== "undefined" && window.AnnotText) return window.AnnotText.normTextBorder(a);
+    return require("./annot-text.js").normTextBorder(a);
+  }
   // Same lazy shape for annot-geom.js's cloud geometry — loaded before this file in the
   // browser (index.html), require()d here under node. shapeAppearance() calls these
   // rather than re-deriving a scallop: the overlay <svg>, the flattened bake and the
@@ -490,6 +495,13 @@
       // Fixed-width box: same rule — the key exists only for a box that wraps, so a
       // point box (every box written before this) keeps a byte-identical payload.
       if (s.boxW > 0) o.boxW = s.boxW;
+      // Viền khung: the same only-when-set rule (dash only when not solid, like the arrow).
+      const bd = _normTextBorder(a);
+      if (bd) {
+        o.borderColor = bd.color;
+        o.borderWidth = bd.width;
+        if (bd.dash !== "solid") o.borderDash = bd.dash;
+      }
       return o;
     }
     if (a.kind === "arrow") {

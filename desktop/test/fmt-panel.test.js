@@ -285,7 +285,7 @@ function symRig(withEditor) {
 // =============================================================================
 // P4 · Đặt làm mặc định / Xoá định dạng
 // =============================================================================
-const DEF_SRC = cut("  const TEXT_DEFAULT_LS = ", '  $("ed-penwidth").oninput');
+const DEF_SRC = cut("  const TEXT_DEFAULT_LS = ", "  // ---- Sao chép / Dán định dạng (format painter) ----");
 // The palette's factory state, as the `ed` literal in editor.js declares it.
 const edFactory = () => ({
   sel: null, font: "sans", fontSize: 16, bold: false, italic: false, underline: false, strike: false, align: "left",
@@ -421,6 +421,156 @@ check("D10 editor.js reaches the pure half through window.AnnotText, never new b
   check("D11 every new P3/P4 string has an EN entry", STR.map((s) => I18N.includes(JSON.stringify(s) + ":")), STR.map(() => true));
   check("D11b …and each one is spelled exactly as the markup / editor.js writes it",
     STR.map((s) => HTML.includes(s) || ED.includes(s)), STR.map(() => true));
+}
+
+// =============================================================================
+// P5 · Sao chép / Dán định dạng
+// =============================================================================
+const PAINT_SRC = cut("  function copyTextFmt() {", '  [["fmt-copy-style", copyTextFmt]');
+function paintRig(sel, page) {
+  const log = [];
+  const toasts = [];
+  const annots = page;
+  const ed = { sel };
+  const env = {
+    ed,
+    findAnnot: (id) => { const a = annots.find((x) => x.id === id); return a ? { a, page: 0 } : null; },
+    selAnnots: () => annots.filter((x) => x._sel),
+    window: { AnnotText: AT, t: (s) => s },
+    toast: (m, k) => toasts.push([m, k]),
+    pushEdUndo: (k) => log.push("undo:" + (k || "")),
+    measureText: (t, size) => ({ w: size * 10, h: size * 2 }),
+    textStyle: (a) => AT.normTextStyle(a),
+    syncOverlays: () => log.push("syncOverlays"),
+    syncControls: () => log.push("syncControls"),
+    syncFmtPanel: () => log.push("syncFmtPanel"),
+  };
+  // fmtClip is the banner-level `let` — give the cut code its own.
+  const api = new Function(...Object.keys(env), "let fmtClip = null;\n" + PAINT_SRC +
+    "\nreturn { copyTextFmt, pasteTextFmt, clip: () => fmtClip };")(...Object.values(env));
+  return Object.assign(api, { log, toasts, ed });
+}
+{
+  const src = { id: 1, kind: "text", text: "A", font: "Tahoma", fontSize: 20, bold: true, color: "#0000ff",
+    borderColor: "#ff0000", rot: 45, _sel: true };
+  const t1 = { id: 2, kind: "text", text: "B", fontSize: 10, color: "#000000", rot: 0, boxW: 80 };
+  const t2 = { id: 3, kind: "text", text: "C", fontSize: 10, color: "#000000", _foreign: { ft: {} }, borderColor: "#123456" };
+  const shape = { id: 4, kind: "box", color: "#00ff00", width: 2 };
+  const page = [src, t1, t2, shape];
+  const r = paintRig(1, page);
+  check("P5a nothing copied yet ⇒ paste does nothing", [r.pasteTextFmt(), r.log], [false, []]);
+  check("P5b copy from the selected text box", [r.copyTextFmt(), r.clip() && r.clip().font, r.toasts[0][1]], [true, "Tahoma", "good"]);
+  // select the three targets (a Ctrl+click group): two text boxes and a shape
+  src._sel = false; t1._sel = t2._sel = shape._sel = true; r.ed.sel = 2;
+  r.log.length = 0;
+  check("P5c paste onto the selection", r.pasteTextFmt(), true);
+  check("P5d every selected TEXT box takes the look (font, size, colour) and is re-measured",
+    [t1.font, t1.fontSize, t1.color, t1.w, t2.font, t2.color], ["Tahoma", 20, "#0000ff", 200, "Tahoma", "#0000ff"]);
+  check("P5e …the shape in the group is left alone", JSON.stringify(shape), JSON.stringify({ id: 4, kind: "box", color: "#00ff00", width: 2, _sel: true }));
+  check("P5f …own rotation / wrap width kept; a partner's FreeText keeps ITS border",
+    [t1.rot, t1.boxW, t1.borderColor, t2.borderColor], [0, 80, "#ff0000", "#123456"]);
+  check("P5g …ONE undo step for the whole group, then redraw + font bar + panel",
+    r.log, ["undo:", "syncOverlays", "syncControls", "syncFmtPanel"]);
+  check("P5h …and the toast counts the boxes", r.toasts[1][0], "Đã dán định dạng vào 2 hộp chữ.");
+  const r2 = paintRig(4, [Object.assign({}, shape, { _sel: true })]);
+  check("P5i copy with a NON-text selection does nothing", [r2.copyTextFmt(), r2.clip()], [false, null]);
+}
+check("P5j fmtClip is declared BEFORE syncFmtPanel (a later `let` = TDZ crash on its first call)",
+  ED.indexOf("  let fmtClip = null;") > 0 && ED.indexOf("  let fmtClip = null;") < ED.indexOf("  function syncFmtPanel()"), true);
+check("P5k syncFmtPanel: copy needs a text box; paste needs a clip AND a selected text box",
+  /cpy\.disabled = !\(hit && hit\.a\.kind === "text"\);[\s\S]{0,200}?pst\.disabled = !fmtClip \|\| !selAnnots\(\)\.some\(\(x\) => x\.kind === "text"\);/.test(ED), true);
+check("P5l Ctrl+Shift+C / V by physical key, never while typing, claimed only when it did something",
+  /e\.shiftKey && !e\.altKey && !typing && !e\.repeat &&\s*\(e\.code === "KeyC" \|\| e\.code === "KeyV"\)\) \{\s*if \(e\.code === "KeyC" \? copyTextFmt\(\) : pasteTextFmt\(\)\) e\.preventDefault\(\);/.test(ED), true);
+check("P5m …and the plain Ctrl+C object copy still refuses Shift (so the two never both fire)",
+  /\(e\.key === "c" \|\| e\.key === "C"\) && \(e\.ctrlKey \|\| e\.metaKey\) && !e\.shiftKey/.test(ED), true);
+
+// =============================================================================
+// P6 · Viền khung
+// =============================================================================
+const BORDER_SRC = cut("  function writeBorder(final) {", '  $("ed-penwidth").oninput');
+function borderRig(box, ctlv) {
+  const log = [];
+  const c = {
+    "fmt-border": el({ checked: !!ctlv.on }),
+    "fmt-border-color": el({ value: ctlv.color || "#000000" }),
+    "fmt-border-width": el({ value: ctlv.width == null ? "1" : String(ctlv.width) }),
+    "fmt-border-dash": el({ value: ctlv.dash || "solid" }),
+  };
+  const ed = { sel: box ? 7 : null };
+  const env = {
+    $: (id) => c[id] || null, ed,
+    findAnnot: (id) => (id === 7 && box ? { a: box, page: 0 } : null),
+    window: { AnnotText: AT },
+    pushEdUndo: (k) => log.push("undo:" + k),
+    syncOverlays: () => log.push("syncOverlays"),
+    syncFmtPanel: () => log.push("syncFmtPanel"),
+  };
+  new Function(...Object.keys(env), BORDER_SRC)(...Object.values(env));
+  return { c, log, box };
+}
+{
+  const box = { kind: "text", text: "A", color: "#0000ff" };
+  const r = borderRig(box, { on: true, color: "#ff0000", width: 2, dash: "dash" });
+  r.c["fmt-border"].fire("change");
+  check("B1 ticking Viền writes colour / width / dash onto the selected box",
+    [box.borderColor, box.borderWidth, box.borderDash], ["#ff0000", 2, "dash"]);
+  check("B1b …one undo step keyed per box, then redraw", r.log, ["undo:border:7", "syncOverlays", "syncFmtPanel"]);
+  r.c["fmt-border-dash"].value = "solid";
+  r.c["fmt-border-dash"].fire("change");
+  check("B2 back to solid ⇒ the dash key is REMOVED (not stored as \"solid\")", ["borderDash" in box, box.borderColor], [false, "#ff0000"]);
+  r.c["fmt-border-width"].value = "0";
+  r.c["fmt-border-width"].fire("input");
+  check("B3 typing an invalid width mid-way changes nothing", box.borderWidth, 2);
+  r.c["fmt-border-width"].value = "50";
+  r.c["fmt-border-width"].fire("change");
+  check("B3b leaving the field clamps to 12pt and shows it", [box.borderWidth, r.c["fmt-border-width"].value], [12, "12"]);
+  const n = r.log.length;
+  r.c["fmt-border-width"].fire("change");
+  check("B3c the same value again records nothing", r.log.length, n);
+  r.c["fmt-border"].checked = false;
+  r.c["fmt-border"].fire("change");
+  check("B4 unticking DELETES all three keys (the shape of a box that never had a border — BI-59)",
+    ["borderColor", "borderWidth", "borderDash"].filter((k) => k in box), []);
+}
+{
+  const fb = { kind: "text", text: "A", color: "#000000", _foreign: { ft: { border: { width: 1, color: "#000000" } } } };
+  const r = borderRig(fb, { on: true, color: "#ff0000" });
+  r.c["fmt-border"].fire("change");
+  check("B5 a partner's FreeText is never given a Nabu border (it keeps its file's)", ["borderColor" in fb, r.log], [false, []]);
+  const r2 = borderRig(null, { on: true });
+  r2.c["fmt-border"].fire("change");
+  check("B5b nothing selected ⇒ nothing happens", r2.log, []);
+}
+check("B6 syncFmtPanel disables the border controls for a partner's FreeText, and the sub-controls while off",
+  /bdC\.disabled = !box \|\| !!box\._foreign;[\s\S]{0,200}?const off = bdC\.disabled \|\| !bd;/.test(ED), true);
+{
+  // The overlay half — renderAnnot cannot run in node, so its shape is pinned.
+  check("B7 renderAnnot draws the border on the RASTER's rectangle (textRasterBoxPt), and the wash with it",
+    /const bd = window\.AnnotText\.normTextBorder\(a\);\s*const rb = bd \? window\.AnnotText\.textRasterBoxPt\(a\.text, st, a\.fontSize\) : \{ w: a\.w, h: a\.h \};/.test(ED) &&
+    /bg\.style\.width = \(rb\.w \* s\) \/ st\.charScale \+ "px";\s*bg\.style\.height = rb\.h \* s \+ "px";/.test(ED), true);
+  check("B7b …as an <svg> in pt stretched with preserveAspectRatio=none (cancels scaleX: uniform stroke)",
+    /svg\.setAttribute\("viewBox", `0 0 \$\{rb\.w\} \$\{rb\.h\}`\);\s*svg\.setAttribute\("preserveAspectRatio", "none"\);/.test(ED), true);
+  check("B7c …inset by half the pen, dashed by dashSpec (renderTextPng's numbers)",
+    /r\.setAttribute\("x", String\(lw \/ 2\)\);[\s\S]{0,400}?const ds = dashSpec\(bd\.dash, bd\.width\);/.test(ED), true);
+  const BAKE = R("editor-bake.js");
+  check("B8 renderTextPng takes its rectangle from textRasterGeom (one formula, two readers)",
+    /const \{ pad, cw, chh \} = window\.AnnotText\.textRasterGeom\(lay\.width, lay\.height, fpx\);/.test(BAKE), true);
+  check("B8b writeFreeText strips a Nabu border from a partner's box before rasterising",
+    /delete style\.fill;[^\n]*\n\s*delete style\.borderColor;/.test(BAKE), true);
+  check("B8c the border controls exist: tick, colour, width (min/max = TEXT_BORDER_MIN/MAX), style",
+    (() => { const m = /id="fmt-border-width" min="([\d.]+)" max="([\d.]+)"/.exec(HTML); return !!m && +m[1] === AT.TEXT_BORDER_MIN && +m[2] === AT.TEXT_BORDER_MAX &&
+      /id="fmt-border"/.test(HTML) && /id="fmt-border-color"/.test(HTML) && /<select id="fmt-border-dash"><option value="solid">Liền<\/option><option value="dash">Nét đứt<\/option><option value="dot">Chấm<\/option><\/select>/.test(HTML); })(), true);
+}
+{
+  const STR = ["Sao chép định dạng", "Dán định dạng",
+    "Sao chép định dạng của hộp chữ đang chọn: font, cỡ, đoạn văn, màu, nền, viền (Ctrl+Shift+C).",
+    "Áp định dạng đã sao chép vào các hộp chữ đang chọn (Ctrl+Shift+V). Không đổi chữ, góc xoay, bề rộng khung.",
+    "Đã sao chép định dạng — chọn hộp chữ khác rồi bấm Dán định dạng (Ctrl+Shift+V).",
+    "Đã dán định dạng vào {n} hộp chữ.", "Viền khung", "Viền quanh hộp chữ",
+    "Kẻ khung quanh hộp chữ đang chọn — dùng cho nhãn, ghi chú trên bản vẽ.", "Màu viền", "Độ dày",
+    "Kiểu nét", "Liền", "Nét đứt", "Chấm"];
+  check("P56 every P5/P6 string has an EN entry", STR.map((s) => I18N.includes(JSON.stringify(s) + ":")), STR.map(() => true));
+  check("P56b …spelled exactly as markup / editor.js write it", STR.map((s) => HTML.includes(s) || ED.includes(s)), STR.map(() => true));
 }
 
 console.log(`\nfmt-panel: ${pass} pass, ${fail} fail`);
