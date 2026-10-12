@@ -241,8 +241,8 @@
       blocks: [
         {
           p: T(
-            "Tick chọn trang ở **cột trang** bên trái (nút **Chọn tất cả** ở đầu cột). Phần lớn lệnh dưới đây nằm trong nút **Trang ▾** trên thanh công cụ; các lệnh dùng nhiều nhất — xoay, xoá, ghép, chèn, thay và tách trang đang chọn — cũng có trong menu **Trang**.",
-            "Tick pages in the **page list** on the left (**Chọn tất cả** selects all). Most of the commands below are under the **Trang ▾** toolbar button; the most used ones — rotate, delete, merge, insert, replace and extract the selected pages — are also on the **Trang** menu."
+            "Tick chọn trang ở **cột trang** bên trái (nút **Chọn tất cả** ở đầu cột). Phần lớn lệnh dưới đây nằm trong nút **Trang ▾** trên thanh công cụ, và mọi mục của **Trang ▾** cũng có trong menu **Trang** (cùng thứ tự). **Chọn tất cả trang** nằm trong menu **Chỉnh sửa**.",
+            "Tick pages in the **page list** on the left (**Chọn tất cả** selects all). Most of the commands below are under the **Trang ▾** toolbar button, and everything under **Trang ▾** is also on the **Trang** menu (same order). **Select all pages** is on the **Chỉnh sửa** (Edit) menu."
           ),
         },
         { h: T("Thêm / ghép", "Adding & merging") },
@@ -748,6 +748,12 @@
       id: "export",
       title: T("Xuất & chuyển đổi", "Export & convert"),
       blocks: [
+        {
+          p: T(
+            "Mọi mục của **Xuất ▾** và **Công cụ ▾** cũng có trên thanh menu, cùng thứ tự: menu **Xuất** và menu **Công cụ**.",
+            "Everything under **Xuất ▾** and **Công cụ ▾** is also on the menu bar, in the same order: the **Xuất** (Export) and **Công cụ** (Tools) menus."
+          ),
+        },
         { h: T("Xuất ▾", "Xuất ▾ (Export)") },
         {
           ul: [

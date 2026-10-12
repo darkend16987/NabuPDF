@@ -1,6 +1,12 @@
 # Review 2026-10-12 — Thanh menu gốc (native menu bar) sau loạt v0.2.5x → v0.2.78
 
-> Trạng thái: **Đợt 1 (M1, M2) ĐÃ LÀM — BI-105**; **Đợt 2 (M3) ĐÃ LÀM**; Đợt 3 chưa làm.
+> Trạng thái: **Đợt 1 (M1, M2) ĐÃ LÀM — BI-105**; **Đợt 2 (M3) ĐÃ LÀM**; **Đợt 3 (M4, M5, M7) ĐÃ LÀM**; M6 xử lý
+> bằng mục riêng "Chọn tất cả trang" (giữ nguyên `role: "selectAll"` — chưa probe Ctrl+A nên không đổi nó).
+>
+> **Kết quả Đợt 3 (2026-10-12):** menu theo bảng mục 5 (7 menu cấp 1; Trang/Công cụ/Xuất trùng dropdown toolbar từng
+> mục). Lệch so với bảng: giữ "Chọn tất cả" (Ctrl+A) bên cạnh "Chọn tất cả trang". Phát hiện trong lúc làm:
+> `openOffice`, `Compare.open`, `Capture.toggle` không tự gate bản quyền (chỉ được gate qua dropdown) ⇒ menu gọi
+> thẳng sẽ mở lỗ BI-26; giải bằng `clickToolbarFor()` (xem BI-105). `test:menu` 407 ý, 9 đột biến đều đỏ; E2E 34/34.
 >
 > **Kết quả Đợt 2 (2026-10-12):** sửa câu về menu Tập tin trong `help.js` (thành: chuột phải lên tab, hoặc
 > kéo tab). Khi rà còn thấy thêm câu sai thứ hai ở mục *Quản lý trang*: "Mọi lệnh dưới đây … cũng có trong

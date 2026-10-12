@@ -876,6 +876,8 @@
     "Đang xử lý — chờ xong rồi thử lại.": "Still working — try again when it finishes.",
     "Đóng hộp thoại đang mở trước đã.": "Close the open dialog first.",
     "Bấm Xong ở chế độ chỉnh sửa trước khi thao tác trang.": "Click Done in edit mode before changing pages.",
+    "Bấm Xong ở chế độ chỉnh sửa trước đã.": "Click Done in edit mode first.",
+    "Lệnh này chưa dùng được lúc này.": "This command is not available right now.",
     "Tài liệu đang có trang ẩn — bỏ ẩn (hoặc xuất bản sao không kèm trang ẩn) rồi mới ghép trang.":
       "The document has hidden pages — unhide them (or export a copy without them) before combining pages.",
     "Các trang được chọn có {n} chú thích / liên kết / ô biểu mẫu. Khi ghép, chúng sẽ KHÔNG được giữ (chỉ giữ phần hình của trang). Ctrl+Z hoàn tác được. Vẫn ghép?":

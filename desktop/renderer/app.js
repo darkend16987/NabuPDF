@@ -5745,16 +5745,7 @@ window.addEventListener("keydown", (e) => {
   // it open there — same intent ("show me the page list"), same key.
   if (e.key === "F4" && !isTyping()) {
     e.preventDefault();
-    if (present.on) {
-      // Pinning must also un-collapse: a sidebar the user had put away before
-      // going full screen is `display:none`, so pinning it alone would be a key
-      // that visibly does nothing — and the hover rail can't rescue it either.
-      const pin = !document.body.classList.contains("rail-pinned");
-      if (pin) toggleSidebar(false);
-      document.body.classList.toggle("rail-pinned", pin);
-    } else {
-      toggleSidebar();
-    }
+    toggleSidebarFromKey();
     return;
   }
   // F11 = full-screen reading mode (also on the View menu). Handled here rather
@@ -5849,19 +5840,80 @@ window.addEventListener("keydown", (e) => {
 // zoom deliberately stay available while editing, as on the toolbar.
 function menuBlockReason(cmd, ctx) {
   // Change or read out the page structure — toolbar: "Trang ▾" + the quick page buttons.
-  const PAGE = new Set(["rotateL", "rotateR", "delete", "merge", "insert", "replace", "extract"]);
+  const PAGE = new Set([
+    "rotateL", "rotateR", "delete", "merge", "insert", "replace", "extract",
+    "blank", "splitFiles", "deleteRange", "nup", "pageNumbers", "selectAllPages",
+  ]);
+  // Enter a mode or open a tool over the document. Not while editing: the toolbar hides
+  // them then, and "Chú thích" is a TOGGLE whose second click is "Xong" — a menu item
+  // labelled "Chú thích" must never end (and bake) the session it is part of. Whether
+  // a document / the engine is needed is the toolbar button's own rule (clickToolbarFor).
+  const TOOL = new Set([
+    "find", "findReplace", "batchVariants", "annotate", "editText",
+    "extractAI", "searchable", "translate", "compress", "compare", "copyImage", "sign", "office",
+  ]);
   // Open a dialog or run a job over the document. Their functions already check for a
   // document themselves (convertReady / printDoc); here they only yield to a dialog
   // that is already up, or to a job still running.
-  const JOB = new Set(["print", "encrypt", "extractImages", "pdfToImages", "imagesToPdf"]);
-  if (!PAGE.has(cmd) && !JOB.has(cmd)) return null;
+  const JOB = new Set(["print", "encrypt", "extractImages", "pdfToImages", "imagesToPdf", "combine"]);
+  if (!PAGE.has(cmd) && !TOOL.has(cmd) && !JOB.has(cmd)) return null;
   if (ctx.busy) return "Đang xử lý — chờ xong rồi thử lại.";
   if (ctx.modal) return "Đóng hộp thoại đang mở trước đã.";
   if (PAGE.has(cmd)) {
     if (!ctx.has) return "Mở PDF trước.";
     if (ctx.editing) return "Bấm Xong ở chế độ chỉnh sửa trước khi thao tác trang.";
   }
+  if (TOOL.has(cmd) && ctx.editing) return "Bấm Xong ở chế độ chỉnh sửa trước đã.";
   return null;
+}
+
+// F4 and Hiển thị → Cột trang. Moved verbatim out of the keydown ladder so the menu
+// item cannot drift from the key.
+function toggleSidebarFromKey() {
+  if (present.on) {
+    // Pinning must also un-collapse: a sidebar the user had put away before
+    // going full screen is `display:none`, so pinning it alone would be a key
+    // that visibly does nothing — and the hover rail can't rescue it either.
+    const pin = !document.body.classList.contains("rail-pinned");
+    if (pin) toggleSidebar(false);
+    document.body.classList.toggle("rail-pinned", pin);
+  } else {
+    toggleSidebar();
+  }
+}
+
+// Why a toolbar button is disabled, for a menu item that stands in for it. Pure, like
+// menuBlockReason. Same order of causes as updateToolbar() applies them.
+function menuDisabledReason(ctx) {
+  if (!ctx.has) return "Mở PDF trước.";
+  if (ctx.editing) return "Bấm Xong ở chế độ chỉnh sửa trước đã.";
+  if (!ctx.ready) return "Engine chưa sẵn sàng.";
+  return "Lệnh này chưa dùng được lúc này.";
+}
+
+// A menu item that IS a toolbar button: click that button, so the menu inherits its
+// whole rule set instead of a second copy of it — the handler (often inside a module:
+// editor.js, sign.js, capture.js, find-replace.js), its enable state (updateToolbar)
+// and its licence gate. The licence half needs care: the capture guard
+// (installLicenseGuard) only knows the CLICKED id, and items of "Công cụ ▾" / "Xuất ▾"
+// are gated through their dropdown's button, not their own — several of their handlers
+// (openOffice, Compare.open, Capture.toggle) have no gate of their own. So an item whose
+// dropdown trigger is gated is gated here too: the menu walks the same gate the toolbar
+// path walks, no wider and no narrower (BI-9 / BI-26 / BI-105).
+function clickToolbarFor(id) {
+  const btn = $(id);
+  if (!btn) return;
+  const dd = btn.closest(".dropdown");
+  const trigger = dd ? dd.querySelector(":scope > button") : null;
+  const viaTrigger = trigger && trigger !== btn ? trigger : null;
+  const gated = GATED_BTNS.includes(id) || (viaTrigger && GATED_BTNS.includes(viaTrigger.id));
+  if (gated && gateProFeature()) return;
+  if (btn.disabled || (viaTrigger && viaTrigger.disabled)) {
+    const why = menuDisabledReason(menuGuardContext());
+    toast(window.t ? window.t(why) : why, "bad");
+    return;
+  }
+  btn.click();
 }
 
 // The live state menuBlockReason judges — read the same way updateToolbar() reads it.
@@ -5873,6 +5925,7 @@ function menuGuardContext() {
     // The busy overlay (showOverlay) covers the toolbar, so a click cannot start a
     // second job under it — but a menu item can.
     busy: !$("overlay").hidden,
+    ready: sidecar.state === "ready",
   };
 }
 
@@ -5906,6 +5959,45 @@ window.desktop.onMenuCommand((cmd) => {
     extractImages: extractImages,
     pdfToImages: openPdfToImages,
     imagesToPdf: openImagesToPdf,
+    // ---- items that stand in for a toolbar button (clickToolbarFor) ----
+    combine: () => clickToolbarFor("btn-combine"),
+    blank: () => clickToolbarFor("btn-blank"),
+    splitFiles: () => clickToolbarFor("mi-split"),
+    deleteRange: () => clickToolbarFor("mi-delete-range"),
+    nup: () => clickToolbarFor("btn-nup"),
+    pageNumbers: () => clickToolbarFor("mi-page-numbers"),
+    // The toolbar button toggles (all ↔ first page); the menu item says "select all".
+    selectAllPages: () => state.selected.size !== state.numPages && clickToolbarFor("btn-select-all"),
+    // The find box is an <input>, not a button: its rule is "a document is loaded".
+    find: () => (state.pdf ? openFind() : toast(window.t ? window.t("Mở PDF trước.") : "Mở PDF trước.", "bad")),
+    findReplace: () => clickToolbarFor("btn-find-replace"),
+    // Its only toolbar door is inside the F&R panel; canRun() gates licence/doc/engine.
+    batchVariants: () => window.BatchVariants && window.BatchVariants.open(),
+    annotate: () => clickToolbarFor("btn-edit"),
+    editText: () => clickToolbarFor("btn-text-edit"),
+    extractAI: () => clickToolbarFor("btn-ocr"),
+    searchable: () => clickToolbarFor("btn-searchable"),
+    translate: () => clickToolbarFor("btn-translate"),
+    compress: () => clickToolbarFor("btn-compress"),
+    compare: () => clickToolbarFor("btn-diff"),
+    copyImage: () => clickToolbarFor("btn-copy-img"),
+    sign: () => clickToolbarFor("btn-sign"),
+    office: () => clickToolbarFor("btn-to-office"),
+    fitWidth: () => clickToolbarFor("btn-fit-width"),
+    fitHeight: () => clickToolbarFor("btn-fit-height"),
+    fitPage: () => clickToolbarFor("btn-fit-page"),
+    sidebar: toggleSidebarFromKey,
+    comments: () => clickToolbarFor("btn-comments"),
+    updates: async () => {
+      await openSettings();
+      if (!$("set-check-update").disabled) $("set-check-update").click();
+    },
+    about: async () => {
+      await openSettings();
+      // Licence block first when it is shown (enforcing builds), else "Giới thiệu".
+      const target = $("lic-section") && !$("lic-section").hidden ? $("lic-section") : document.querySelector("#set-modal .about");
+      if (target) target.scrollIntoView({ block: "start" });
+    },
   };
   const fn = actions[cmd];
   if (!fn) return;
