@@ -2820,6 +2820,27 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Vỡ khi:** trên màn hình 7 dòng mà file lưu 6/8; hộp cũ mở ra bị ngắt dòng; kéo tay nắm hộp chữ làm chữ
   méo/không đổi dòng; Esc lúc kéo tạo hộp làm mất ô gõ.
 
+### BI-105 · Menu gốc (thanh menu Electron) đi qua **cùng luật** với thanh công cụ — một cổng ở dispatcher
+- `app.js` `menuBlockReason(cmd, ctx)` (thuần) + `menuGuardContext()` + `window.desktop.onMenuCommand`. Lưới:
+  `npm run test:menu` (bảng chân trị, dispatcher gọi cổng TRƯỚC `fn()`, hợp đồng `send("x")` ⇄ `actions`, chuỗi từ
+  chối có bản EN). Review gốc: `docs/REVIEW-2026-10-12-menu-bar.md` (M1/M2).
+- Menu gốc **không có trạng thái bật/tắt** — mục nào cũng bấm được bất kể toolbar đang tắt nút. Trước bản này chỉ
+  `replaceSelectedFromFile` có khoá "đang chỉnh sửa" ⇒ **đo trên mã cũ** (app thật, `MenuItem.click()` của menu
+  thật): đang Chú thích, menu Trang → Xoay rồi Xoá ⇒ tài liệu 3 → 2 trang, +2 bước hoàn tác, trình chú thích **vẫn mở**
+  (chỉ số trang xê dịch dưới lớp phủ). Không có tài liệu, Ghép PDF… cho chọn file rồi `PDFDocument.load(null)` ném lỗi
+  không ai bắt.
+- **Luật:** lệnh cấu trúc trang (`rotateL/R`, `delete`, `merge`, `insert`, `replace`, `extract`) cần tài liệu, bị
+  chặn khi `Editor.active`/`TextEdit.active`, khi có `.modal` đang mở, khi `#overlay` (đang xử lý) hiện. Lệnh mở hộp
+  thoại/chạy việc (`print`, `encrypt`, `extractImages`, `pdfToImages`, `imagesToPdf`) chỉ nhường hộp thoại đang mở và
+  việc đang chạy — **không** đòi tài liệu (Ảnh → PDF không cần; các hàm đó tự `convertReady`). Mở/Lưu/Hoàn tác/Zoom/
+  Trợ giúp **không bao giờ** bị cổng này chặn (Lưu và zoom cố ý dùng được khi đang chỉnh sửa; Ctrl+S/Ctrl+O là
+  accelerator thật của menu nên chặn ở đây = đổi cả bàn phím).
+- Thêm lệnh menu mới ⇒ thêm `send("x")` ở `main.js` **và** khoá `x` trong `actions` (test đỏ nếu lệch); lệnh đổi cấu
+  trúc trang ⇒ thêm vào tập `PAGE` của `menuBlockReason`. Không viết lại guard trong từng hàm.
+- E2E (2026-10-12, app thật, CDP + Node inspector): bản sửa 28/28 + 7/7 (không tài liệu); bản HEAD cũ đỏ đúng 4 ca.
+- **Vỡ khi:** đang Chú thích/Sửa nội dung mà menu Trang vẫn đổi được trang; chưa mở file mà Ghép/Chèn mở hộp chọn
+  file; Ảnh → PDF bị từ chối khi chưa mở file; Phóng to/Lưu bị từ chối khi đang chỉnh sửa.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -2876,6 +2897,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Thêm nút tính năng mới | BI-9: khoá bản quyền có ăn không · BI-10: đổi VI/EN không mất chữ · **và ghi cử chỉ / phím tắt của nó vào `SECTIONS` của `help.js`** — thanh công cụ không còn chỗ để chữ hướng dẫn (BI-41) |
 | Trang Hướng dẫn (`renderer/help.js`, `#help-modal`, khối `.help-*` trong `app.css`) | `cd desktop ; npm run test:help` · mở bằng **cả 3** đường: menu **Trợ giúp**, **F1**, nút **?** · bấm từng mục lục · ô tìm gõ **không dấu** ("mui ten") vẫn ra đúng phần · đóng bằng **Đóng / Esc / bấm nền** · đổi **VI↔EN** (cả nhãn menu native) · đổi theme **Sáng** · mở **trong lúc đang Chú thích** có 1 mục đang chọn rồi bấm `Delete` → mục **không** bị xoá (BI-47) |
 | `#ed-hint` / `setEdStatus` / `#te-hint` | BI-41: **không** đặt câu hướng dẫn vào đây · thu cửa sổ về 1024px ở công cụ *Khoanh mây* → thanh **không** phình, nút **Xong** còn bấm được · vẽ mây từng điểm → có dòng nhắc cách đóng; đổi công cụ → ô **trắng** · công cụ Đo → thấy `Tỷ lệ: chưa/đã hiệu chuẩn` đúng trạng thái |
+| Menu gốc (`buildMenu` ở `main.js`, `menuBlockReason`/`menuGuardContext`/`onMenuCommand` ở `app.js`) | `cd desktop ; npm run test:menu` · BI-105 · đang **Chú thích** và đang **Sửa nội dung** → menu Trang → Xoay/Xoá/Ghép/Chèn/Tách/Thay ⇒ toast “Bấm Xong…”, số trang không đổi · mở Cài đặt → menu Xoá ⇒ “Đóng hộp thoại…” · chưa mở file → Ghép/Chèn ⇒ “Mở PDF trước.”, **không** hiện hộp chọn file · chưa mở file → Ảnh → PDF **vẫn mở** · đang chỉnh sửa → Phóng to vẫn chạy · đổi VI↔EN → toast từ chối đổi theo |
 | Menu chuột phải trên thumbnail (`openThumbMenu`) | BI-26 · chuột phải **ngoài** vùng đang chọn → chỉ chọn trang đó · chuột phải **trong** vùng đang chọn → giữ nguyên nhiều trang · đang Chú thích/Sửa nội dung → **không** ra menu · chọn hết trang → mục Xoá phải mờ |
 | Thay trang (`replacePlan`/`replaceInDoc` ở `page-range.js`, `askReplaceSpec`/`replaceSelectedWith` ở `app.js`, `#replace-modal`) | `cd desktop ; npm run test:pages` · BI-90 · chuột phải trang 3 → Thay… → file 5 trang → **Tất cả** → tài liệu +4 trang, trang mới ở vị trí 3–7 · chọn trang 2–4 → Thay → `3, 1` → dòng tóm tắt ghi đúng số trang còn lại, trang mới theo thứ tự **1, 3** · chọn trang 1 **và** 3 → mục Thay **mờ** · thay **mọi** trang → không lỗi · bấm vào ô khoảng trang → radio tự chuyển *Chỉ các trang* · `Esc` → không đổi gì · file nguồn có mật khẩu → báo ngay, không mở hộp thoại · `Ctrl+Z` → về nguyên bản · thay một **trang ẩn** → hỏi xác nhận · đang Chú thích → menu Trang không thay được |
 | Chữ ký lưu sẵn (`src/signatures.js`, `sig:*` ở `main.js`, `renderer/signatures.js`, `renderer/sig-image.js`, `placeSignature` ở `editor.js`) | `cd desktop ; npm run test:sig ; npm run test:clip` · BI-91 · Cài đặt → Chữ ký của tôi → thêm **ảnh scan JPG nền trắng** → "Xoá nền trắng" **tự tick**, xem trước nền caro, kéo Độ mạnh → nét không mất · thêm **PNG nền trong** → "Xoá nền trắng" **không** tick · Lưu → đóng app → mở lại → còn · chuột phải lên trang (chế độ xem **và** Chú thích) → "Chèn chữ ký: tên" có ảnh nhỏ → chữ ký **giữa chỗ bấm** · đổi cỡ → Xong → lần chèn sau **đúng cỡ đó** · nút chữ ký trên thanh Chú thích → chọn → bấm trang · chép `signatures.bin` sang **tài khoản Windows khác** → báo không đọc được, **không** xoá, "Tạo kho mới" giữ file cũ bên cạnh · công cụ **Ảnh** thường → vẫn 240pt, góc trên-trái tại điểm bấm (không hồi quy) · đổi **VI↔EN** |

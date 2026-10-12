@@ -1890,7 +1890,12 @@ async function reorderPage(from, to) {
 }
 
 async function rotateSelected(delta) {
-  if (state.selected.size === 0) return;
+  // Same feedback as deleteSelected: the native menu item is always enabled, so a
+  // silent return here was a menu click that visibly did nothing.
+  if (state.selected.size === 0) {
+    toast("Tick chọn trang cần xoay trước.", "bad");
+    return;
+  }
   showOverlay("Đang xoay…");
   pushUndo();
   try {
@@ -2261,6 +2266,14 @@ function posLabel(at) {
 
 async function mergeFiles() {
   if (gateProFeature()) return;
+  // Before the file picker, not after: with no document open the native menu used to
+  // let the user pick files and a position, then PDFDocument.load(null) threw inside
+  // a handler with no catch — no toast, nothing merged. (Combining files WITHOUT an
+  // open document is "Gộp file", openCombine.)
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
   const files = await window.desktop.openPdf({ multi: true });
   if (!files.length) return;
   const at = await choosePosition("Ghép PDF — chọn vị trí");
@@ -2289,6 +2302,11 @@ async function mergeFiles() {
 
 async function insertFile() {
   if (gateProFeature()) return;
+  // Same as mergeFiles: refuse before the picker (insertBuffersAt would bail silently after it).
+  if (!state.bytes) {
+    toast("Mở PDF trước.", "bad");
+    return;
+  }
   const files = await window.desktop.openPdf({ multi: false });
   if (!files.length) return;
   const at = await choosePosition("Chèn trang — chọn vị trí");
@@ -5815,6 +5833,49 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// ---- native menu guard ----
+//
+// The native menu has no enabled/disabled state: its items fire whatever the toolbar
+// shows. The toolbar's rules (updateToolbar) are that page-structure commands need a
+// document and are FROZEN while annotating / text-editing — page indices must not move
+// under a live overlay — and the Delete key yields to an open dialog. Each function
+// used to carry its own copy of those checks, and only replaceSelectedFromFile had the
+// edit freeze, so the menu could rotate / delete / merge / insert pages under a live
+// annotation session. One gate here covers every menu command (BI-105; REVIEW-2026-10-12 M1/M2).
+//
+// Pure (no DOM): the caller passes the state, so test/menu-guard.test.js can lift it
+// out and run it. Returns null to allow, or the toast text explaining the refusal.
+// Commands not listed (open/save/undo/zoom/guide/…) are never blocked here — Save and
+// zoom deliberately stay available while editing, as on the toolbar.
+function menuBlockReason(cmd, ctx) {
+  // Change or read out the page structure — toolbar: "Trang ▾" + the quick page buttons.
+  const PAGE = new Set(["rotateL", "rotateR", "delete", "merge", "insert", "replace", "extract"]);
+  // Open a dialog or run a job over the document. Their functions already check for a
+  // document themselves (convertReady / printDoc); here they only yield to a dialog
+  // that is already up, or to a job still running.
+  const JOB = new Set(["print", "encrypt", "extractImages", "pdfToImages", "imagesToPdf"]);
+  if (!PAGE.has(cmd) && !JOB.has(cmd)) return null;
+  if (ctx.busy) return "Đang xử lý — chờ xong rồi thử lại.";
+  if (ctx.modal) return "Đóng hộp thoại đang mở trước đã.";
+  if (PAGE.has(cmd)) {
+    if (!ctx.has) return "Mở PDF trước.";
+    if (ctx.editing) return "Bấm Xong ở chế độ chỉnh sửa trước khi thao tác trang.";
+  }
+  return null;
+}
+
+// The live state menuBlockReason judges — read the same way updateToolbar() reads it.
+function menuGuardContext() {
+  return {
+    has: !!state.bytes && state.numPages > 0,
+    editing: !!((window.Editor && window.Editor.active) || (window.TextEdit && window.TextEdit.active)),
+    modal: modalOpen(),
+    // The busy overlay (showOverlay) covers the toolbar, so a click cannot start a
+    // second job under it — but a menu item can.
+    busy: !$("overlay").hidden,
+  };
+}
+
 // Native menu (File/Edit/Page/View) → same actions as the toolbar buttons.
 window.desktop.onMenuCommand((cmd) => {
   const actions = {
@@ -5847,7 +5908,13 @@ window.desktop.onMenuCommand((cmd) => {
     imagesToPdf: openImagesToPdf,
   };
   const fn = actions[cmd];
-  if (fn) fn();
+  if (!fn) return;
+  const why = menuBlockReason(cmd, menuGuardContext());
+  if (why) {
+    toast(window.t ? window.t(why) : why, "bad"); // the menu is bilingual, so is its refusal
+    return;
+  }
+  fn();
 });
 
 // drag-drop a PDF file onto the window to open it
