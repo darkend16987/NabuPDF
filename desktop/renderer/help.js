@@ -581,7 +581,11 @@
               "**Font** — **Giữ nguyên (font gốc)** là mặc định, giữ đúng font của đoạn đang sửa. Nhóm **Font máy** liệt kê font cài trên máy bạn.",
               "**Font** — **Giữ nguyên (font gốc)** is the default and keeps the run's own font. The **Font máy** group lists the fonts installed on this machine."
             ),
-            T("**Cỡ**, **Chữ** (màu), **Nền** (tô sau chữ), và **B / I / U**.", "**Size**, text **colour**, a **background** fill behind the text, and **B / I / U**."),
+            T("**Cỡ**, **Chữ** (màu), **Nền** (tô sau chữ), **B / I / U** và **S** (gạch ngang).", "**Size**, text **colour**, a **background** fill behind the text, **B / I / U** and **S** (strikethrough)."),
+            T(
+              "**Căn lề** (trái / giữa / phải) — đặt chữ mới trong khoảng mà **đoạn chữ gốc** chiếm: **căn phải** giữ mép phải (sửa số trong cột tiền căn phải mà số không lệch cột), **căn giữa** giữ tâm (tiêu đề ô bảng). Mặc định **căn trái** như trước. Nhiều dòng (`Shift+Enter`) thì mỗi dòng căn riêng; nhãn dựng dọc trên bản vẽ căn theo chiều của nó.",
+              "**Căn lề** (left / centre / right) — places the new text inside the span the **original run** occupied: **right** keeps its right edge (retype an amount in a right-aligned column without it drifting), **centre** keeps its centre (a table heading). The default is **left**, as before. With several lines (`Shift+Enter`) each line is aligned on its own; a vertical label on a drawing aligns along its own direction."
+            ),
             T(
               "**OCR ô này** — nhận dạng lại chữ của ô đang sửa bằng OCR. Dùng khi chữ gốc bị lỗi font (bảng mã `.Vn` cổ, hoặc lỗi giải mã).",
               "**OCR ô này** — re-recognise the current run with OCR. Use it when the original text is font-broken (legacy `.Vn` encodings, or a decoding fault)."

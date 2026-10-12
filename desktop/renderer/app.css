@@ -757,6 +757,9 @@ body.presenting .viewer .page-wrap { box-shadow: none; }
 .edit-bar .fill-swatch > i { display: block; width: 100%; height: 100%; }
 .edit-bar .te-fmt { width: 32px; padding: 6px 0; text-align: center; font-size: 14px; }
 .edit-bar .te-fmt.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+/* Căn lề trên thanh Sửa chữ gốc (P8): ba nút liền nhau, icon cùng bộ với bảng Định dạng. */
+.edit-bar .te-align { display: inline-flex; gap: 2px; }
+.edit-bar .te-align svg { width: 16px; height: 16px; display: block; margin: 0 auto; }
 #btn-edit.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
 /* page-wrap becomes the positioning context for its annotation layer */

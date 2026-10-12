@@ -2413,6 +2413,50 @@ class TextEdit(BaseModel):
     # place, i.e. exactly the pre-v0.2.73 output — so /text-find's replace path and an
     # older renderer are unaffected.
     offset: list[float] | None = None
+    # Căn lề (P8, BI-114): where each line of the redraw sits inside the extent the
+    # ORIGINAL run had along the text — "center" / "right" keep a retyped table cell or
+    # a right-aligned amount on its old centre / right edge. None / "left" / anything
+    # else = start at the origin, i.e. exactly the pre-P8 output (same calls, same bytes).
+    align: str | None = None
+    # Gạch ngang (P8, BI-114): a rule through the glyphs, drawn like the underline.
+    strike: bool = False
+
+
+_ALIGNS = ("left", "center", "right")
+
+
+def _norm_align(v) -> str:
+    """'left' | 'center' | 'right'; junk and None read as 'left' (the old behaviour)."""
+    return v if isinstance(v, str) and v in _ALIGNS else "left"
+
+
+def _pitch_from_metrics(ascender: float, descender: float, size: float) -> float:
+    """PyMuPDF Shape.insert_text's line step: size × (ascender − descender), or × 1.2
+    when that sum is ≤ 1."""
+    em = float(ascender) - float(descender)
+    return size * (em if em > 1 else 1.2)
+
+
+def _insert_line_pitch(page, fontname: str, size: float) -> float:
+    """The baseline-to-baseline step page.insert_text WILL use for `fontname` on this
+    page. Needed to draw the lines ONE BY ONE — which aligning each line on its own
+    requires — at the very places a single multi-line call would have put them.
+
+    Read from the same place insert_text reads it: the document's font info for the
+    resource (`CheckFontInfo`), NOT the fitz.Font object. They differ — measured: a
+    Base-14 "helv" already present in the file reports a line box ≤ 1 em (⇒ 1.2) while
+    fitz.Font("helv") says 1.374, which put line 2 of an aligned edit 1.9 pt low.
+    `insert_font(fontname=…)` with no file is the call insert_text itself makes first
+    (it returns the existing resource), so this adds nothing insert_text would not."""
+    import fitz  # PyMuPDF — same lazy import as the endpoints
+
+    fd = fitz.CheckFontInfo(page.parent, page.insert_font(fontname=fontname))[1]
+    return _pitch_from_metrics(fd["ascender"], fd["descender"], size)
+
+
+# Gạch ngang height above the baseline, in em: the middle of the lowercase body
+# (x-height ≈ 0.53 em in DejaVu / Arial / Times) — through the letters, not over them.
+_STRIKE_RISE_EM = 0.28
 
 
 def _view_offset_to_page(page, offset) -> tuple[float, float]:
@@ -2887,23 +2931,74 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                         fitz.Matrix(hscale, 0, 0.25 if faux_italic else 0, 1, 0, 0) * rot_mat,
                     )
 
-                try:
-                    page.insert_text(
-                        (ox, oy), txt, fontname=fontname, fontsize=size,
-                        color=color, fill=color, render_mode=render_mode,
-                        border_width=border_width, morph=morph,
-                    )
-                except Exception as ie:
-                    logger.debug("insert_text error: %s", ie)
-                    # Retry plain — some morph/render combos fail on odd fonts. Drop
-                    # the shear/squeeze but KEEP the direction: a fallback that turns
-                    # the line 90° is not a fallback.
+                def draw_run(px, py, run_txt, run_morph, run_pivot) -> bool:
                     try:
-                        page.insert_text((ox, oy), txt, fontname=fontname, fontsize=size,
-                                         color=color,
-                                         morph=(pivot, rot_mat) if theta else None)
-                    except Exception as ie2:
-                        logger.debug("insert_text retry error: %s", ie2)
+                        page.insert_text(
+                            (px, py), run_txt, fontname=fontname, fontsize=size,
+                            color=color, fill=color, render_mode=render_mode,
+                            border_width=border_width, morph=run_morph,
+                        )
+                        return True
+                    except Exception as ie:
+                        logger.debug("insert_text error: %s", ie)
+                        # Retry plain — some morph/render combos fail on odd fonts. Drop
+                        # the shear/squeeze but KEEP the direction: a fallback that turns
+                        # the line 90° is not a fallback.
+                        try:
+                            page.insert_text((px, py), run_txt, fontname=fontname, fontsize=size,
+                                             color=color,
+                                             morph=(run_pivot, rot_mat) if theta else None)
+                            return True
+                        except Exception as ie2:
+                            logger.debug("insert_text retry error: %s", ie2)
+                            return False
+
+                # ---- Căn lề / Gạch ngang (P8, BI-114) ----------------------------
+                # Per-line layout [(x, y, line, drawn width | None)] in UNROTATED page
+                # space: line i starts at origin + shift·u_dir + i·pitch·n_dir — the
+                # span's own frame, so it turns with a rotated run (BI-66). Built only
+                # when something needs it; a plain edit takes the single insert_text
+                # call below, unchanged.
+                align = _norm_align(e.align)
+                aligned = align != "left" and adv is not None and fobj is not None
+                lines_at = None
+                if aligned or e.strike:
+                    lines_at = []
+                    try:
+                        pitch = _insert_line_pitch(page, fontname, size)
+                    except Exception as pe:
+                        logger.debug("line pitch probe failed: %s", pe)
+                        pitch = size * 1.2
+                    # splitlines(), not split("\n"): it is how insert_text cuts the
+                    # string, so line i here is line i there.
+                    for i, ln in enumerate(txt.splitlines()):
+                        try:
+                            lw = fobj.text_length(ln, fontsize=size) * hscale if fobj is not None else None
+                        except Exception:
+                            lw = None
+                        shift = 0.0
+                        if aligned and lw is not None:
+                            shift = (adv - lw) / 2 if align == "center" else adv - lw
+                        lines_at.append((
+                            ox + u_dir[0] * shift + n_dir[0] * i * pitch,
+                            oy + u_dir[1] * shift + n_dir[1] * i * pitch,
+                            ln, lw,
+                        ))
+
+                if not aligned:
+                    if not draw_run(ox, oy, txt, morph, pivot):
+                        continue
+                else:
+                    # One call per line, each morphed about its OWN start: the matrix
+                    # (shear, squeeze, direction) is the same, only the pivot moves.
+                    drew = False
+                    for lx, ly, ln, _lw in lines_at:
+                        if not ln:
+                            continue
+                        lp = fitz.Point(lx, ly)
+                        lm = (lp, morph[1]) if morph else None
+                        drew = draw_run(lx, ly, ln, lm, lp) or drew
+                    if not drew:
                         continue
 
                 # Only embedded programs get a CMap of ours; a Base-14 builtin
@@ -2913,7 +3008,22 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                     rec[2].update(txt)
 
                 # Underline: a line just under the baseline, width = drawn-text width.
-                if e.underline:
+                # An aligned redraw rules each line where it was drawn (below); a plain
+                # one keeps the single rule it always had.
+                if e.underline and aligned:
+                    for lx, ly, _ln, lw in lines_at:
+                        if not lw:
+                            continue
+                        drop = size * 0.12
+                        ux0 = lx + n_dir[0] * drop
+                        uy0 = ly + n_dir[1] * drop
+                        try:
+                            page.draw_line(fitz.Point(ux0, uy0),
+                                           fitz.Point(ux0 + u_dir[0] * lw, uy0 + u_dir[1] * lw),
+                                           color=color, width=max(0.4, size * 0.06))
+                        except Exception as ue:
+                            logger.debug("draw_line (underline) error: %s", ue)
+                elif e.underline:
                     try:
                         tw = _font_object(
                             fontfile=fontfile, fontname=fontname, fontbuffer=fontbuffer
@@ -2936,6 +3046,23 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                                        color=color, width=max(0.4, size * 0.06))
                     except Exception as ue:
                         logger.debug("draw_line (underline) error: %s", ue)
+
+                # Gạch ngang: per line, through the lowercase body — UP the span's own
+                # frame (−n_dir), the same thickness as the underline. A line whose
+                # width cannot be measured gets none rather than a guessed one.
+                if e.strike:
+                    for lx, ly, _ln, lw in lines_at:
+                        if not lw:
+                            continue
+                        rise = size * _STRIKE_RISE_EM
+                        sx0 = lx - n_dir[0] * rise
+                        sy0 = ly - n_dir[1] * rise
+                        try:
+                            page.draw_line(fitz.Point(sx0, sy0),
+                                           fitz.Point(sx0 + u_dir[0] * lw, sy0 + u_dir[1] * lw),
+                                           color=color, width=max(0.4, size * 0.06))
+                        except Exception as se:
+                            logger.debug("draw_line (strike) error: %s", se)
 
         # Subset embedded fonts so a full local TTF (Arial/Times/…) doesn't bloat
         # the file — only the glyphs actually used are kept.

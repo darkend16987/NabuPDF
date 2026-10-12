@@ -38,6 +38,7 @@
     "test:taresize": "node test/text-editor-resize.test.js",
     "test:labelsize": "node test/label-size.test.js",
     "test:penwidth": "node test/pen-width.test.js",
+    "test:teformat": "node test/text-edit-format.test.js",
     "test:clip": "node test/annot-clip.test.js",
     "test:sig": "node test/signatures.test.js",
     "test:cloud": "node test/annot-geom.test.js",

@@ -25,7 +25,7 @@
     active: false,
     page: -1, // page index being edited
     spans: [], // [{ id, text, bbox, size, font, color, flags }]
-    edits: {}, // spanId -> { page, bbox, new_text, size, color, bold, italic, underline, bg, font }
+    edits: {}, // spanId -> { page, bbox, new_text, size, color, bold, italic, underline, strike, align, bg, font }
     meta: null, // /text-spans response (width/height/rotation)
     editing: null, // span id currently open in a textarea (null = none)
     lastSpanId: null, // last span clicked (target for toolbar control changes)
@@ -62,6 +62,23 @@
     setFmtBtn("te-bold", ed ? ed.bold : flagsBold(sp.flags));
     setFmtBtn("te-italic", ed ? ed.italic : flagsItalic(sp.flags));
     setFmtBtn("te-underline", ed ? ed.underline : false);
+    setFmtBtn("te-strike", ed ? !!ed.strike : false);
+    setAlignBtns(ed ? ed.align : "left");
+  }
+  // Căn lề (P8, BI-114): one of three, like a radio group. The sidecar aligns each line
+  // inside the extent the ORIGINAL run had along the text; "left" is what every edit did
+  // before, so it is the default and what an unknown value reads as.
+  const TE_ALIGNS = ["left", "center", "right"];
+  function normAlign(v) {
+    return TE_ALIGNS.includes(v) ? v : "left";
+  }
+  function setAlignBtns(v) {
+    const a = normAlign(v);
+    document.querySelectorAll("#te-align [data-align]").forEach((b) => b.classList.toggle("active", b.dataset.align === a));
+  }
+  function readAlign() {
+    const b = document.querySelector("#te-align [data-align].active");
+    return normAlign(b && b.dataset.align);
   }
   // Read the current toolbar control values into a style object.
   function readControls() {
@@ -73,6 +90,8 @@
       bold: $("te-bold").classList.contains("active"),
       italic: $("te-italic").classList.contains("active"),
       underline: $("te-underline").classList.contains("active"),
+      strike: $("te-strike").classList.contains("active"),
+      align: readAlign(),
     };
   }
 
@@ -94,6 +113,8 @@
       bold: flagsBold(sp.flags),
       italic: flagsItalic(sp.flags),
       underline: false,
+      strike: false,
+      align: "left",
       font: "__keep__", // keep the span's original font unless changed
     };
   }
@@ -130,7 +151,7 @@
   // no reason (a redraw can substitute the font; a no-op must not risk that).
   function isPristine(sp, ed) {
     const seed = seedEdit(sp);
-    return ["new_text", "size", "color", "bg", "bold", "italic", "underline", "font"].every(
+    return ["new_text", "size", "color", "bg", "bold", "italic", "underline", "strike", "align", "font"].every(
       (k) => ed[k] === seed[k]
     );
   }
@@ -242,6 +263,8 @@
     ed.bold = st.bold;
     ed.italic = st.italic;
     ed.underline = st.underline;
+    ed.strike = st.strike;
+    ed.align = st.align;
     ed.font = st.font;
     renderBoxes();
     updateHint();
@@ -347,7 +370,16 @@
           pv.style.fontFamily = previewFamily(sp, ed);
           if (ed.bold) pv.style.fontWeight = "700";
           if (ed.italic) pv.style.fontStyle = "italic";
-          if (ed.underline) pv.style.textDecoration = "underline";
+          const deco = [ed.underline && "underline", ed.strike && "line-through"].filter(Boolean).join(" ");
+          if (deco) pv.style.textDecoration = deco;
+          // Same alignment the sidecar will draw: inside the span's own box.
+          if (ed.align === "right") {
+            pv.style.left = "auto";
+            pv.style.right = "0";
+          } else if (ed.align === "center") {
+            pv.style.left = "50%";
+            pv.style.transform = "translateX(-50%)";
+          }
           if (ed.bg) pv.style.background = ed.bg;
           box.appendChild(pv);
         }
@@ -418,6 +450,8 @@
         st.bold !== flagsBold(sp.flags) ||
         st.italic !== flagsItalic(sp.flags) ||
         st.underline ||
+        st.strike ||
+        st.align !== "left" ||
         st.bg ||
         st.font !== "__keep__" ||
         Math.abs(st.size - sp.size) > 0.01 ||
@@ -434,6 +468,8 @@
           bold: st.bold,
           italic: st.italic,
           underline: st.underline,
+          strike: st.strike,
+          align: st.align,
           font: st.font,
         };
         if (moved) te.edits[sp.id].offset = [off[0], off[1]];
@@ -773,12 +809,20 @@
 
   // Format toggle buttons: preventDefault on mousedown so the open span textarea
   // keeps focus (clicking a button would otherwise blur+commit it).
-  ["te-bold", "te-italic", "te-underline"].forEach((id) => {
+  ["te-bold", "te-italic", "te-underline", "te-strike"].forEach((id) => {
     const b = $(id);
     if (!b) return;
     b.addEventListener("mousedown", (e) => e.preventDefault());
     b.addEventListener("click", () => {
       b.classList.toggle("active");
+      onControlChange();
+    });
+  });
+  // Căn lề: same focus rule; picking one un-picks the other two.
+  document.querySelectorAll("#te-align [data-align]").forEach((b) => {
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", () => {
+      setAlignBtns(b.dataset.align);
       onControlChange();
     });
   });

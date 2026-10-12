@@ -419,6 +419,15 @@
       <button id="te-bold" class="icon-only te-fmt" title="In đậm" style="font-weight:800">B</button>
       <button id="te-italic" class="icon-only te-fmt" title="In nghiêng" style="font-style:italic">I</button>
       <button id="te-underline" class="icon-only te-fmt" title="Gạch chân" style="text-decoration:underline">U</button>
+      <!-- Gạch ngang + Căn lề (P8, BI-114): sidecar /edit-text `strike` / `align`. Căn lề đặt mỗi dòng trong
+           khoảng chữ GỐC chiếm theo chiều dòng (giữ mép phải của cột số, tâm của ô bảng). -->
+      <button id="te-strike" class="icon-only te-fmt" title="Gạch ngang (gạch giữa chữ)" style="text-decoration:line-through">S</button>
+      <div class="sep"></div>
+      <span id="te-align" class="te-align" role="group" aria-label="Căn lề">
+        <button class="icon-only te-fmt active" data-align="left" title="Căn trái (như chữ gốc bắt đầu)"><svg viewBox="0 0 16 16"><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="3.5" x2="14" y2="3.5"/><line x1="2" y1="6.8" x2="10" y2="6.8"/><line x1="2" y1="10.1" x2="13" y2="10.1"/><line x1="2" y1="13.4" x2="8" y2="13.4"/></g></svg></button>
+        <button class="icon-only te-fmt" data-align="center" title="Căn giữa — giữ tâm của đoạn chữ gốc"><svg viewBox="0 0 16 16"><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="3.5" x2="14" y2="3.5"/><line x1="4" y1="6.8" x2="12" y2="6.8"/><line x1="2.5" y1="10.1" x2="13.5" y2="10.1"/><line x1="5" y1="13.4" x2="11" y2="13.4"/></g></svg></button>
+        <button class="icon-only te-fmt" data-align="right" title="Căn phải — giữ mép phải của đoạn chữ gốc (cột số tiền)"><svg viewBox="0 0 16 16"><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="3.5" x2="14" y2="3.5"/><line x1="6" y1="6.8" x2="14" y2="6.8"/><line x1="3" y1="10.1" x2="14" y2="10.1"/><line x1="8" y1="13.4" x2="14" y2="13.4"/></g></svg></button>
+      </span>
       <div class="sep"></div>
       <button id="te-ocr" disabled title="Nhận dạng lại chữ ô đang sửa bằng OCR — dùng khi chữ gốc bị lỗi font (.Vn cổ / lỗi giải mã)">OCR ô này</button>
       <span id="te-hint" class="readout"></span>

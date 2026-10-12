@@ -324,6 +324,11 @@
     "In đậm": "Bold",
     "In nghiêng": "Italic",
     "Gạch chân": "Underline",
+    // Sửa chữ gốc: Gạch ngang + Căn lề (P8, BI-114)
+    "Gạch ngang (gạch giữa chữ)": "Strikethrough",
+    "Căn trái (như chữ gốc bắt đầu)": "Align left (where the original run starts)",
+    "Căn giữa — giữ tâm của đoạn chữ gốc": "Centre — keeps the original run's centre",
+    "Căn phải — giữ mép phải của đoạn chữ gốc (cột số tiền)": "Align right — keeps the original run's right edge (amount columns)",
     // Text-box rotation (v0.2.63). "Xoay" is already the page-rotation verb elsewhere
     // in the app, and reusing it here is deliberate — it is the same gesture on a
     // different object, and the control only appears while a text box is in play.

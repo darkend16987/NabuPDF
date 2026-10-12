@@ -3064,6 +3064,32 @@ _Ghi 2026-09-30 (v0.2.73)._
   đã lưu dày **6 pt** (trước khi sửa: 1 pt, đỏ 3/6).
 - **Vỡ khi:** chọn một hình có ô Nét, đổi số mà nét không đổi (hoặc đổi trên màn hình mà file vẫn nét cũ).
 
+### BI-114 · Sửa nội dung: Căn lề + Gạch ngang — căn trong khoảng của đoạn GỐC, không gửi gì = byte cũ
+- Sidecar `api.py` `TextEdit.align` / `TextEdit.strike`, `_norm_align`, `_pitch_from_metrics`, `_insert_line_pitch`,
+  `_STRIKE_RISE_EM`; trong `edit_text`: `draw_run` (insert_text + lần thử lại cũ), `lines_at`. Renderer `text-edit.js`: nút
+  `#te-strike`, nhóm `#te-align`, `normAlign` / `setAlignBtns` / `readAlign`. Lưới: `test_edit_text_align.py` (48 ý, 10/10 đột
+  biến đỏ) + `npm run test:teformat` (28 ý, 14/14 đột biến đỏ). **Sửa `*.py` ⇒ build lại sidecar trước khi đóng gói.**
+- **Luật:**
+  - Căn lề đặt **mỗi dòng** trong khoảng mà run GỐC chiếm **dọc theo chữ** (`adv`, cùng khung `u_dir`/`n_dir` của BI-66):
+    phải ⇒ mép cuối = mép cuối cũ; giữa ⇒ giữ tâm. Chữ dài hơn thì tràn ra phía bên kia — đúng nghĩa căn lề.
+  - `align` vắng / "left" / rác ⇒ **đúng một lời gọi `insert_text` như trước** (pixel y hệt — test D1); `/text-find` và renderer
+    cũ không gửi trường nào. Không đo được (run xiên, không có font object) ⇒ căn trái.
+  - Căn ⇒ vẽ **từng dòng**; khoảng dòng phải lấy từ **`CheckFontInfo` của tài liệu** (đúng chỗ insert_text đọc), **không** từ
+    `fitz.Font`: đo được Base-14 "helv" có sẵn trong file báo hộp dòng ≤ 1 em ⇒ 1,2, còn `fitz.Font("helv")` nói 1,374 ⇒ dòng 2
+    lệch 1,9 pt (test M1 helv). Cắt dòng bằng `splitlines()` như insert_text.
+  - Gạch ngang: mỗi dòng một nét, cao `0,28 em` trên đường chân chữ theo `−n_dir` (xoay cùng nhãn dọc), dày như gạch chân. Gạch
+    chân của bản **căn trái** giữ nguyên một nét cũ (U2); bản căn phải/giữa thì gạch chân từng dòng tại chỗ đã dời.
+  - Năm chỗ của một trường kiểu chữ trong `text-edit.js` (readControls, onControlChange, stage, seedEdit, isPristine) + `styleChanged`
+    phải đủ — thiếu một chỗ là nút sáng mà Áp dụng ghi kiểu cũ. `test:teformat` ghim cả năm vào cùng một tập khoá.
+- E2E (2026-10-12, app thật + sidecar dev = mã mới, chuột/phím thật): 15/15 — số tiền "1.000.000" căn phải gõ thành "12.500.000" ⇒
+  mép phải **499,92** (cũ 500,00; bắt đầu lệch sang trái, không ở 438,9); tiêu đề căn giữa dài ra ⇒ tâm **299,87** (cũ 300); đường
+  chân chữ giữ nguyên; chữ bên cạnh không xê dịch; bấm S không gõ lại ⇒ vẫn được ghi (3 đoạn); mở lại đoạn đã sửa ⇒ thanh hiện đúng
+  Căn phải / S; file đã lưu có nét gạch **liền 100 %** bề rộng chữ, cao 3,75 pt trên đường chân chữ (cỡ 12).
+- Đã biết, **không** do P8: bấm bất kỳ nút định dạng nào (cả B/I/U có sẵn) khi ô gõ đang mở ⇒ `renderBoxes()` dựng lại lớp và ô gõ
+  đóng lại; chữ đang gõ **không** mất (`onControlChange` chép `open.value` trước). Probe đối chứng bằng nút B: y hệt.
+- **Vỡ khi:** sửa số trong cột căn phải mà số lệch cột; dòng 2 của chữ căn giữa lệch dòng so với căn trái; gạch ngang nằm dưới chân
+  chữ hoặc không xoay theo nhãn dọc; sửa một đoạn KHÔNG chọn căn lề mà kết quả khác trước P8.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3144,6 +3170,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Ô gõ hộp chữ: ResizeObserver + `pressed` (`openTextEditor`, `userResized`) | BI-111 · `npm run test:taresize` · **test tay**: Chú thích → T → **bấm** lên trang → gõ vài chữ → bấm **Đậm**, đổi **cỡ** 24, đổi **font** → Ctrl+Enter → chọn hộp: "Tự xuống dòng theo khung" **không** tick, hộp vừa khít chữ · **kéo góc** ô gõ của hộp thường → thành hộp cố định (đúng BI-104) · kéo góc thu hẹp, nhả chuột **ngoài** ô gõ → vẫn nhận |
 | Cỡ nhãn mũi tên / đường đo (`normLabelSize`, `applyLabelSize`, `#ed-labelsize`, mọi `labelSize \|\| 14`) | BI-112 · `npm run test:labelsize` + `test:annot-geom` · **test tay**: Chú thích → Mũi tên: ô **Cỡ nhãn** = 14 → đặt 28 → vẽ mũi tên, gõ nhãn → chữ to · chọn mũi tên → ô hiện 28, gõ 10 → chỉ mũi tên đó đổi, Ctrl+Z về 28 · Đo: đặt 20 → số đo to · Xong → nhãn trong file đúng cỡ trên màn hình · mở lại Chú thích → mũi tên vẫn 28 |
 | Ô Nét (`PEN_WIDTH_KINDS`, handler `ed-penwidth`, `syncControls`) | BI-113 · `npm run test:penwidth` · **test tay**: Đo → kéo một đoạn → Chọn đoạn đó → Nét 6 → đường + 2 vạch dày lên · Ctrl+Z về 1 · Xong → file đã lưu nét 6 |
+| Sửa nội dung — Căn lề / Gạch ngang (`api.py` `edit_text` `align`/`strike`, `_insert_line_pitch`; `text-edit.js` `#te-align`, `#te-strike`) | BI-114 · `test_edit_text_align.py` + `npm run test:teformat` + toàn bộ `test_edit_text_*.py` · **build lại sidecar** · **test tay**: Sửa nội dung → bấm số trong cột căn phải → gõ số dài hơn → Căn phải → Áp dụng → mép phải không đổi · tiêu đề căn giữa → giữ tâm · S trên một dòng → gạch giữa chữ · sửa KHÔNG chọn căn lề → như trước |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
