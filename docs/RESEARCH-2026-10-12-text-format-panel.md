@@ -1,7 +1,8 @@
 # Nghiên cứu 2026-10-12 — Bảng "Định dạng văn bản" (`#fmt-panel`): nên bổ sung gì
 
 > Trạng thái (2026-10-12): **F1, F2, P1, P2 đã làm** — F1 = BI-106 (00e1267), F2 (bc0a03d), P1 + P2 = BI-107
-> (5fd3a25); P3 + P4 = BI-108. P5–P8 chưa làm. Mọi khẳng định có dẫn chứng; chỗ nào đã **đo** thì ghi rõ.
+> (5fd3a25); P3 + P4 = BI-108; P5 + P6 = BI-109. P7, P8 chưa làm.
+> Phát hiện khi làm P6: hộp chữ XOAY lệch màn hình ↔ file (lỗi có từ v0.2.63) — xem BI-109. Mọi khẳng định có dẫn chứng; chỗ nào đã **đo** thì ghi rõ.
 
 ## 1. Hiện trạng (đã kiểm)
 
