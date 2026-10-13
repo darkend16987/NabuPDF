@@ -110,6 +110,37 @@ check("C4 the align buttons keep focus too and go through onControlChange",
   /#te-align \[data-align\]"\)\.forEach\(\(b\) => \{\s*b\.addEventListener\("mousedown", \(e\) => e\.preventDefault\(\)\);\s*b\.addEventListener\("click", \(\) => \{\s*setAlignBtns\(b\.dataset\.align\);\s*onControlChange\(\);/.test(SRC), true);
 check("C5 the moved-span preview shows a strike", /ed\.strike && "line-through"/.test(SRC), true);
 
+// BI-115: a format click while a span's field is open must NOT rebuild the layer (that
+// removed the <textarea>: the field closed mid-typing and the next keystrokes went
+// nowhere — measured: "12" + B + ".345" saved as "12"). onControlChange cut out and run.
+function runOcc(openValue) {
+  const calls = [];
+  const staged = {};
+  const env = {
+    targetSpanId: () => 7,
+    ensureEdit: () => staged,
+    readControls: () => ({ size: 11, color: "#000000", bg: null, bold: true, italic: false, underline: false, strike: false, align: "right", font: "__keep__" }),
+    document: { querySelector: (q) => (q === ".span-input" && openValue != null ? { value: openValue } : null) },
+    renderBoxes: () => calls.push("renderBoxes"),
+    updateHint: () => calls.push("updateHint"),
+  };
+  new Function(...Object.keys(env), occ + "\nonControlChange();")(...Object.values(env));
+  return { calls, staged };
+}
+{
+  const r = runOcc("12");
+  check("K1 field open: the layer is NOT rebuilt (the field survives), the counter still updates", r.calls, ["updateHint"]);
+  check("K1b …and the edit is staged with the typed text + the new format", [r.staged.new_text, r.staged.bold, r.staged.align], ["12", true, "right"]);
+  const q = runOcc(null);
+  check("K2 no field open (a span clicked earlier): the boxes repaint as before", q.calls, ["renderBoxes", "updateHint"]);
+}
+const be = block("function beginEdit(sp, box)");
+check("K3 the edit as it stood when the field opened is kept for Esc",
+  /const before = te\.edits\[sp\.id\] \? \{ \.\.\.te\.edits\[sp\.id\] \} : null;/.test(be), true);
+const cancel = be.slice(be.indexOf("const cancel = () =>"), be.indexOf("ta.addEventListener(\"blur\", commit);"));
+check("K4 Esc puts that edit back (or drops a fresh one) and re-syncs the bar",
+  /if \(before\) te\.edits\[sp\.id\] = before;\s*else delete te\.edits\[sp\.id\];\s*syncControls\(sp\);[^\n]*\n\s*updateHint\(\);/.test(cancel), true);
+
 // the bar
 check("B1 index.html has the S button", /<button id="te-strike" class="icon-only te-fmt"/.test(HTML), true);
 const grp = (HTML.match(/<span id="te-align"[\s\S]*?<\/span>/) || [""])[0];

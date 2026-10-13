@@ -266,6 +266,14 @@
     ed.strike = st.strike;
     ed.align = st.align;
     ed.font = st.font;
+    // While a span's field is OPEN, leave the boxes alone: renderBoxes() rebuilds the
+    // whole layer, and the open <textarea> lives in it — every B / I / U / S / Căn lề
+    // click used to close the field mid-typing (BI-115). The edit is staged above; the
+    // boxes repaint when the field commits (Enter / blur), which re-stages from the bar.
+    if (open) {
+      updateHint();
+      return;
+    }
     renderBoxes();
     updateHint();
   }
@@ -410,6 +418,10 @@
     te.editing = sp.id;
     te.lastSpanId = sp.id;
     syncControls(sp); // reflect this span's style in the toolbar controls
+    // What this span's staged edit was when the field opened — Esc goes back to it. Now
+    // that a format click keeps the field open (BI-115), it also stages the edit, and
+    // "Esc bỏ sửa đoạn đó" must take that format back too, not only the typing.
+    const before = te.edits[sp.id] ? { ...te.edits[sp.id] } : null;
 
     const ta = document.createElement("textarea");
     ta.className = "span-input";
@@ -498,6 +510,10 @@
       done = true;
       ta.remove();
       clearOpen();
+      if (before) te.edits[sp.id] = before;
+      else delete te.edits[sp.id];
+      syncControls(sp); // the bar shows the span as it now stands again
+      updateHint();
     };
     ta.addEventListener("blur", commit);
     ta.addEventListener("keydown", (e) => {

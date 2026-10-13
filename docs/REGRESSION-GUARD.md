@@ -3085,10 +3085,24 @@ _Ghi 2026-09-30 (v0.2.73)._
   mép phải **499,92** (cũ 500,00; bắt đầu lệch sang trái, không ở 438,9); tiêu đề căn giữa dài ra ⇒ tâm **299,87** (cũ 300); đường
   chân chữ giữ nguyên; chữ bên cạnh không xê dịch; bấm S không gõ lại ⇒ vẫn được ghi (3 đoạn); mở lại đoạn đã sửa ⇒ thanh hiện đúng
   Căn phải / S; file đã lưu có nét gạch **liền 100 %** bề rộng chữ, cao 3,75 pt trên đường chân chữ (cỡ 12).
-- Đã biết, **không** do P8: bấm bất kỳ nút định dạng nào (cả B/I/U có sẵn) khi ô gõ đang mở ⇒ `renderBoxes()` dựng lại lớp và ô gõ
+- *(Ghi chú cũ "nút định dạng đóng ô gõ" — đã sửa ở BI-115.)* Đã biết, **không** do P8: bấm bất kỳ nút định dạng nào (cả B/I/U có sẵn) khi ô gõ đang mở ⇒ `renderBoxes()` dựng lại lớp và ô gõ
   đóng lại; chữ đang gõ **không** mất (`onControlChange` chép `open.value` trước). Probe đối chứng bằng nút B: y hệt.
 - **Vỡ khi:** sửa số trong cột căn phải mà số lệch cột; dòng 2 của chữ căn giữa lệch dòng so với căn trái; gạch ngang nằm dưới chân
   chữ hoặc không xoay theo nhãn dọc; sửa một đoạn KHÔNG chọn căn lề mà kết quả khác trước P8.
+
+### BI-115 · Sửa nội dung: bấm nút định dạng KHÔNG đóng ô gõ đang mở; Esc bỏ cả định dạng vừa bấm
+- `text-edit.js` `onControlChange`: ô gõ đang mở ⇒ chỉ ghi kiểu vào bản sửa + `updateHint()`, **không** `renderBoxes()` (nó dựng lại
+  cả lớp, và `<textarea>` nằm trong lớp). `beginEdit`: `before` = bản sửa lúc mở ô; `cancel` (Esc) trả về `before` (hoặc xoá bản
+  sửa mới) + `syncControls(sp)`. Lưới: `npm run test:teformat` K1–K4 (cắt `onControlChange` chạy với ô gõ giả), 5/5 đột biến đỏ.
+- **Lỗi cũ (có từ khi có B/I/U):** bấm B / I / U (và S / Căn lề của BI-114) lúc đang gõ ⇒ ô gõ biến mất; phím gõ tiếp **không vào đâu**.
+  Đo app thật: gõ "12" → B → gõ ".345" → Enter → Áp dụng ⇒ file ghi **"12"** (mất ".345").
+- **Luật:** đổi kiểu khi ô gõ đang mở không được làm mất ô gõ; ô được vẽ lại khi commit (Enter / blur), lúc đó `stage()` ghi lại từ thanh.
+  Vì nút định dạng giờ ghi tạm bản sửa trong lúc ô còn mở, **Esc** phải trả bản sửa về đúng lúc mở ô (đoạn chưa sửa ⇒ không còn bản sửa).
+  Ô chọn font / cỡ / màu vẫn lấy focus như cũ (ô gõ commit trước, rồi `change` ⇒ `renderBoxes()`).
+- E2E (2026-10-12, app thật): 15/15 — sau B / S / Căn phải ô gõ vẫn mở + focus, gõ tiếp nối được ("12.345"); Enter ghi tạm; mở lại thấy
+  đúng chữ + kiểu; Esc sau khi bấm I chỉ bỏ I (B / S / Căn phải từ trước còn); đoạn mới bấm B rồi Esc ⇒ bộ đếm về như cũ, thanh tắt B;
+  Áp dụng ⇒ file có **"12.345"** căn phải mép 499,90. Cùng probe trên HEAD cũ: đỏ 9/15. Probe P8 15/15 chạy lại (đối chứng B nay giữ focus).
+- **Vỡ khi:** bấm B/I/U/S/căn lề lúc đang gõ mà ô gõ đóng hoặc chữ gõ tiếp bị mất; Esc mà định dạng vừa bấm vẫn được ghi.
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
@@ -3171,6 +3185,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Cỡ nhãn mũi tên / đường đo (`normLabelSize`, `applyLabelSize`, `#ed-labelsize`, mọi `labelSize \|\| 14`) | BI-112 · `npm run test:labelsize` + `test:annot-geom` · **test tay**: Chú thích → Mũi tên: ô **Cỡ nhãn** = 14 → đặt 28 → vẽ mũi tên, gõ nhãn → chữ to · chọn mũi tên → ô hiện 28, gõ 10 → chỉ mũi tên đó đổi, Ctrl+Z về 28 · Đo: đặt 20 → số đo to · Xong → nhãn trong file đúng cỡ trên màn hình · mở lại Chú thích → mũi tên vẫn 28 |
 | Ô Nét (`PEN_WIDTH_KINDS`, handler `ed-penwidth`, `syncControls`) | BI-113 · `npm run test:penwidth` · **test tay**: Đo → kéo một đoạn → Chọn đoạn đó → Nét 6 → đường + 2 vạch dày lên · Ctrl+Z về 1 · Xong → file đã lưu nét 6 |
 | Sửa nội dung — Căn lề / Gạch ngang (`api.py` `edit_text` `align`/`strike`, `_insert_line_pitch`; `text-edit.js` `#te-align`, `#te-strike`) | BI-114 · `test_edit_text_align.py` + `npm run test:teformat` + toàn bộ `test_edit_text_*.py` · **build lại sidecar** · **test tay**: Sửa nội dung → bấm số trong cột căn phải → gõ số dài hơn → Căn phải → Áp dụng → mép phải không đổi · tiêu đề căn giữa → giữ tâm · S trên một dòng → gạch giữa chữ · sửa KHÔNG chọn căn lề → như trước |
+| Sửa nội dung — nút định dạng khi ô gõ đang mở (`onControlChange`, `beginEdit` `before` / `cancel`) | BI-115 · `npm run test:teformat` · **test tay**: Sửa nội dung → bấm một đoạn → gõ vài chữ → bấm **B** → ô gõ còn mở, gõ tiếp được → Enter → Áp dụng → đủ chữ · bấm đoạn khác → B → **Esc** → đoạn đó không bị tính là đã sửa |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |
