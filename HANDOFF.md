@@ -4,7 +4,21 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-09 · v0.2.78 (dưới đây) · v0.2.77 là bản trước đó_
+_Cập nhật: 2026-10-13 · v0.2.79 (dưới đây) · v0.2.78 là bản trước đó_
+
+> **v0.2.79 — Thanh menu gốc gương thanh công cụ + bảng Định dạng hộp chữ đầy đủ + Căn lề / Gạch ngang cho Sửa nội dung** (2026-10-13).
+> Review & kế hoạch: `docs/REVIEW-2026-10-12-menu-bar.md`, `docs/RESEARCH-2026-10-12-text-format-panel.md` (P1–P8 xong hết). Sổ bất biến
+> **BI-105…BI-115**. **Có đổi `*.py`** (`api.py` `/edit-text`) ⇒ **sidecar build lại** (marker `0dc20cfb`, smoke exe OK).
+> 1. **BI-105** menu gốc đi qua cùng cổng với thanh công cụ (bản quyền / trạng thái) và là gương của nó: thêm Công cụ / Xuất, đủ lệnh Trang.
+> 2. Bảng Định dạng hộp chữ: **BI-106** căn đều màn hình giãn đúng dòng file giãn (trước lệch tới 182 pt) · **BI-107** thu gọn/mở rộng
+>    (nhớ theo máy) + ô Bề rộng khung · **BI-108** Ký tự đặc biệt, Đặt làm mặc định / Xoá định dạng · **BI-109** Viền khung + Sao chép /
+>    Dán định dạng (Ctrl+Shift+C/V) · **BI-110** hộp xoay: màn hình xoay quanh tâm raster như file (lệch 14,7 → ≤0,6 pt) · **BI-111** đổi
+>    kiểu lúc gõ không còn biến hộp thường thành hộp cố định 254–310 pt.
+> 3. **BI-112** ô Cỡ nhãn cho mũi tên + đường đo · **BI-113** ô Nét đổi được độ dày đường đo (trước: im lặng không đổi).
+> 4. Sửa nội dung: **BI-114** Căn trái/giữa/phải (trong khoảng của đoạn gốc, theo chiều dòng — giữ mép phải cột số tiền) + Gạch ngang;
+>    không chọn ⇒ y hệt trước · **BI-115** bấm nút định dạng lúc gõ không còn đóng ô gõ (trước: chữ gõ tiếp bị mất).
+> Kiểm: mỗi thay đổi có probe app thật qua CDP (đo file đã lưu) + test đột biến; JS 54/54, Python 25/25.
+> ⚠️ **Còn mở:** chưa test tay tiếng Anh cho các ô mới · việc để lại của v0.2.78 (bên dưới) vẫn nguyên.
 
 > **v0.2.78 — Tạo bản theo mẫu (I1 → I2, I3…) + hộp chữ tự xuống dòng theo khung** (2026-10-09).
 > Nghiên cứu & số đo: `docs/RESEARCH-2026-10-09-textbox-wrap-batch-variants.md` (§3 = kết quả + việc để lại). Sổ bất

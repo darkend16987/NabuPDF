@@ -435,6 +435,14 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - Chỗ xuống dòng trên màn hình **đúng y** chỗ xuống dòng trong file đã lưu. Hộp đang xoay không có tay nắm
 >   (bỏ xoay về 0° để kéo).
 
+> **Từ v0.2.79:**
+> - Bảng **Định dạng** thu gọn được (nhớ theo máy); có ô **Bề rộng khung**, **Ký tự đặc biệt** (⌀ ± ° ² × ≤ ≥ …),
+>   **Viền khung** (màu / độ dày / nét đứt), **Sao chép / Dán định dạng** giữa các hộp (`Ctrl+Shift+C` / `Ctrl+Shift+V`),
+>   **Đặt làm mặc định** cho hộp mới và **Xoá định dạng**.
+> - Mũi tên và đường đo có ô **Cỡ nhãn** (6–72 pt); ô **Nét** nay đổi được độ dày đường đo đang chọn.
+> - **Sửa nội dung** có nút **S** (gạch ngang) và **Căn trái / giữa / phải** — căn trong khoảng của đoạn chữ gốc, nên sửa
+>   số trong cột tiền căn phải không bị lệch cột. Bấm các nút định dạng khi đang gõ không còn đóng ô gõ.
+
 > **Nền cho hộp văn bản (từ v0.2.64):** hộp văn bản vốn **trong suốt**, nên đặt lên ảnh scan hay bản
 > vẽ nhiều nét thì chữ lẫn vào hình. Chọn công cụ **Hộp văn bản** (hoặc chọn một hộp đã có) → trên
 > thanh chú thích bỏ tick **Không nền**, chọn **Nền** và kéo **Mờ nền**:
