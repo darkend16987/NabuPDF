@@ -449,9 +449,17 @@
       // same call and refuses to remove it, so the image survives as a plain stamp
       // instead of being silently deleted on the next bake.
       if (!src) return null;
-      return { id: ed.seq++, kind: "image", x: +data.x || 0, y: +data.y || 0,
+      const img = { id: ed.seq++, kind: "image", x: +data.x || 0, y: +data.y || 0,
                w: +data.w || 1, h: +data.h || 1,
                dataUrl: src, fmt: data.fmt === "jpg" ? "jpg" : "png", _managed: true };
+      // Xoay / lật (BI-116): keys left OFF an untouched image, the same arm as `fill` / `dash`
+      // above — an absent key is the shape a picture written before this existed reads as.
+      // Through window.AnnotGeom, not a new bare name (BI-14) — the same door normTextBorder uses.
+      const irot = window.AnnotGeom.normImgRot(data.rot);
+      if (irot) img.rot = irot;
+      if (data.flipH === true) img.flipH = true;
+      if (data.flipV === true) img.flipV = true;
+      return img;
     }
     return null;
   }

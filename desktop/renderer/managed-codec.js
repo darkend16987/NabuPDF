@@ -127,6 +127,12 @@
   // annot carries a pattern at all: only the five DASH_KINDS do, and anything else reads
   // as "solid" even if a stray `dash` key rode in on a pasted object — so a cloud or a tick
   // can never grow a dash in /NabuData or in its /AP.
+  // Xoay ảnh (annot-geom.js normImgRot). Through window.AnnotGeom in the browser (no new bare
+  // name — BI-14), require()d in node; same shape as _normTextBorder above.
+  function _normImgRot(v) {
+    if (typeof window !== "undefined" && window.AnnotGeom) return window.AnnotGeom.normImgRot(v);
+    return require("./annot-geom.js").normImgRot(v);
+  }
   function _dashSpec(dash, width) {
     if (typeof dashSpec === "function") return dashSpec(dash, width);
     return require("./annot-geom.js").dashSpec(dash, width);
@@ -580,7 +586,16 @@
     }
     // Geometry only — the pixels travel in the /NabuSrc stream, not in here.
     if (a.kind === "image") {
-      return { k: "image", x: a.x, y: a.y, w: a.w, h: a.h, fmt: a.fmt === "jpg" ? "jpg" : "png" };
+      const o = { k: "image", x: a.x, y: a.y, w: a.w, h: a.h, fmt: a.fmt === "jpg" ? "jpg" : "png" };
+      // Xoay / lật (BI-116): the three keys exist ONLY when set. An absent key reads back as
+      // "upright, unmirrored", which is what every image written before this meant — and it
+      // keeps /NabuData byte-identical to the old writer for an untouched picture (BI-59).
+      // x/y/w/h stay the UNTURNED box (the text box's rule), so nothing here re-measures.
+      const r = _normImgRot(a.rot);
+      if (r) o.rot = r;
+      if (a.flipH) o.flipH = true;
+      if (a.flipV) o.flipV = true;
+      return o;
     }
     // note
     return { k: "note", x: a.x, y: a.y, w: a.w, h: a.h, text: a.text || "",

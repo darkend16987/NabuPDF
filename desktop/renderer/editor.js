@@ -3476,7 +3476,7 @@
     const src = hit.a;
     let added = 0;
     for (const idx of targets) {
-      annotsFor(idx).push({
+      const copy = {
         id: ed.seq++,
         kind: "image",
         x: src.x,
@@ -3485,7 +3485,13 @@
         h: src.h,
         dataUrl: src.dataUrl,
         fmt: src.fmt,
-      });
+      };
+      // Xoay / lật (BI-116) go with the copy — the list above is hand-written, so a field
+      // not named here is silently dropped. Only when set: an untouched image copies as before.
+      if (src.rot) copy.rot = src.rot;
+      if (src.flipH) copy.flipH = true;
+      if (src.flipV) copy.flipV = true;
+      annotsFor(idx).push(copy);
       added++;
     }
     $("imgpages-modal").hidden = true;

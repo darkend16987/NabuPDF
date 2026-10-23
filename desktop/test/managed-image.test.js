@@ -96,7 +96,8 @@ const { normTextStyle } = require("../renderer/annot-text.js");
 // reach the text raster geometry and the border through (no new bare names — BI-14).
 // Module scope, so only the eval'd editor code sees it; managed-codec.js is its own
 // module and takes its require() path, exactly as it does under node anywhere else.
-const window = { AnnotText: require("../renderer/annot-text.js") };
+// AnnotGeom: deserializeManaged's image branch folds `rot` through window.AnnotGeom.normImgRot (BI-116).
+const window = { AnnotText: require("../renderer/annot-text.js"), AnnotGeom: require("../renderer/annot-geom.js") };
 // The LIFTED deserializeManaged branches on the shape families, and addManagedAnnot's
 // tô-sáng-theo-chữ branch reads the wash strength — both by bare name, so both have to
 // exist in this module's scope the way they do in the browser's shared script scope.
@@ -391,6 +392,96 @@ function readManaged(doc) {
   check("a note has no /NabuSrc to look up", managedSrcBytes(aDoc, PDFDict.withContext(aDoc.context)), null);
   check("deserialize still refuses a payload with no kind", deserializeManaged({}, null), null);
   check("deserialize still refuses an image with no source", deserializeManaged({ k: "image" }, null), null);
+
+  // ---- 8b. xoay / lật ảnh (BI-116): the three keys round-trip, and ONLY when set ------
+  // The bake does not draw a turned appearance yet (docs/PLAN-2026-10-23-image-rotate-flip.md
+  // step 3); this section owns the DATA half: what /NabuData says and what comes back.
+  check("an untouched image serialises to the exact bytes the old writer produced (BI-59)",
+    JSON.stringify(serializeManaged(imgAnnot())),
+    '{"k":"image","x":40,"y":60,"w":120,"h":90,"fmt":"png"}');
+  check("default values write NO key: rot 0 / 360 / junk, flips false / undefined / truthy-non-true",
+    [{ rot: 0 }, { rot: 360 }, { rot: "x" }, { rot: NaN }, { flipH: false, flipV: false }, { flipH: undefined }]
+      .map((o) => Object.keys(serializeManaged(imgAnnot(o))).sort().join(",")),
+    Array(6).fill("fmt,h,k,w,x,y"));
+  check("a turned + mirrored image adds exactly rot, flipH, flipV",
+    Object.keys(serializeManaged(imgAnnot({ rot: 30, flipH: true, flipV: true }))).sort(),
+    ["flipH", "flipV", "fmt", "h", "k", "rot", "w", "x", "y"]);
+  check("rot is written normalised into (-180, 180] (350 → -10)",
+    serializeManaged(imgAnnot({ rot: 350 })).rot, -10);
+  check("x/y/w/h stay the UNTURNED box — nothing re-measures",
+    ((o) => [o.x, o.y, o.w, o.h])(serializeManaged(imgAnnot({ rot: 90, flipH: true }))), [40, 60, 120, 90]);
+  check("flipV alone writes only flipV",
+    Object.keys(serializeManaged(imgAnnot({ flipV: true }))).sort(), ["flipV", "fmt", "h", "k", "w", "x", "y"]);
+  {
+    const d = deserializeManaged({ k: "image", x: 1, y: 2, w: 3, h: 4, fmt: "png", rot: -10, flipH: true }, pngUrl);
+    check("deserialize reads rot / flipH back", [d.rot, d.flipH, d.flipV], [-10, true, undefined]);
+    const plain = deserializeManaged({ k: "image", x: 1, y: 2, w: 3, h: 4, fmt: "png" }, pngUrl);
+    check("a payload from before this feature gives an annot with NONE of the three keys",
+      ["rot", "flipH", "flipV"].map((k) => k in plain), [false, false, false]);
+    const junk = deserializeManaged({ k: "image", x: 1, y: 2, w: 3, h: 4, rot: "abc", flipH: "yes", flipV: 1 }, pngUrl);
+    check("junk values are dropped, not guessed at", ["rot", "flipH", "flipV"].map((k) => k in junk), [false, false, false]);
+    const big = deserializeManaged({ k: "image", x: 1, y: 2, w: 3, h: 4, rot: 350 }, pngUrl);
+    check("an out-of-range rot is folded on the way in too", big.rot, -10);
+  }
+  {
+    // The whole path: write into a PDF, save, reload, read back like importManaged does.
+    const t = await newDoc();
+    await addManagedAnnot(t.doc, t.page, imgAnnot({ rot: 30, flipH: true, flipV: true }), map, new Map());
+    const tg = readManaged(await PDFDocument.load(await t.doc.save()));
+    check("turned image: /NabuData carries the three keys",
+      [tg[0].parsed.rot, tg[0].parsed.flipH, tg[0].parsed.flipV], [30, true, true]);
+    check("turned image: it reads back turned and mirrored, box unchanged",
+      [tg[0].annot.rot, tg[0].annot.flipH, tg[0].annot.flipV, tg[0].annot.x, tg[0].annot.y, tg[0].annot.w, tg[0].annot.h],
+      [30, true, true, 40, 60, 120, 90]);
+    check("turned image: the original pixels are still byte-identical",
+      tg[0].annot.dataUrl, pngUrl);
+    const u = await newDoc();
+    await addManagedAnnot(u.doc, u.page, imgAnnot(), map, new Map());
+    const ug = readManaged(await PDFDocument.load(await u.doc.save()));
+    check("untouched image: /NabuData in the saved file has none of the three keys",
+      ["rot", "flipH", "flipV"].map((k) => k in ug[0].parsed), [false, false, false]);
+  }
+  {
+    // The undo snapshot is a JSON deep copy, so the keys must ride along (a Ctrl+Z that
+    // dropped the turn would be the silent kind of bug this grid exists for).
+    ed.annots = { 0: [imgAnnot({ rot: 45, flipH: true })] };
+    ed.watermark = null;
+    const s2 = edSnapshot();
+    check("the undo snapshot keeps rot / flipH", [s2.annots[0][0].rot, s2.annots[0][0].flipH], [45, true]);
+  }
+  {
+    // applyImgPages writes its copies from a HAND-WRITTEN field list, so a new field is
+    // dropped unless that list names it. Behavioural: lift the shipped function, hand it fakes.
+    const pages = { 1: [], 2: [] };
+    const fakeEd = { sel: 1, seq: 100 };
+    const srcA = (o) => imgAnnot(Object.assign({ id: 1 }, o));
+    const run = (src) => {
+      pages[1].length = 0;
+      pages[2].length = 0;
+      const fn = new Function("ed", "findAnnot", "imgPagesSpec", "pushEdUndo", "annotsFor", "syncOverlays", "$", "toast",
+        fnSource("applyImgPages") + "; return applyImgPages;")(
+        fakeEd,
+        () => ({ a: src, page: 0 }),
+        () => ({ targets: [1, 2] }),
+        () => {},
+        (i) => pages[i],
+        () => {},
+        () => ({ hidden: false, value: "" }),
+        () => {});
+      fn();
+      return pages;
+    };
+    const turned = run(srcA({ rot: 30, flipH: true, flipV: true }));
+    check("Áp nhiều trang copies rot / flipH / flipV to every target page",
+      [1, 2].map((p) => [turned[p][0].rot, turned[p][0].flipH, turned[p][0].flipV]),
+      [[30, true, true], [30, true, true]]);
+    check("… as new objects with fresh ids", [turned[1][0].id, turned[2][0].id], [100, 101]);
+    const plainCopy = run(srcA({}));
+    check("an untouched image copies exactly as before — none of the three keys appear",
+      [1, 2].map((p) => ["rot", "flipH", "flipV"].map((k) => k in plainCopy[p][0]).join()), ["false,false,false", "false,false,false"]);
+    check("flipV alone is copied alone",
+      ((c) => ["rot" in c, c.flipH, c.flipV])(run(srcA({ flipV: true }))[1][0]), [false, undefined, true]);
+  }
 
   // ---- 9. the undo snapshot: still a deep copy, minus the base64 ----------
   // Because images round-trip, an image annot now lives in ed.annots for the whole
