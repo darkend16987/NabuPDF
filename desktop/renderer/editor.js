@@ -556,6 +556,14 @@
     const y = Math.max(0, Math.min(h, (e.clientY - r.top) / s));
     return { x, y };
   }
+  // The pointer in page space WITHOUT clamping to the sheet. A rotate drag reads the angle
+  // about the picture's centre, and the knob sits above the top edge — often off the page —
+  // so clamping (layerPoint's job for everything that must stay on paper) would bend the angle.
+  function layerPointRaw(layer, e) {
+    const r = layer.getBoundingClientRect();
+    const s = state.scale;
+    return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s };
+  }
 
   // `measureCtx` / `FONT_STACKS` / `fontFamily` / `textFont` / `normTextStyle` /
   // `textStyle` / `layoutTextBox` / `measureText` / `listDisplayText` moved to
@@ -1391,6 +1399,18 @@
       const img = document.createElement("img");
       img.src = a.dataUrl;
       img.draggable = false;
+      // Xoay / lật (BI-116). The flip goes on the <img> ONLY and the turn on the element:
+      // grips, the dashed selection outline and the rotate grip are children of the element,
+      // so they turn with the picture, but a mirrored grip would swap corners under the
+      // user's pointer. CSS composes child-then-parent — flip inside the box, THEN turn about
+      // its centre — which is exactly annot-geom.js imageCorners' order, the one the bake
+      // writes (BI-40: one definition, two destinations). `-a.rot`: CSS rotate() is
+      // clockwise and ours is anti-clockwise, the sign the text box and watermark carry.
+      // x/y/w/h stay the UNTURNED box; the default transform-origin (50% 50%) is the box
+      // centre, the same point imageBounds / imageCorners turn about.
+      if (a.flipH || a.flipV) img.style.transform = `scale(${a.flipH ? -1 : 1}, ${a.flipV ? -1 : 1})`;
+      const irot = window.AnnotGeom.normImgRot(a.rot);
+      if (irot) el.style.transform = `rotate(${-irot}deg)`;
       el.appendChild(img);
     } else if (SYMBOL_KINDS.has(a.kind)) {
       // Drawn from symbolStrokes — the SAME function the bake reads, so screen and
@@ -1424,6 +1444,18 @@
         h.dataset.dir = dir; // read back by onDown → resizeRect
         el.appendChild(h);
       }
+    }
+    // Rotate grip (BI-116): a round knob on a short stem above the top edge, a child of the
+    // element so it turns with the picture. `data-rot` is its own attribute for the same
+    // reason `data-pt` / `data-vtx` are: onDown checks it BEFORE the box-corner branch, and
+    // a grip with no `data-dir` falling into that branch would rewrite a box it does not
+    // reshape. Lone selection only (gripsFor), and never on a partner's stamp (`_foreign`):
+    // its saved form is compared as-imported, so a turn there is not ours to write (BI-100).
+    if (a.kind === "image" && gripsFor(a.id) && !a._foreign) {
+      const h = document.createElement("div");
+      h.className = "handle h-rot";
+      h.dataset.rot = "1";
+      el.appendChild(h);
     }
     return el;
   }
@@ -2125,6 +2157,27 @@
       return;
     }
 
+    // Rotate knob (BI-116) — before the box-corner branch below, like the two above: it
+    // carries `data-rot`, not `data-dir`. The drag is RELATIVE to where the pointer went
+    // down (annot-geom.js rotateDragAngle), so grabbing the knob off-centre does not jump.
+    // Undo is pushed lazily on the first real move, like move / resize.
+    if (e.target.classList.contains("handle") && e.target.dataset.rot) {
+      const id = +e.target.closest(".an").dataset.id;
+      const hitR = findAnnot(id);
+      if (!hitR || hitR.a.kind !== "image") return;
+      const a = hitR.a;
+      const raw = layerPointRaw(layer, e);
+      drag = {
+        type: "rotate", page: i, id, layer, sx: p.x, sy: p.y,
+        rx: raw.x, ry: raw.y,
+        orig: { rot: window.AnnotGeom.normImgRot(a.rot) },
+        center: { x: a.x + a.w / 2, y: a.y + a.h / 2 },
+        pushed: false,
+      };
+      e.preventDefault();
+      return;
+    }
+
     if (e.target.classList.contains("handle")) {
       const id = +e.target.closest(".an").dataset.id;
       const a = findAnnot(id).a;
@@ -2407,7 +2460,20 @@
       pushEdUndo();
     }
 
-    if (drag.type === "move") {
+    // Rotate knob (BI-116). Its own lazy push and its own pointer: the knob lives above the
+    // sheet, where layerPoint's clamp would freeze `p` and a real drag would look like none.
+    // Shift is read live off the event (same rule as resize / arrow ends), so 15° steps can
+    // be switched on and off mid-drag. 0° is stored as ABSENCE, never as `rot: 0` (BI-59).
+    if (drag.type === "rotate") {
+      const raw = layerPointRaw(drag.layer, e);
+      if (!drag.pushed && (raw.x !== drag.rx || raw.y !== drag.ry)) {
+        drag.pushed = true;
+        pushEdUndo();
+      }
+      const r = window.AnnotGeom.rotateDragAngle(drag.center, { x: drag.rx, y: drag.ry }, raw, drag.orig.rot, e.shiftKey);
+      if (r) a.rot = r;
+      else delete a.rot;
+    } else if (drag.type === "move") {
       const dx = p.x - drag.sx;
       const dy = p.y - drag.sy;
       // Always driven from `orig` + the total delta, never by accumulating per-move
@@ -2476,7 +2542,16 @@
         a.x = drag.dir.indexOf("w") >= 0 ? drag.orig.x + drag.orig.w - a.w : drag.orig.x;
         a.y = drag.orig.y;
       } else {
-        const g = resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
+        // A TURNED picture: the grips sit on the turned element but the drag is read in page
+        // space, so it is brought into the box's own frame and the far corner re-pinned in
+        // page space (annot-geom.js resizeRotated; identical to resizeRect at 0°). Every other
+        // kind — and an upright image — takes the call it always did. (This is the same trap
+        // isFixedTextBox's note describes for a turned text box; images get the maths instead
+        // of losing their grips.)
+        const turnedImg = a.kind === "image" && window.AnnotGeom.normImgRot(a.rot) !== 0;
+        const g = turnedImg
+          ? window.AnnotGeom.resizeRotated(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4, a.rot)
+          : resizeRect(drag.dir, drag.orig, p.x - drag.sx, p.y - drag.sy, e.shiftKey, 4);
         a.x = g.x;
         a.y = g.y;
         a.w = g.w;
@@ -2766,6 +2841,10 @@
           // A fixed-width text box's wrap width moved with the grip (onMove).
           if (a.kind === "text" && d.orig.boxW != null) a.boxW = d.orig.boxW;
         }
+      } else if (d.type === "rotate") {
+        // Back to the turn it had (absent, not 0, when it had none — BI-59).
+        if (d.orig.rot) a.rot = d.orig.rot;
+        else delete a.rot;
       } else if (d.type === "vertex") {
         // The WHOLE point list goes back, not just the dragged vertex — same reason the
         // arrow branch below restores both ends.
@@ -2781,7 +2860,7 @@
       }
       // Creation gestures push on mousedown; move/resize/end-grip push lazily. Only
       // drop a snapshot this gesture actually recorded, else we'd pop a prior step.
-      if ((d.type !== "move" && d.type !== "resize" && d.type !== "point" && d.type !== "vertex") || d.pushed) dropLastEdUndo();
+      if ((d.type !== "move" && d.type !== "resize" && d.type !== "point" && d.type !== "vertex" && d.type !== "rotate") || d.pushed) dropLastEdUndo();
     }
     renderLayer(d.layer, d.page);
   }

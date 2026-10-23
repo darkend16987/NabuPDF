@@ -857,6 +857,22 @@ body.editing .annot-layer .an { cursor: move; }
 .annot-layer .handle.h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
 .annot-layer .handle.h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
 .annot-layer .handle.h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+/* Rotate knob of an image (data-rot, BI-116): a round grip on a short stem above the top edge.
+   A child of the image element, so it turns with it. The layer clips to the sheet, which
+   would hide the knob of a picture near the top edge — so while a knob exists the layer
+   lets it overflow (it lands in the gap above the page; app.css .viewer has padding for it). */
+.annot-layer .handle.h-rot {
+  left: 50%; top: -22px; margin-left: -6px;
+  width: 12px; height: 12px;
+  border-radius: 50%; background: var(--bg); border: 2px solid var(--accent);
+  cursor: grab;
+}
+.annot-layer .handle.h-rot::before {
+  content: ""; position: absolute; left: 50%; top: 100%;
+  width: 0; height: 10px; border-left: 1.5px solid var(--accent);
+  transform: translateX(-50%); pointer-events: none;
+}
+.annot-layer:has(.handle.h-rot) { overflow: visible; }
 /* Arrow END grips (data-pt="1"/"2"). Round, not square, and centred ON the endpoint
    rather than offset to a corner: they grab a POINT, not a box corner, and dragging one
    swings the arrow instead of resizing a rectangle. The shape is the tell that the two

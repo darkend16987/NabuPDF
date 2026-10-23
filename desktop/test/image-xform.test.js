@@ -16,6 +16,10 @@
 //                               IN PAGE SPACE at any angle (the property that matters).
 //   F  rotateDragAngle          relative to the grab point, Shift = 15°, up = 0.
 //   G  annotBounds              an image reports its TURNED box (paste/place clamping).
+//   H  imageCm                  the one matrix both bake writers share (see test:rotate 5b).
+//   I  (DOM half, source pins)  overlay transform, knob, onDown/onMove/cancelDrag, resize,
+//                               CSS — editor.js cannot be require()d; the real-Electron probe
+//                               measured the behaviour, these pins keep the lines in place.
 //
 // Run:  node desktop/test/image-xform.test.js      (or: npm run test:imgxf)
 
@@ -267,6 +271,65 @@ check("B null", G.imageXformed(null), false);
   // translate keeps rot / flips (they are not coordinates).
   const t = G.translateAnnot({ ...a, rot: 30, flipH: true }, 5, 7);
   check("G translate keeps xform", [t.x, t.y, t.rot, t.flipH], [15, 27, 30, true]);
+}
+
+// ---- I. the DOM half, pinned on the SHIPPED source ----------------------------
+//
+// editor.js cannot be require()d (it needs the DOM), so the overlay / grip / drag wiring is
+// guarded two ways: the real-Electron probe (every row there was measured with real mouse
+// events — see docs/REGRESSION-GUARD.md BI-116) and the pins below, which fail the moment
+// one of the load-bearing lines is edited away or reordered. They pin STRUCTURE, not
+// behaviour; a red one is a signal to understand, not to edit the regex.
+{
+  const fs = require("fs");
+  const path = require("path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "renderer", "editor.js"), "utf8").replace(/\r\n/g, "\n");
+  const css = fs.readFileSync(path.join(__dirname, "..", "renderer", "app.css"), "utf8").replace(/\r\n/g, "\n");
+  const has = (name, re) => check("I " + name, re.test(src), true);
+  const idx = (s) => src.indexOf(s);
+
+  // overlay: flip on the <img>, turn on the element, CSS sign opposite to ours
+  has("overlay: flip is written on the <img>", /img\.style\.transform = `scale\(\$\{a\.flipH \? -1 : 1\}, \$\{a\.flipV \? -1 : 1\}\)`/);
+  has("overlay: turn is written on the element with the CSS-clockwise sign", /el\.style\.transform = `rotate\(\$\{-irot\}deg\)`/);
+  has("overlay: nothing is written for an untouched image (no transform unless flipped/turned)",
+    /if \(a\.flipH \|\| a\.flipV\) img\.style\.transform/);
+  has("overlay: …and the element's transform is guarded by a non-zero turn", /if \(irot\) el\.style\.transform = /);
+  has("overlay: the turn goes through window.AnnotGeom (no new bare name, BI-14)", /window\.AnnotGeom\.normImgRot\(a\.rot\)/);
+
+  // the knob: image only, lone selection, never a partner's stamp, own data attribute
+  has("knob: only for an image, a lone selection, and not a foreign stamp",
+    /if \(a\.kind === "image" && gripsFor\(a\.id\) && !a\._foreign\) \{\n\s+const h = document\.createElement\("div"\);\n\s+h\.className = "handle h-rot";\n\s+h\.dataset\.rot = "1";/);
+
+  // onDown: the rotate branch must come BEFORE the generic box-corner branch (no data-dir)
+  const iRot = idx('if (e.target.classList.contains("handle") && e.target.dataset.rot) {');
+  const iBox = idx('if (e.target.classList.contains("handle")) {\n      const id = +e.target.closest(".an").dataset.id;\n      const a = findAnnot(id).a;\n      // x/y are part of `orig` now');
+  check("I onDown: the rotate-knob branch exists", iRot > 0, true);
+  check("I onDown: …and sits before the box-corner branch", iRot > 0 && iBox > iRot, true);
+  has("onDown: the drag is relative to the unclamped pointer and remembers the turn it started from",
+    /type: "rotate", page: i, id, layer, sx: p\.x, sy: p\.y,\n\s+rx: raw\.x, ry: raw\.y,\n\s+orig: \{ rot: window\.AnnotGeom\.normImgRot\(a\.rot\) \},\n\s+center: \{ x: a\.x \+ a\.w \/ 2, y: a\.y \+ a\.h \/ 2 \}/);
+  has("pointer: layerPointRaw does NOT clamp to the sheet",
+    /function layerPointRaw\(layer, e\) \{\n\s+const r = layer\.getBoundingClientRect\(\);\n\s+const s = state\.scale;\n\s+return \{ x: \(e\.clientX - r\.left\) \/ s, y: \(e\.clientY - r\.top\) \/ s \};\n\s+\}/);
+
+  // onMove: Shift live off the event; 0° stored as absence
+  has("onMove: rotate reads Shift off the event and stores 0° as ABSENCE",
+    /if \(drag\.type === "rotate"\) \{[\s\S]*?rotateDragAngle\(drag\.center, \{ x: drag\.rx, y: drag\.ry \}, raw, drag\.orig\.rot, e\.shiftKey\);\n\s+if \(r\) a\.rot = r;\n\s+else delete a\.rot;/);
+  has("onMove: rotate pushes undo lazily, on the first REAL move of the raw pointer",
+    /if \(!drag\.pushed && \(raw\.x !== drag\.rx \|\| raw\.y !== drag\.ry\)\) \{\n\s+drag\.pushed = true;\n\s+pushEdUndo\(\);/);
+
+  // resize: a turned image goes through resizeRotated, everything else through resizeRect
+  has("resize: a turned image takes resizeRotated, the rest resizeRect",
+    /const turnedImg = a\.kind === "image" && window\.AnnotGeom\.normImgRot\(a\.rot\) !== 0;\n\s+const g = turnedImg\n\s+\? window\.AnnotGeom\.resizeRotated\(drag\.dir, drag\.orig, p\.x - drag\.sx, p\.y - drag\.sy, e\.shiftKey, 4, a\.rot\)\n\s+: resizeRect\(drag\.dir, drag\.orig, p\.x - drag\.sx, p\.y - drag\.sy, e\.shiftKey, 4\);/);
+
+  // Esc: restore the turn, and DROP the snapshot the drag pushed (and only that one)
+  has("cancelDrag: Esc puts the turn back (absent, not 0)",
+    /else if \(d\.type === "rotate"\) \{\n\s+\/\/[^\n]*\n\s+if \(d\.orig\.rot\) a\.rot = d\.orig\.rot;\n\s+else delete a\.rot;/);
+  has("cancelDrag: a rotate drag is a LAZY-undo gesture (drops its snapshot only if it pushed one)",
+    /d\.type !== "vertex" && d\.type !== "rotate"\) \|\| d\.pushed\) dropLastEdUndo\(\)/);
+
+  // CSS: the knob exists, and the layer may overflow ONLY while one does
+  check("I css: .h-rot is styled", /\.annot-layer \.handle\.h-rot \{/.test(css), true);
+  check("I css: the layer overflows only while a knob exists", /\.annot-layer:has\(\.handle\.h-rot\) \{ overflow: visible; \}/.test(css), true);
+  check("I css: the plain layer still clips to the sheet", /\.annot-layer \{\n  position: absolute;\n  left: 0; top: 0;\n  pointer-events: none;\n  overflow: hidden;\n\}/.test(css), true);
 }
 
 console.log(`${pass} passed, ${fail} failed`);
