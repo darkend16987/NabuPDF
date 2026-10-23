@@ -3104,6 +3104,76 @@ _Ghi 2026-09-30 (v0.2.73)._
   Áp dụng ⇒ file có **"12.345"** căn phải mép 499,90. Cùng probe trên HEAD cũ: đỏ 9/15. Probe P8 15/15 chạy lại (đối chứng B nay giữ focus).
 - **Vỡ khi:** bấm B/I/U/S/căn lề lúc đang gõ mà ô gõ đóng hoặc chữ gõ tiếp bị mất; Esc mà định dạng vừa bấm vẫn được ghi.
 
+### BI-116 · Xoay / lật ẢNH chèn: một mô hình `rot`/`flipH`/`flipV`, một ma trận cho overlay, `/AP` và đường phẳng — mặc định = **vắng mặt**
+- Kế hoạch & các lựa chọn đã chốt: `docs/PLAN-2026-10-23-image-rotate-flip.md`. **Chỉ renderer, không đổi `*.py`** (sidecar không build lại).
+  - `annot-geom.js` (thuần): `normImgRot` `cosSinDeg` `imageXformed` `imageCorners` `imageCm` `imageBounds` `imageOp` `resizeRotated`
+    `rotateDragAngle`; `annotBounds` của ảnh trả **hộp bao đã xoay**.
+  - `managed-codec.js` `serializeManaged` (ghi `rot` / `flipH` / `flipV` **chỉ khi có**) · `editor-bake.js` `deserializeManaged` (đọc lại,
+    bỏ giá trị rác) · `addManagedAnnot` nhánh image (form `BBox` = hộp bao đã xoay + `cm` dựng từ `imageCm`) · `drawOneAnnot` nhánh image
+    (đường phẳng: `pushOperators` q/cm/Do/Q, vì `drawImage` của pdf-lib không lật được).
+  - `editor.js`: `renderAnnot` (ảnh), núm xoay `.handle.h-rot` (`data-rot`) + `onDown`/`onMove`/`cancelDrag` nhánh `rotate`,
+    `layerPointRaw`, resize ảnh đang xoay, `applyImageOp`/`imageOpPlan`/`imageTargets` + nhóm mục trong menu chuột phải, `applyImgPages`;
+    `app.css` `.h-rot` + `.annot-layer:has(.handle.h-rot)`. `help.js` (VI+EN), `i18n.js` ("Lật ngang", "Lật dọc", "Đặt lại xoay / lật").
+  - Lưới: `npm run test:imgxf` (347 ý: hình học thuần, `imageCm`, ghim cấu trúc DOM, lệnh menu) · `test:rotate` mục **5b** (9 tư thế ×
+    4 góc `/Rotate` × 2 writer + chế độ che) · `test:managed` mục **8b** (khoá mặc định, round-trip file PDF thật, snapshot undo,
+    `applyImgPages` cắt từ mã ship) · `annot-geom.test.js` ghim bề mặt export.
+- **Luật:**
+  - **Mô hình:** `rot` độ **ngược chiều kim đồng hồ** (cùng dấu hộp chữ / watermark, `normRot` ở `annot-text.js`; `normImgRot` là bản
+    sao có test ghim bằng nhau), tâm xoay = **tâm hộp**, thứ tự **lật trong khung ảnh rồi xoay**. `x/y/w/h` **luôn là hộp chưa xoay**
+    (như hộp chữ — xoay không đo lại hộp nên không phình mỗi lần xoay).
+  - **Mặc định là VẮNG MẶT, không bao giờ `rot: 0` / `flipH: false`** — ở `serializeManaged`, `deserializeManaged`, `applyImgPages`,
+    `applyImageOp`, kéo núm về 0°, Esc. Ảnh chưa chạm / đã đưa về tư thế gốc phải ra **JSON và byte y hệt** (BI-59). Cổng của mọi
+    writer là `imageXformed`; ảnh chưa chạm đi **nhánh cũ nguyên văn**.
+  - **Một định nghĩa "ảnh nằm ở đâu" cho ba nơi (BI-40):** overlay = `rotate(-rot)` lên phần tử + `scale(±1,±1)` lên `<img>`
+    (lật **chỉ** lên `<img>`: lật cả phần tử thì 4 tay nắm đổi chỗ dưới con trỏ), bake = `imageCm` (ba góc của `imageCorners`, mỗi góc
+    được `map` **riêng** ⇒ trang `/Rotate` đúng miễn phí, BI-45 loại 1 — **không** thêm `rotate: pageRotate`). Sửa một nơi mà không sửa nơi
+    kia = đúng trên màn hình, sai trong file.
+  - **Lật theo MÀN HÌNH:** lật một ảnh đã xoay phải **đổi dấu góc** (`F·R(θ) = R(−θ)·F`), không chỉ bật cờ — không thì ảnh 30° lật quanh
+    trục riêng và quay sai hướng. `imageOp` giữ luật này; ba ca probe dùng oracle độc lập (đối xứng qua tâm) để dự đoán không tự khớp với mã.
+  - **Ở `test:rotate`, ảnh KHÔNG vào `KINDS`:** `KINDS` đọc toán tử path còn ảnh chỉ phát `Do`. Mục 5b so **thứ tự** BL,BR,TR,TL của
+    hình vuông đơn vị với `imageCorners` — thứ tự là điểm mấu chốt vì lật giữ nguyên **tập** 4 góc, so tập đã sắp xếp mù với lật
+    (có ca bảo vệ ghim điều đó).
+  - **Núm xoay:** chỉ cho **một** ảnh đang chọn (`gripsFor`) và **không** cho stamp ngoài (`_foreign`, BI-100). Dùng con trỏ **không kẹp**
+    (`layerPointRaw`) vì núm nằm trên mép trang; kẹp ⇒ góc kéo bị lệch khi con trỏ ở ngoài tờ (đột biến "con trỏ bị kẹp" đỏ ở T8b của probe bước 4). Kéo **tương đối** so với điểm
+    bấm; Shift (đọc trực tiếp từ sự kiện) = bước 15°, áp lên **kết quả**; undo đẩy **lười** ở lần di chuyển thật đầu tiên; Esc trả góc cũ và
+    chỉ bỏ snapshot nếu cú kéo đã đẩy (nếu bỏ khi chưa đẩy: ăn mất bước undo trước — T4b). `onDown` xét `data-rot` **trước** nhánh góc.
+  - **Resize khi xoay:** `resizeRotated` (kéo đưa về khung của hộp, góc đối diện đứng yên **trong không gian trang**); bằng `resizeRect` ở 0°.
+    Hộp chữ xoay thì **mất** tay nắm (`isFixedTextBox`) — ảnh thì được giữ nhờ hàm này.
+  - **Menu (BI-41: không thêm hàng vào thanh sửa):** mỗi ảnh Nabu đang chọn tự xử lý quanh **tâm riêng**; **một** bước undo cho cả nhóm, đẩy
+    **trước** khi sửa, chỉ khi có gì đổi (Đặt lại trên ảnh chưa chạm bị xám); không chạy giữa cú kéo; mục có hậu tố "(N ảnh)".
+    Không thêm cửa mới qua cổng bản quyền: chỉ chạy khi `ed.active` (vào qua `btn-edit` ∈ `GATED_BTNS`).
+  - `.annot-layer { overflow: hidden }` vẫn cắt theo tờ; chỉ khi có núm mới `overflow: visible` (`:has`), để núm của ảnh sát mép trên bấm được.
+- **Đo (app thật, chuột / phím / chuột phải thật qua CDP):**
+  - Bước 4 — 32/32: kéo núm sang trái = +90°, tâm không dời; Shift 118° → 120°; Esc giữa chừng trả góc và undo kế tiếp lùi đúng **một**
+    bước; resize ảnh xoay 30°: góc nw đứng yên < 1 px, rộng +40 px dọc trục riêng; núm của ảnh sát mép trên bấm được, kéo ra 20° dù con trỏ
+    ở ngoài tờ. Bước 5 — 40/40 **bằng pixel thật** (chụp màn hình, đọc màu tại tâm dự đoán của 4 phần tư ảnh): xoay trái → lật ngang →
+    lật dọc → xoay phải đúng màu đúng chỗ ở mỗi bước; 4 undo / 4 redo; nhóm 2 ảnh quanh tâm riêng (tâm dời < 0,6 px), một undo hoàn lại cả hai.
+  - **Bước 6 — end-to-end 55/55** (hai lần mở app thật, 4 trang, trang 1 `/Rotate 90`): Áp dụng rồi **render lại `state.bytes` bằng pdf.js** — 6
+    ảnh (PNG ×5 gồm trang `/Rotate 90`, JPEG, bản Áp nhiều trang, bản Sao chép → Dán) cho **cùng màu ở cùng chỗ** với overlay; `/NabuData`
+    đúng `rot`/`flipH`/`flipV`/`fmt jpg`; chỉ trang xoay có `/Matrix`; **mở lại file** ⇒ cả 6 về đúng hộp và tư thế (< 0,02), sửa tiếp
+    (Xoay phải 90° trên trang `/Rotate 90`, Lật dọc) rồi Áp dụng lại ⇒ vẫn 6 ảnh, ảnh không sửa giữ nguyên tư thế, pixel đúng.
+  - **Byte y hệt BI-59:** harness bake ảnh **chưa chạm** qua chính `addManagedAnnot`/`drawOneAnnot` đang ship, sha256 của 16 tài liệu (AP trang
+    0/90/180/270, phẳng, chế độ che, `/Rotate 45`, 3 trang dùng chung ảnh, landscape `/Rotate 90` số lẻ, cờ tắt rõ ràng) — **trước (08db635)
+    và sau khớp từng dòng**; harness tất định (chạy hai lần ra cùng hash).
+  - Đột biến: `test:imgxf` ba nhóm (15 + 14 + 15 ca), `test:rotate`/bake 13/13, mức probe bước 4 5/5 · bước 5 7/7 · bước 6 5/5 (bake vẽ
+    như ảnh thẳng, `imageCm` nhầm góc, `/AP` không lật trục y, mở lại không đọc `rot`, Áp nhiều trang rơi cờ lật). Đối chứng mã cũ: đỏ đúng chỗ.
+- **Đã biết / chưa làm (cố ý):**
+  - Mở file có ảnh đã xoay bằng bản Nabu **cũ**: `/AP` vẫn vẽ đúng, nhưng sửa lại + Áp dụng sẽ **mất xoay** (bản cũ đọc `x/y/w/h` là hộp chưa xoay).
+  - Ảnh nằm sẵn trong **nội dung trang** PDF gốc, và stamp của phần mềm khác (`_foreign`), **không** xoay được.
+  - Chưa có: ô nhập góc (chủ dự án chọn không thêm), phím tắt, hít về 0° khi không giữ Shift, `cursor` của 4 tay nắm góc vẫn theo trục màn hình khi
+    ảnh xoay. Ảnh xoay có thể thò ra ngoài tờ (bị cắt theo tờ như mọi vật thể; `annotBounds` chỉ dùng để kẹp khi dán / đặt chữ ký).
+  - **Chưa kiểm:** Acrobat / Foxit (mới đo bằng pdf.js), `/Rotate` 180 / 270 ở mức e2e (đã có lưới đơn vị 4 góc), đường **bake che** (phẳng) ở mức
+    e2e, stamp ngoài với file mẫu thật.
+- **Cách kiểm cho lần sau (script nằm ngoài repo, cần gói `ws`):** probe CDP trên app thật, **pixel thật** bằng `Page.captureScreenshot`
+  (cửa sổ hiện, đọc lại ảnh chụp trong renderer bằng canvas) và render file đã lưu bằng `pdfjsLib` trong renderer; dự đoán lấy từ
+  `imageCorners`/`imageOp` thuần, **không** lấy từ DOM. Bẫy đã gặp: con trỏ CDP làm tròn **pixel nguyên** ⇒ ca "snap 113° → 120°" nằm sát
+  biên 112,5° và ra 105° (chọn 118°); `undo`/`redo` dựng lại lớp và **bỏ chọn** (phải bấm lại ảnh trước khi kéo núm); `placeSignature` luôn ghi
+  `fmt: "png"` — muốn ảnh **JPEG** phải đi cửa `beginImagePaste` rồi bấm lên trang.
+- **Vỡ khi:** ảnh xoay/lật trên màn hình và trong file đã lưu **không trùng** (rõ nhất ở trang `/Rotate`, ảnh lật, ảnh JPEG); ảnh chưa chạm ra byte
+  khác bản trước; lật ảnh đang xoay mà nó quay sai hướng; đưa ảnh về tư thế gốc rồi file vẫn có `rot`/`flip`; Esc khi kéo núm ăn mất bước undo
+  trước; núm không bấm được ở ảnh sát mép trên; mở lại file xoay mất `rot`/`flip`; Áp nhiều trang hoặc Dán làm rơi góc xoay / lật; một lệnh menu
+  tạo nhiều bước undo cho một nhóm.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3186,6 +3256,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Ô Nét (`PEN_WIDTH_KINDS`, handler `ed-penwidth`, `syncControls`) | BI-113 · `npm run test:penwidth` · **test tay**: Đo → kéo một đoạn → Chọn đoạn đó → Nét 6 → đường + 2 vạch dày lên · Ctrl+Z về 1 · Xong → file đã lưu nét 6 |
 | Sửa nội dung — Căn lề / Gạch ngang (`api.py` `edit_text` `align`/`strike`, `_insert_line_pitch`; `text-edit.js` `#te-align`, `#te-strike`) | BI-114 · `test_edit_text_align.py` + `npm run test:teformat` + toàn bộ `test_edit_text_*.py` · **build lại sidecar** · **test tay**: Sửa nội dung → bấm số trong cột căn phải → gõ số dài hơn → Căn phải → Áp dụng → mép phải không đổi · tiêu đề căn giữa → giữ tâm · S trên một dòng → gạch giữa chữ · sửa KHÔNG chọn căn lề → như trước |
 | Sửa nội dung — nút định dạng khi ô gõ đang mở (`onControlChange`, `beginEdit` `before` / `cancel`) | BI-115 · `npm run test:teformat` · **test tay**: Sửa nội dung → bấm một đoạn → gõ vài chữ → bấm **B** → ô gõ còn mở, gõ tiếp được → Enter → Áp dụng → đủ chữ · bấm đoạn khác → B → **Esc** → đoạn đó không bị tính là đã sửa |
+| Xoay / lật ảnh (`annot-geom.js` `imageXformed`/`imageCorners`/`imageCm`/`imageBounds`/`imageOp`/`resizeRotated`/`rotateDragAngle` · `serializeManaged`/`deserializeManaged` nhánh image · `addManagedAnnot` + `drawOneAnnot` nhánh image · `renderAnnot` ảnh, `.handle.h-rot`, `onDown`/`onMove`/`cancelDrag` nhánh `rotate`, `applyImageOp`, mục menu chuột phải, `applyImgPages`) | BI-116 · `cd desktop ; npm run test:imgxf ; npm run test:rotate ; npm run test:managed ; npm run test:cloud` · **hồi quy quan trọng nhất (BI-59):** ảnh **chưa chạm** bake ra **byte y hệt** bản trước (dựng harness sha256 trên HEAD cũ và mới, ảnh thường ở trang 0/90/180/270 + phẳng + chế độ che) · **test tay**: chèn ảnh nhiều màu (4 góc khác màu) → kéo **núm** trên đầu ảnh sang trái → xoay ngược chiều kim đồng hồ, giữ **Shift** nhảy 15°, **Esc** giữa chừng về góc cũ, Ctrl+Z lùi đúng một bước · kéo 4 góc ảnh **đang xoay** → góc đối diện đứng yên · chuột phải → Xoay trái/phải 90°, Lật ngang/dọc (ảnh đang xoay 30° lật ngang → đối xứng qua trục dọc trên màn hình), Đặt lại → **hết** transform (xám khi chưa chạm) · Ctrl+click 2 ảnh → mỗi ảnh quanh tâm riêng, **một** Ctrl+Z hoàn lại cả hai · Xong → **mở lại file** (cả trang `/Rotate 90`, ảnh JPEG) → ảnh **đúng chỗ, đúng chiều** như trước khi lưu, còn sửa tiếp được · Áp nhiều trang và Sao chép → Dán → bản sao **giữ góc xoay / lật** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chiều · ảnh sát mép **trên** trang → núm vẫn bấm được |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

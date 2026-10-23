@@ -1,7 +1,10 @@
 # Xoay / lật ảnh chèn — nghiên cứu + kế hoạch (2026-10-23)
 
-> Trạng thái: **CHỈ NGHIÊN CỨU, chưa sửa mã.** Chờ chủ dự án chốt 3 câu hỏi ở §6.
-> Mọi dòng "đã đọc" dưới đây là đọc trực tiếp trong phiên này (HEAD `8592907`, v0.2.79).
+> Trạng thái (2026-10-24): **ĐÃ LÀM xong bước 0–7** (chưa phát hành, chưa push). Kết quả + luật + số đo: `docs/REGRESSION-GUARD.md` **BI-116**.
+> Ba câu hỏi ở §6 đã chốt: núm chuột + menu chuột phải (**không** ô nhập góc) · xoay tự do, Shift = 15° · nhiều ảnh ⇒ mỗi ảnh quanh tâm riêng.
+> Khác với kế hoạch gốc: (a) ảnh **không** vào `KINDS` của `test:rotate` (KINDS đọc toán tử path, ảnh chỉ phát `Do`) — thay bằng mục **5b**;
+> (b) gọi `annot-geom` qua `window.AnnotGeom`, không tên trần mới (BI-14); (c) lớp phủ `.annot-layer` cho núm tràn ra ngoài tờ khi có núm (`:has`).
+> Phần dưới là bản kế hoạch ban đầu, giữ nguyên để truy vết. Mọi dòng "đã đọc" dưới đây là đọc trực tiếp trong phiên đó (HEAD `8592907`, v0.2.79).
 
 ## 1. Kết luận: ảnh chèn CHƯA xoay / lật được
 

@@ -4,7 +4,25 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-13 · v0.2.79 (dưới đây) · v0.2.78 là bản trước đó_
+_Cập nhật: 2026-10-24 · **chưa phát hành, sau v0.2.79:** xoay / lật ảnh chèn (ngay dưới) · v0.2.79 · v0.2.78 là bản trước đó_
+
+> **CHƯA PHÁT HÀNH (commit trên nhánh `claude/vietnamese-ocr-ai-iSvwV`, chưa push, chưa bump version) — Xoay / lật ảnh chèn** (2026-10-23 → 24).
+> Kế hoạch: `docs/PLAN-2026-10-23-image-rotate-flip.md` · sổ bất biến **BI-116** (đọc mục đó trước khi sửa) · **Không đổi `*.py`** ⇒ sidecar KHÔNG
+> cần build lại. 6 commit (kế hoạch + bước 1–5) + 1 commit ghi sổ:
+> 1. hình học thuần ở `annot-geom.js` (`imageCorners`/`imageCm`/`imageBounds`/`imageOp`/`resizeRotated`/`rotateDragAngle`…);
+> 2. mã hoá `rot`/`flipH`/`flipV` trong `/NabuData` (chỉ khi có) + `Áp nhiều trang` giữ chúng;
+> 3. bake: `/AP` của ảnh xoay/lật + đường phẳng dùng chung một ma trận (không rasterise lại; ảnh chưa chạm **byte y hệt** HEAD cũ ở 16 tài liệu mẫu);
+> 4. overlay + **núm xoay chuột** (Shift 15°, Esc huỷ) + resize ảnh đang xoay;
+> 5. **menu chuột phải**: Xoay trái/phải 90°, Lật ngang/dọc, Đặt lại — nhiều ảnh thì mỗi ảnh quanh tâm riêng, một bước undo; help + i18n;
+> 6. probe end-to-end (không có commit): render lại file đã lưu bằng pdf.js khớp pixel với overlay, gồm trang `/Rotate 90`, JPEG, Áp nhiều trang,
+>    sao chép-dán, mở lại file và sửa tiếp;
+> 7. ghi sổ (BI-116 + ma trận §5 + file này).
+> Lựa chọn của chủ dự án: núm chuột + menu chuột phải, **không** có ô nhập góc; xoay tự do (Shift = 15°); nhiều ảnh ⇒ mỗi ảnh quanh tâm riêng.
+> Kiểm: JS 55/55 · probe app thật 32/32 (bước 4) + 40/40 pixel (bước 5) + 55/55 end-to-end (bước 6) · đột biến toàn bộ bị bắt.
+> ⚠️ **Còn mở / việc để lại:** chưa test **Acrobat / Foxit** (mới đo bằng pdf.js) · `/Rotate` 180/270 và đường bake **che** chưa chạy e2e (đã có lưới đơn vị) ·
+> stamp ngoài (`_foreign`) không xoay được, chưa có file mẫu · bản Nabu **cũ** mở file có ảnh xoay sẽ mất xoay khi sửa lại · chưa test tay tiếng Anh
+> cho 3 nhãn menu mới · chưa có phím tắt / hít về 0° / đổi `cursor` tay nắm theo góc · **/deploy chưa chạy** (cần bump version + ghi chú phát hành).
+> Script probe/đột biến nằm ngoài repo (cần gói `ws`; xem "Cách kiểm cho lần sau" trong BI-116).
 
 > **v0.2.79 — Thanh menu gốc gương thanh công cụ + bảng Định dạng hộp chữ đầy đủ + Căn lề / Gạch ngang cho Sửa nội dung** (2026-10-13).
 > Review & kế hoạch: `docs/REVIEW-2026-10-12-menu-bar.md`, `docs/RESEARCH-2026-10-12-text-format-panel.md` (P1–P8 xong hết). Sổ bất biến
