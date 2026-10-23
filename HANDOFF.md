@@ -4,9 +4,9 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-24 · **chưa phát hành, sau v0.2.79:** xoay / lật ảnh chèn (ngay dưới) · v0.2.79 · v0.2.78 là bản trước đó_
+_Cập nhật: 2026-10-24 · v0.2.80 (xoay / lật ảnh chèn, ngay dưới) · v0.2.79 · v0.2.78 là bản trước đó_
 
-> **CHƯA PHÁT HÀNH (commit trên nhánh `claude/vietnamese-ocr-ai-iSvwV`, chưa push, chưa bump version) — Xoay / lật ảnh chèn** (2026-10-23 → 24).
+> **v0.2.80 — Xoay / lật ảnh chèn** (2026-10-24; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
 > Kế hoạch: `docs/PLAN-2026-10-23-image-rotate-flip.md` · sổ bất biến **BI-116** (đọc mục đó trước khi sửa) · **Không đổi `*.py`** ⇒ sidecar KHÔNG
 > cần build lại. 6 commit (kế hoạch + bước 1–5) + 1 commit ghi sổ:
 > 1. hình học thuần ở `annot-geom.js` (`imageCorners`/`imageCm`/`imageBounds`/`imageOp`/`resizeRotated`/`rotateDragAngle`…);
@@ -21,7 +21,8 @@ _Cập nhật: 2026-10-24 · **chưa phát hành, sau v0.2.79:** xoay / lật �
 > Kiểm: JS 55/55 · probe app thật 32/32 (bước 4) + 40/40 pixel (bước 5) + 55/55 end-to-end (bước 6) · đột biến toàn bộ bị bắt.
 > ⚠️ **Còn mở / việc để lại:** chưa test **Acrobat / Foxit** (mới đo bằng pdf.js) · `/Rotate` 180/270 và đường bake **che** chưa chạy e2e (đã có lưới đơn vị) ·
 > stamp ngoài (`_foreign`) không xoay được, chưa có file mẫu · bản Nabu **cũ** mở file có ảnh xoay sẽ mất xoay khi sửa lại · chưa test tay tiếng Anh
-> cho 3 nhãn menu mới · chưa có phím tắt / hít về 0° / đổi `cursor` tay nắm theo góc · **/deploy chưa chạy** (cần bump version + ghi chú phát hành).
+> cho 3 nhãn menu mới · chưa có phím tắt / hít về 0° / đổi `cursor` tay nắm theo góc. **Sidecar KHÔNG build lại** (marker vẫn `0dc20cfb`, đã chạy
+> `check-sidecar-fresh.js`: OK).
 > Script probe/đột biến nằm ngoài repo (cần gói `ws`; xem "Cách kiểm cho lần sau" trong BI-116).
 
 > **v0.2.79 — Thanh menu gốc gương thanh công cụ + bảng Định dạng hộp chữ đầy đủ + Căn lề / Gạch ngang cho Sửa nội dung** (2026-10-13).

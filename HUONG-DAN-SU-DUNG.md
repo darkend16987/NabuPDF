@@ -435,6 +435,15 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - Chỗ xuống dòng trên màn hình **đúng y** chỗ xuống dòng trong file đã lưu. Hộp đang xoay không có tay nắm
 >   (bỏ xoay về 0° để kéo).
 
+> **Từ v0.2.80 — xoay / lật ảnh và chữ ký đã chèn:**
+> - Bấm chọn ảnh → kéo **núm tròn phía trên ảnh** để xoay tự do (giữ **Shift** để nhảy từng 15°, **Esc** để huỷ giữa chừng).
+> - **Chuột phải** lên ảnh → **Xoay trái 90° / Xoay phải 90° / Lật ngang / Lật dọc / Đặt lại xoay / lật**.
+>   Chọn nhiều ảnh (giữ **Ctrl** khi bấm) thì mỗi ảnh xoay hoặc lật **quanh tâm riêng** của nó; một lần **Ctrl+Z** hoàn tác cả nhóm.
+> - Kéo 4 góc để đổi cỡ vẫn dùng được khi ảnh đang xoay. Ảnh xoay/lật được ghi thẳng vào file (không chụp lại thành điểm ảnh),
+>   mở lại file vẫn **sửa tiếp được**; **Áp nhiều trang** và **sao chép / dán** giữ nguyên góc xoay và lật.
+> - Chỉ xoay được ảnh **bạn chèn bằng Nabu**. Ảnh đã nằm sẵn trong nội dung trang PDF gốc, hoặc con dấu do phần mềm khác tạo, thì không xoay được.
+> - Bản Nabu cũ (trước v0.2.80) vẫn **hiển thị** đúng ảnh đã xoay, nhưng nếu sửa lại và Áp dụng ở bản cũ thì góc xoay bị mất.
+
 > **Từ v0.2.79:**
 > - Bảng **Định dạng** thu gọn được (nhớ theo máy); có ô **Bề rộng khung**, **Ký tự đặc biệt** (⌀ ± ° ² × ≤ ≥ …),
 >   **Viền khung** (màu / độ dày / nét đứt), **Sao chép / Dán định dạng** giữa các hộp (`Ctrl+Shift+C` / `Ctrl+Shift+V`),
