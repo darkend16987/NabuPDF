@@ -2001,6 +2001,51 @@
     return true;
   }
 
+  // ---- xoay / lật ảnh (BI-116) -----------------------------------------------
+  //
+  // The right-click menu's commands for pictures. Like Thứ tự chồng they live in the menu,
+  // not in a palette row (BI-41: the edit bar has no spare width); the mouse knob (onDown's
+  // data-rot branch) is the other door and only does free turning.
+  //
+  // Targets are the selected IMAGES, each acted on ITSELF: a turn is about its own centre and
+  // a mirror is of its own box, so a Ctrl+click group never moves as a block here — x/y/w/h
+  // are never touched, which is also why nothing needs clamping afterwards. A partner's stamp
+  // (`_foreign`) is left alone for the reason the knob is (BI-100), and a mixed selection
+  // simply acts on the images in it.
+  function imageTargets() {
+    return selAnnots().filter((a) => a.kind === "image" && !a._foreign);
+  }
+  // What `op` would do to each target; those it would change nothing for are dropped, so an
+  // empty plan means "greyed out" (Đặt lại on an untouched picture) and no empty undo step.
+  function imageOpPlan(op) {
+    const G = window.AnnotGeom;
+    const plan = [];
+    for (const a of imageTargets()) {
+      const next = G.imageOp(a, op);
+      const same = G.normImgRot(a.rot) === next.rot && !!a.flipH === next.flipH && !!a.flipV === next.flipV;
+      if (!same) plan.push({ a, next });
+    }
+    return plan;
+  }
+  function applyImageOp(op) {
+    if (drag) return false; // never mutate the model mid-drag (same rule as edUndo / reorderSelected)
+    const plan = imageOpPlan(op);
+    if (!plan.length) return false;
+    pushEdUndo(); // ONE step for the whole group, before anything changes
+    for (const { a, next } of plan) {
+      // Defaults are stored as ABSENCE, never as rot: 0 / false (BI-59): an image taken back
+      // to its starting pose must serialise and bake byte-identically to one never touched.
+      if (next.rot) a.rot = next.rot;
+      else delete a.rot;
+      if (next.flipH) a.flipH = true;
+      else delete a.flipH;
+      if (next.flipV) a.flipV = true;
+      else delete a.flipV;
+    }
+    syncOverlays();
+    return true;
+  }
+
   // Every annotation element under the pointer on this page, topmost first. Alt+click
   // walks DOWN that stack: from the first Alt+click on nothing-selected it lands on the
   // topmost, and each further one moves to the next object below (wrapping at the
@@ -4207,6 +4252,8 @@
       e.stopImmediatePropagation();
       const n = selIds().length;
       const tr = (vi) => (window.t ? window.t(vi) : vi);
+      const imgN = imageTargets().length;
+      const imgSuffix = imgN > 1 ? ` (${imgN} ảnh)` : "";
       window.Capture.showMenu(e.clientX, e.clientY, [
         {
           label: n > 1 ? tr("Sao chép") + ` (${n} mục)` : tr("Sao chép"),
@@ -4225,6 +4272,18 @@
         { label: tr("Đưa lên một lớp"), enabled: !!zPlan("forward"), onClick: () => reorderSelected("forward") },
         { label: tr("Đưa xuống một lớp"), enabled: !!zPlan("backward"), onClick: () => reorderSelected("backward") },
         { label: tr("Đưa xuống dưới cùng"), enabled: !!zPlan("back"), onClick: () => reorderSelected("back") },
+        // Xoay / lật ảnh (BI-116): only when the selection holds a picture. Each image acts on
+        // itself, so a group says how many it will touch, like Sao chép / Xoá mục do.
+        ...(imgN
+          ? [
+              { separator: true },
+              { label: tr("Xoay trái 90°") + imgSuffix, enabled: true, onClick: () => applyImageOp("rotL") },
+              { label: tr("Xoay phải 90°") + imgSuffix, enabled: true, onClick: () => applyImageOp("rotR") },
+              { label: tr("Lật ngang") + imgSuffix, enabled: true, onClick: () => applyImageOp("flipH") },
+              { label: tr("Lật dọc") + imgSuffix, enabled: true, onClick: () => applyImageOp("flipV") },
+              { label: tr("Đặt lại xoay / lật") + imgSuffix, enabled: imageOpPlan("reset").length > 0, onClick: () => applyImageOp("reset") },
+            ]
+          : []),
         { separator: true },
         {
           label: n > 1 ? tr("Xoá mục") + ` (${n} mục)` : tr("Xoá mục"),

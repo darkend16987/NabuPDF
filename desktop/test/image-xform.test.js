@@ -332,5 +332,118 @@ check("B null", G.imageXformed(null), false);
   check("I css: the plain layer still clips to the sheet", /\.annot-layer \{\n  position: absolute;\n  left: 0; top: 0;\n  pointer-events: none;\n  overflow: hidden;\n\}/.test(css), true);
 }
 
+// ---- J. the right-click commands (BI-116 step 5) --------------------------------
+//
+// applyImageOp / imageOpPlan / imageTargets are LIFTED out of the shipped editor.js and run
+// against fakes (the selection, the undo recorder, the repaint) — so what is measured is the
+// code that ships. The menu wiring itself is source-pinned, and the real menu was clicked in
+// the Electron probe.
+{
+  const fs = require("fs");
+  const path = require("path");
+  const rd = (f) => fs.readFileSync(path.join(__dirname, "..", "renderer", f), "utf8").replace(/\r\n/g, "\n");
+  const editor = rd("editor.js");
+  const i18n = rd("i18n.js");
+  const help = rd("help.js");
+  const html = rd("index.html");
+  const fnText = (name) => {
+    const at = editor.indexOf("function " + name + "(");
+    if (at < 0) throw new Error(name + "() not found in editor.js — renamed?");
+    const open = editor.indexOf("{", at);
+    let depth = 0;
+    for (let i = open; i < editor.length; i++) {
+      if (editor[i] === "{") depth++;
+      else if (editor[i] === "}" && --depth === 0) return editor.slice(at, i + 1);
+    }
+    throw new Error("unbalanced " + name);
+  };
+  const body = ["imageTargets", "imageOpPlan", "applyImageOp"].map(fnText).join("\n");
+  const make = (selected, dragState) => {
+    const calls = { undo: 0, sync: 0 };
+    const api = new Function("drag", "selAnnots", "pushEdUndo", "syncOverlays", "window", body + "\nreturn { applyImageOp, imageOpPlan, imageTargets };")(
+      dragState || null,
+      () => selected,
+      () => { calls.undo++; },
+      () => { calls.sync++; },
+      { AnnotGeom: G });
+    return { api, calls };
+  };
+  const img = (o) => ({ id: 1, kind: "image", x: 40, y: 60, w: 120, h: 90, dataUrl: "d", fmt: "png", ...o });
+  const box = (a) => JSON.stringify([a.x, a.y, a.w, a.h]);
+
+  {
+    const a = img();
+    const { api, calls } = make([a]);
+    check("J rotL on a plain image → rot 90, ONE undo step, ONE repaint", [api.applyImageOp("rotL"), a.rot, calls.undo, calls.sync], [true, 90, 1, 1]);
+    check("J the box (x/y/w/h) is never touched by a turn", box(a), box(img()));
+  }
+  {
+    const a = img();
+    const { api } = make([a]);
+    for (let i = 0; i < 4; i++) api.applyImageOp("rotL");
+    check("J four quarter turns leave NO rot key (absence, not 0)", "rot" in a, false);
+    api.applyImageOp("flipH");
+    api.applyImageOp("flipH");
+    check("J two flips leave NO flipH key", "flipH" in a, false);
+    api.applyImageOp("flipV");
+    check("J flipV sets only flipV", [a.flipV, "flipH" in a, "rot" in a], [true, false, false]);
+  }
+  {
+    const a = img({ rot: 30 });
+    make([a]).api.applyImageOp("flipH");
+    check("J a screen mirror of a 30° image negates the angle too", [a.rot, a.flipH], [-30, true]);
+  }
+  {
+    const a = img({ rot: 30, flipH: true, flipV: true });
+    const { api, calls } = make([a]);
+    check("J reset clears all three keys", [api.applyImageOp("reset"), "rot" in a, "flipH" in a, "flipV" in a, calls.undo], [true, false, false, false, 1]);
+    const p = img();
+    const m2 = make([p]);
+    check("J reset on an untouched image is a no-op: false, NO undo step, NO repaint",
+      [m2.api.applyImageOp("reset"), m2.calls.undo, m2.calls.sync, m2.api.imageOpPlan("reset").length], [false, 0, 0, 0]);
+  }
+  {
+    // A mixed group: each image on its own centre, one undo step for the lot; a box and a
+    // partner's stamp are left alone.
+    const a1 = img({ id: 1, x: 10, y: 10, w: 50, h: 20, rot: 30 });
+    const a2 = img({ id: 2, x: 200, y: 300, w: 80, h: 40, flipH: true });
+    const a3 = img({ id: 3, x: 5, y: 5, w: 10, h: 10 });
+    const bx = { id: 4, kind: "box", x: 1, y: 2, w: 3, h: 4 };
+    const fo = img({ id: 5, _foreign: { keep: {} } });
+    const { api, calls } = make([a1, a2, a3, bx, fo]);
+    check("J the group's targets are the three Nabu images only", api.imageTargets().map((a) => a.id), [1, 2, 3]);
+    api.applyImageOp("rotL");
+    check("J each image turned by its own quarter step", [a1.rot, a2.rot, a3.rot], [120, 90, 90]);
+    check("J ONE undo step for the whole group", calls.undo, 1);
+    check("J no image moved or resized", [box(a1), box(a2), box(a3)], [box(img({ x: 10, y: 10, w: 50, h: 20 })), box(img({ x: 200, y: 300, w: 80, h: 40 })), box(img({ x: 5, y: 5, w: 10, h: 10 }))]);
+    check("J the box and the partner's stamp were not touched", [bx.rot, bx.flipH, fo.rot, fo.flipH], [undefined, undefined, undefined, undefined]);
+    check("J a2 kept its own flip", a2.flipH, true);
+  }
+  {
+    const a = img();
+    const { api, calls } = make([a], { type: "move" });
+    check("J nothing mutates mid-drag", [api.applyImageOp("rotL"), "rot" in a, calls.undo], [false, false, 0]);
+    const { api: api2, calls: c2 } = make([{ id: 9, kind: "box", x: 0, y: 0, w: 1, h: 1 }]);
+    check("J a selection with no image does nothing (no undo step)", [api2.applyImageOp("rotL"), c2.undo], [false, 0]);
+  }
+
+  // menu wiring + translations + help + BI-41
+  const entries = [
+    ["Xoay trái 90°", "rotL"], ["Xoay phải 90°", "rotR"], ["Lật ngang", "flipH"], ["Lật dọc", "flipV"], ["Đặt lại xoay / lật", "reset"],
+  ];
+  for (const [label, op] of entries) {
+    check(`J menu entry "${label}" runs op "${op}"`, editor.includes(`tr("${label}") + imgSuffix`) && editor.includes(`onClick: () => applyImageOp("${op}")`), true);
+    check(`J i18n has "${label}"`, i18n.includes(`"${label}":`), true);
+  }
+  check("J the image group is shown only when the selection holds a picture", /\.\.\.\(imgN\n\s+\? \[\n\s+\{ separator: true \},/.test(editor), true);
+  check("J reset is greyed when it would change nothing", /enabled: imageOpPlan\("reset"\)\.length > 0/.test(editor), true);
+  check("J a group says how many images it will touch", /const imgSuffix = imgN > 1 \? ` \(\$\{imgN\} ảnh\)` : "";/.test(editor), true);
+  check("J the commands act on selAnnots filtered to Nabu images (never a partner's stamp)", /selAnnots\(\)\.filter\(\(a\) => a\.kind === "image" && !a\._foreign\)/.test(editor), true);
+  check("J applyImageOp records undo BEFORE it mutates", fnText("applyImageOp").indexOf("pushEdUndo()") > -1 && fnText("applyImageOp").indexOf("pushEdUndo()") < fnText("applyImageOp").indexOf("a.rot = next.rot"), true);
+  check("J no palette row was added for turning (BI-41)", /data-ctl="(imgrot|imgxf|rotate-image|imgturn)"/.test(html), false);
+  check("J help documents the knob, Shift, the menu, and the limit on page images",
+    help.includes("núm tròn") && help.includes("15°") && help.includes("Lật ngang / dọc") && help.includes("knob") && help.includes("Flip horizontally") && help.includes("cannot be turned"), true);
+}
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
