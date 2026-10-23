@@ -571,18 +571,36 @@
         srcRef = ctx.register(PDFRawStream.of(ctx.obj({ NabuFmt: fmt }), bytes));
         if (share) share.set(a.dataUrl, { imgRef: imgRef, srcRef: srcRef });
       }
-      const [bx, by] = map(a.x, a.y + a.h); // lower-left, the same anchor the flattened path uses
+      // An untouched picture keeps EXACTLY the old numbers (BI-59). A turned / mirrored one
+      // (BI-116) gets a form as big as the box its turned shape occupies and a `cm` built from
+      // the three mapped corners (annot-geom.js imageCm) — the picture is drawn with the file's
+      // own pixels, nothing is re-rasterised, and the form's /BBox bounds the turned corners so
+      // none of them is clipped. `bw × bh` and the anchor are what /Rect, /BBox and the anchor
+      // below read, so the unturned case is the old code line for line.
+      const turned = window.AnnotGeom.imageXformed(a);
+      const tb = turned ? window.AnnotGeom.imageBounds(a) : null;
+      const bw = turned ? tb.w : a.w;
+      const bh = turned ? tb.h : a.h;
+      const [bx, by] = turned
+        ? map(tb.x, tb.y + tb.h)
+        : map(a.x, a.y + a.h); // lower-left, the same anchor the flattened path uses
       const ap = {
         Type: "XObject", Subtype: "Form", FormType: 1,
-        BBox: [0, 0, a.w, a.h],
+        BBox: [0, 0, bw, bh],
         Resources: { XObject: { NabuImg: imgRef } },
       };
       // No /Matrix at all on an unrotated page: identical bytes to before BI-59.
       if (normAngle(angle)) ap.Matrix = apMatrixFor(angle);
-      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(`q ${f(a.w)} 0 0 ${f(a.h)} 0 0 cm /NabuImg Do Q`));
+      let apOps = `q ${f(a.w)} 0 0 ${f(a.h)} 0 0 cm /NabuImg Do Q`;
+      if (turned) {
+        // Local form space: origin at the turned box's lower-left, y UP.
+        const m = window.AnnotGeom.imageCm(a, (x, y) => [x - tb.x, tb.y + tb.h - y]);
+        apOps = `q ${m.map((v) => String(+v.toFixed(4))).join(" ")} cm /NabuImg Do Q`;
+      }
+      const apStream = PDFRawStream.of(ctx.obj(ap), strToBytes(apOps));
       const annot = ctx.obj({
         Type: "Annot", Subtype: "Stamp", F: 4,
-        Rect: apRectFor(angle, a.w, a.h, bx, by),
+        Rect: apRectFor(angle, bw, bh, bx, by),
         AP: { N: ctx.register(apStream) },
       });
       annot.set(NABU_KIND, PDFName.of("image"));
@@ -1373,8 +1391,20 @@
         // sniff for any older in-memory annotation that predates this field.
         const fmt = a.fmt || sniffImage(bytes);
         const img = fmt === "png" ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
-        const [bx, by] = map(a.x, a.y + a.h);
-        page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h, rotate: pageRotate(page) });
+        if (window.AnnotGeom.imageXformed(a)) {
+          // Turned / mirrored (BI-116). pdf-lib's drawImage can turn about its anchor but cannot
+          // mirror, so the same three-corner matrix the /AP uses is written by hand. Corners are
+          // mapped one by one through `map`, which already carries the page's /Rotate — so NO
+          // `rotate: pageRotate(page)` here (BI-45 loop 1). Untouched images take the else arm,
+          // unchanged.
+          const m = window.AnnotGeom.imageCm(a, map).map((v) => +v.toFixed(4));
+          const key = page.node.newXObject("Image", img.ref);
+          page.pushOperators(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]),
+            PDFLib.drawObject(key), PDFLib.popGraphicsState());
+        } else {
+          const [bx, by] = map(a.x, a.y + a.h);
+          page.drawImage(img, { x: bx, y: by, width: a.w, height: a.h, rotate: pageRotate(page) });
+        }
       }
   }
 

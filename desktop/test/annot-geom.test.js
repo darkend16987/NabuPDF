@@ -445,7 +445,7 @@ check("node import exposes exactly the surface editor.js calls by bare name",
    // cosSinDeg / image* / normImgRot / resizeRotated / rotateDragAngle (xoay-lật ảnh, BI-116) — the overlay, the
    // bake and the rotate grip read them by bare name; their own grid is test:imgxf.
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "cosSinDeg", "countDistinct", "dashSegments", "dashSpec", "fitShift", "imageBounds", "imageCorners", "imageOp",
+   "cosSinDeg", "countDistinct", "dashSegments", "dashSpec", "fitShift", "imageBounds", "imageCm", "imageCorners", "imageOp",
    "imageXformed", "isPtsKind", "isQuadKind", "normDash", "normImgRot", "normLabelSize",
    "polyPath", "quadsFromRects", "reorderZ", "resizeRect", "resizeRotated", "rotateDragAngle", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);

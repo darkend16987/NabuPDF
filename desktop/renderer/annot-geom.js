@@ -530,6 +530,21 @@ function imageCorners(a) {
   };
 }
 
+// The PDF `cm` that draws the picture at imageCorners(a), as [a b c d e f] with
+// (u, v) → (a·u + c·v + e, b·u + d·v + f) for the image's own unit square (PDF image space:
+// u right, v UP, so (0,0) is the file's bottom-left pixel). `mapPt(x, y)` takes a display-
+// space point to the target space (y UP there) — the page's pdf.js mapping for the flattened
+// writer, a local "bbox lower-left" mapping for an /AP form. THREE corners are mapped, each by
+// itself, so a /Rotate page needs no compensation (BI-45 loop 1); and with no turn and no
+// flip it comes out as [w 0 0 h x y] — the matrix the old writers emit.
+function imageCm(a, mapPt) {
+  const k = imageCorners(a);
+  const bl = mapPt(k.bl.x, k.bl.y);
+  const br = mapPt(k.br.x, k.br.y);
+  const tl = mapPt(k.tl.x, k.tl.y);
+  return [br[0] - bl[0], br[1] - bl[1], tl[0] - bl[0], tl[1] - bl[1], bl[0], bl[1]];
+}
+
 // The axis-aligned box the TURNED image occupies. A flip alone never changes it. At rot 0
 // it is the annot's own box, returned as the very same numbers (no float round trip).
 function imageBounds(a) {
@@ -980,7 +995,7 @@ if (typeof module !== "undefined" && module.exports) {
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
-    normImgRot, cosSinDeg, imageXformed, imageCorners, imageBounds, imageOp, resizeRotated, rotateDragAngle,
+    normImgRot, cosSinDeg, imageXformed, imageCorners, imageCm, imageBounds, imageOp, resizeRotated, rotateDragAngle,
   };
 }
 if (typeof window !== "undefined") {
@@ -993,6 +1008,6 @@ if (typeof window !== "undefined") {
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
-    normImgRot, cosSinDeg, imageXformed, imageCorners, imageBounds, imageOp, resizeRotated, rotateDragAngle,
+    normImgRot, cosSinDeg, imageXformed, imageCorners, imageCm, imageBounds, imageOp, resizeRotated, rotateDragAngle,
   };
 }

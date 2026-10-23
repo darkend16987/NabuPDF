@@ -125,6 +125,10 @@ const { normTextStyle } = require("../renderer/annot-text.js");
 // eslint-disable-next-line no-unused-vars
 const { b64ToU8 } = require("../renderer/wire.js");
 const SYMBOL_KINDS = new Set(["check", "cross"]);
+// The lifted drawOneAnnot / addManagedAnnot reach annot-geom's image maths through
+// window.AnnotGeom (BI-14: no new bare name) — the browser's `window`, here a one-key stand-in.
+// eslint-disable-next-line no-unused-vars
+const window = { AnnotGeom: require("../renderer/annot-geom.js") };
 // The two CANVAS rasterisers stay stubbed to throw: this grid drives no text box and no
 // labelled arrow, and throwing beats returning junk — if a future edit routes such a
 // kind through here, the case fails loudly instead of quietly measuring nothing.
@@ -544,6 +548,163 @@ const VECTOR_SHAPES = [
     check("apRotatable / normAngle normalise the way the writer assumes",
       [apRotatable(-90), apRotatable(450), apRotatable(45), normAngle(-90), normAngle(360)],
       [true, true, false, 270, 0]);
+  }
+
+  // ---- 5b. a TURNED / MIRRORED image lands where the user turned it (BI-116) -------
+  //
+  // Why this is not a KINDS entry: KINDS is read through `inkUserPoints`, which sees PATH
+  // operators, and an image emits none (`q cm /Img Do Q`). Same invariant, the `Do` reader.
+  //
+  // What is measured: the picture's own unit square (BL, BR, TR, TL — in THAT order) pushed
+  // through the CTM / appearance, back into display space, against annot-geom's
+  // imageCorners — the SAME function the overlay's transform is derived from. ORDER matters
+  // and is the point: a mirrored image occupies the same SET of four corners as an upright
+  // one, so the sorted-set comparison section 5 uses cannot see a flip at all (the guard
+  // below pins exactly that). Both writers are driven: the flatten path (pushOperators) and
+  // the re-editable /AP, at all four /Rotate angles, plus the rasterised-redaction mapping.
+  {
+    const PNGB = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxIAE0DkAAKUcA/wgQ8p3AAAAAElFTkSuQmCC",
+      "base64");
+    const baseA = { id: 1, kind: "image", x: 40, y: 60, w: 120, h: 90,
+                    dataUrl: "data:image/png;base64," + PNGB.toString("base64"), fmt: "png" };
+    const VARIANTS = [
+      ["rot 30", { rot: 30 }], ["rot 90", { rot: 90 }], ["rot -90", { rot: -90 }], ["rot 180", { rot: 180 }],
+      ["flipH", { flipH: true }], ["flipV", { flipV: true }], ["flipH+flipV", { flipH: true, flipV: true }],
+      ["rot -45 + flipV", { rot: -45, flipV: true }], ["rot 137 + flipH", { rot: 137, flipH: true }],
+    ];
+    // Walk operator tokens the way a consumer does and return the unit square's corners in
+    // the CTM live at the `Do` — [BL, BR, TR, TL].
+    function doCorners(tokens) {
+      let ctm = [1, 0, 0, 1, 0, 0];
+      const stack = [];
+      let ops = [];
+      for (const tk of tokens) {
+        if (tk === "q") stack.push(ctm.slice());
+        else if (tk === "Q") ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+        else if (tk === "cm") { ctm = mul(ops.slice(-6).map(Number), ctm); ops = []; }
+        else if (tk === "Do") return [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, v]) => apply(ctm, u, v));
+        else ops.push(tk);
+      }
+      return null;
+    }
+    const tok = (lines) => lines.join(" ").trim().split(/\s+/);
+    const toDisp = (pts, vp1) => pts.map(([x, y]) => vp1.convertToViewportPoint(x, y));
+    const want = (a) => {
+      const k = window.AnnotGeom.imageCorners(a);
+      return [k.bl, k.br, k.tr, k.tl].map((p) => [p.x, p.y]);
+    };
+    const sameQuad = (name, got, exp, eps) => {
+      const tol = eps || 0.02;
+      const ok = !!got && got.length === exp.length &&
+        got.every((p, i) => Math.abs(p[0] - exp[i][0]) <= tol && Math.abs(p[1] - exp[i][1]) <= tol);
+      if (ok) pass++;
+      else {
+        fail++;
+        console.error(`FAIL ${name}\n  expected ${JSON.stringify(exp.map((p) => p.map((n) => +n.toFixed(3))))}\n  actual   ${JSON.stringify(got && got.map((p) => p.map((n) => +n.toFixed(3))))}`);
+      }
+    };
+    const flatCorners = async (a, rot, mode) => {
+      const { doc, page, vp1 } = await makePage(rot);
+      await drawOneAnnot(doc, page, a, makeMap(vp1, mode || "orig"));
+      const ops = page.contentStream.operators.map(String);
+      return { q: doCorners(tok(ops)), vp1, ops };
+    };
+    const apCorners = async (a, rot) => {
+      const { doc, page, vp1 } = await makePage(rot);
+      const wrote = await addManagedAnnot(doc, page, a, makeMap(vp1, "orig"), new Map());
+      if (!wrote) return { wrote };
+      const dict = doc.context.lookup(page.node.Annots().get(0));
+      const rect = dict.get(PDFName.of("Rect")).asArray().map((n) => n.asNumber());
+      const form = doc.context.lookup(doc.context.lookup(dict.get(PDFName.of("AP"))).get(PDFName.of("N")));
+      const fd = form.dict || form;
+      const mObj = fd.get(PDFName.of("Matrix"));
+      const m = mObj ? mObj.asArray().map((n) => n.asNumber()) : [1, 0, 0, 1, 0, 0];
+      const bb = fd.get(PDFName.of("BBox")).asArray().map((n) => n.asNumber());
+      const local = doCorners(tok(Buffer.from(form.contents).toString("latin1").split(/\r?\n/)));
+      const { A, scale } = apUserQuad(rect, m, bb[2] - bb[0], bb[3] - bb[1]);
+      return { wrote, vp1, scale, hasMatrix: !!mObj, bb, local,
+               user: local.map(([x, y]) => apply(A, ...apply(m, x, y))),
+               parsed: JSON.parse(dict.get(NABU_DATA).decodeText()) };
+    };
+
+    for (const [vname, over] of VARIANTS) {
+      const a = { ...baseA, ...over };
+      const exp = want(a);
+      for (const rot of [0, 90, 180, 270]) {
+        const tag = `turned image [${vname}] /Rotate ${rot}`;
+        const fl = await flatCorners(a, rot);
+        sameQuad(`${tag}: flatten lands on imageCorners`, fl.q && toDisp(fl.q, fl.vp1), exp);
+        const ap = await apCorners(a, rot);
+        check(`${tag}: written as a real annotation`, ap.wrote, true);
+        sameQuad(`${tag}: /AP lands on imageCorners`, toDisp(ap.user, ap.vp1), exp);
+        check(`${tag}: /AP has no scaling (no stretch)`, ap.scale, [1, 1]);
+        check(`${tag}: /Matrix only when the page is rotated`, ap.hasMatrix, rot !== 0);
+        // The form's /BBox clips what it draws: every corner of the turned picture must sit
+        // inside it, or a vertex of the image is cut off in the viewer.
+        check(`${tag}: no corner is clipped by /BBox`,
+          ap.local.every(([x, y]) => x >= ap.bb[0] - 1e-3 && x <= ap.bb[2] + 1e-3 && y >= ap.bb[1] - 1e-3 && y <= ap.bb[3] + 1e-3), true);
+        check(`${tag}: /NabuData carries the turn`,
+          [ap.parsed.rot || 0, !!ap.parsed.flipH, !!ap.parsed.flipV], [over.rot || 0, !!over.flipH, !!over.flipV]);
+      }
+      // The rasterised-redaction mapping: no pdf.js viewport, page unrotated, y flipped.
+      {
+        const { doc, page } = await makePage(0);
+        await drawOneAnnot(doc, page, a, makeMap({ width: PAGE_W, height: PAGE_H }, "image"));
+        const q = doCorners(tok(page.contentStream.operators.map(String)));
+        sameQuad(`turned image [${vname}]: redaction-mode flatten lands on imageCorners`,
+          q.map(([x, y]) => [x, PAGE_H - y]), exp);
+      }
+    }
+
+    // Absolute anchors, so "all variants agree with imageCorners" can't be vacuous.
+    {
+      const r90 = await flatCorners({ ...baseA, rot: 90 }, 0);
+      // 120×90 box at (40,60), centre (100,105), turned 90° anti-clockwise: it now spans
+      // x ∈ [55,145], y ∈ [45,165]; the file's top-left pixel is at the BOTTOM-left.
+      sameQuad("rot 90: the file's top-left pixel ends up at the bottom-left of the turned box",
+        [toDisp(r90.q, r90.vp1)[3]], [[55, 165]]);
+      const fh = await flatCorners({ ...baseA, flipH: true }, 0);
+      sameQuad("flipH: the file's top-left pixel ends up at the top-RIGHT of the box",
+        [toDisp(fh.q, fh.vp1)[3]], [[160, 60]]);
+    }
+
+    // ---- GUARDS: this grid can still fail ------------------------------------
+    {
+      const plain = want(baseA);
+      const flipped = want({ ...baseA, flipH: true });
+      const setOf = (q) => JSON.stringify(q.map((p) => p.map((n) => +n.toFixed(3))).sort((p, q2) => p[0] - q2[0] || p[1] - q2[1]));
+      check("guard: a mirror keeps the SAME four corners (a sorted-set comparison is blind to it)",
+        setOf(plain), setOf(flipped));
+      check("guard: …but the ORDERED quad differs, which is what this section compares",
+        JSON.stringify(plain) !== JSON.stringify(flipped), true);
+      // The pre-BI-116 writer (ignores rot / flips) must DISAGREE with a turned variant.
+      const ignoring = await flatCorners(baseA, 0);
+      const turnedExp = want({ ...baseA, rot: 30, flipV: true });
+      const bad = ignoring.q && toDisp(ignoring.q, ignoring.vp1);
+      check("guard: drawing a turned image as if upright is wrong (section is sensitive)",
+        !!bad && bad.some((p, i) => Math.abs(p[0] - turnedExp[i][0]) > 1 || Math.abs(p[1] - turnedExp[i][1]) > 1), true);
+    }
+
+    // Untouched images stay on the OLD operators: pdf-lib's own drawImage (translate · rotate ·
+    // scale · identity = four `cm`, measured), with the page rotation passed through. A turned
+    // image is ONE hand-written `cm`. (The byte-for-byte proof against the old writer is the
+    // sha256 harness in the commit message; this pins which arm each case takes.)
+    {
+      const { ops } = await flatCorners(baseA, 90);
+      const cms = (l) => l.filter((s) => /\bcm$/.test(s.trim())).length;
+      check("untouched image: flatten is pdf-lib's drawImage (4 cm operators)", cms(ops), 4);
+      check("turned image: flatten is one hand-written cm", cms((await flatCorners({ ...baseA, rot: 30 }, 90)).ops), 1);
+      const off = await flatCorners({ ...baseA, rot: 0, flipH: false, flipV: false }, 90);
+      check("explicitly-off flags take the same old path", off.ops, ops);
+    }
+    // A page that is not a quarter turn cannot take a rotated appearance: still flattens.
+    {
+      const odd = await makePage(0);
+      odd.page.node.set(PDFName.of("Rotate"), PDFLib.PDFNumber.of(45));
+      check("a turned image on an out-of-spec /Rotate 45 falls back to flatten",
+        await addManagedAnnot(odd.doc, odd.page, { ...baseA, rot: 30 }, makeMap(odd.vp1, "orig"), new Map()), false);
+    }
   }
 
   // ---- 6. box / ellipse: a VECTOR /AP lands on the flattened path (v0.2.61) -----

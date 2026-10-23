@@ -219,6 +219,38 @@ check("B null", G.imageXformed(null), false);
   check("F folded", wrap > -180 && wrap <= 180, true);
 }
 
+// ---- H. imageCm: the matrix both writers share -------------------------------
+
+{
+  const a = { x: 40, y: 60, w: 120, h: 90 };
+  const pdfY = (x, y) => [x, 842 - y]; // a page-height flip, like makeMap(vp1, "image")
+  // Untouched: the matrix the old writers emit, [w 0 0 h x y_lowerleft].
+  check("H untouched = [w 0 0 h x y]", G.imageCm(a, pdfY).map((v) => +v.toFixed(9)), [120, 0, 0, 90, 40, 842 - 150]);
+  // The unit square through the matrix lands on imageCorners (BL, BR, TR, TL).
+  for (const over of [{}, { rot: 30 }, { rot: -135, flipH: true }, { flipV: true }, { rot: 90, flipH: true, flipV: true }]) {
+    const t = { ...a, ...over };
+    const m = G.imageCm(t, pdfY);
+    const k = G.imageCorners(t);
+    const apply = ([u, v]) => [m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]];
+    const exp = [k.bl, k.br, k.tr, k.tl].map((p) => pdfY(p.x, p.y));
+    [[0, 0], [1, 0], [1, 1], [0, 1]].forEach((uv, i) => {
+      const got = apply(uv);
+      near(`H ${JSON.stringify(over)} corner ${i} x`, got[0], exp[i][0], 1e-9);
+      near(`H ${JSON.stringify(over)} corner ${i} y`, got[1], exp[i][1], 1e-9);
+    });
+  }
+  // A flip is a NEGATIVE determinant in the matrix, a turn alone is positive (in y-up space).
+  const det = (m) => m[0] * m[3] - m[1] * m[2];
+  check("H det > 0 for a plain turn", det(G.imageCm({ ...a, rot: 40 }, pdfY)) > 0, true);
+  check("H det > 0 for no change", det(G.imageCm(a, pdfY)) > 0, true);
+  // In y-up space a display-space (y-down) mapping already mirrors, so the sign convention
+  // to pin is "flip toggles the sign relative to the unflipped matrix":
+  check("H a flip reverses the determinant's sign",
+    Math.sign(det(G.imageCm({ ...a, rot: 40, flipH: true }, pdfY))) === -Math.sign(det(G.imageCm({ ...a, rot: 40 }, pdfY))), true);
+  check("H two flips restore it",
+    Math.sign(det(G.imageCm({ ...a, flipH: true, flipV: true }, pdfY))), Math.sign(det(G.imageCm(a, pdfY))));
+}
+
 // ---- G. annotBounds / translate / union -------------------------------------
 
 {
