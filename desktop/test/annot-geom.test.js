@@ -442,9 +442,12 @@ check("node import exposes exactly the surface editor.js calls by bare name",
    "LABEL_SIZE_DEFAULT", "LABEL_SIZE_MAX", "LABEL_SIZE_MIN",
    "PTS_KINDS", "QUAD_GAP", "QUAD_KINDS", "QUAD_MIN",
    "STROKE_MAX_PTS", "STROKE_TOL", "SYMBOL_SIZE", "TEXTHL_OPACITY",
+   // cosSinDeg / image* / normImgRot / resizeRotated / rotateDragAngle (xoay-lật ảnh, BI-116) — the overlay, the
+   // bake and the rotate grip read them by bare name; their own grid is test:imgxf.
    "annotBounds", "arcApex", "arrowLabelPos", "bumpOf", "cloudPath", "cloudPathPoly",
-   "countDistinct", "dashSegments", "dashSpec", "fitShift", "isPtsKind", "isQuadKind", "normDash", "normLabelSize",
-   "polyPath", "quadsFromRects", "reorderZ", "resizeRect", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
+   "cosSinDeg", "countDistinct", "dashSegments", "dashSpec", "fitShift", "imageBounds", "imageCorners", "imageOp",
+   "imageXformed", "isPtsKind", "isQuadKind", "normDash", "normImgRot", "normLabelSize",
+   "polyPath", "quadsFromRects", "reorderZ", "resizeRect", "resizeRotated", "rotateDragAngle", "scalePts", "simplifyStroke", "snapLineEnd", "strokeExtend",
    "strokePath", "symbolStrokes", "translateAnnot", "unionBounds"]);
 // The two KIND sets are the exception to "SHOUTY name ⇒ number": they are Sets, and
 // spelling that out here is cheaper than a second rule nobody would remember.

@@ -361,6 +361,7 @@ function annotBounds(a) {
     return { x: (a.x || 0) - pad, y: (a.y || 0) - pad,
              w: (a.w || 0) + 2 * pad, h: (a.h || 0) + 2 * pad };
   }
+  if (a.kind === "image") return imageBounds(a); // the TURNED box — see "image rotation / flip" below
   return { x: a.x || 0, y: a.y || 0, w: a.w || 0, h: a.h || 0 };
 }
 
@@ -463,6 +464,139 @@ function resizeRect(dir, orig, dx, dy, ratio, min) {
     w: w,
     h: h,
   };
+}
+
+// ---- image rotation / flip (BI-116) ---------------------------------------
+//
+// An image annot may carry `rot` (degrees, ANTI-clockwise on screen — the sign the text box
+// and the watermark already use, annot-text.js normRot), `flipH` and `flipV`. All three are
+// ABSENT on an untouched image, and `x/y/w/h` stay the box of the UNTURNED image (the text
+// box's rule: re-measuring from the turned box would grow it on every turn). The turn is
+// about the box CENTRE, and the order is the one PowerPoint uses: flip inside the image's
+// own frame, THEN rotate.
+//
+// Everything below is pure so that overlay, bake and resize can share ONE definition of
+// "where does the picture sit" (BI-40) and so node can test it without a canvas.
+
+// Same fold as annot-text.js normRot — (-180, 180], no -0. Own copy because this file
+// loads without annot-text.js (the grid in test/image-xform.test.js pins the two together).
+function normImgRot(v) {
+  let d = +v;
+  if (!isFinite(d)) return 0;
+  d = ((d % 360) + 360) % 360;
+  if (d > 180) d -= 360;
+  return d === 0 ? 0 : d;
+}
+
+// cos/sin of a degree angle, EXACT at multiples of 90 — Math.cos(Math.PI / 2) is 6e-17, and
+// that dust would reach the PDF as "0.0000000000000001" in a quarter-turned image.
+function cosSinDeg(deg) {
+  const d = normImgRot(deg);
+  if (d === 0) return { c: 1, s: 0 };
+  if (d === 90) return { c: 0, s: 1 };
+  if (d === 180) return { c: -1, s: 0 };
+  if (d === -90) return { c: 0, s: -1 };
+  const r = (d * Math.PI) / 180;
+  return { c: Math.cos(r), s: Math.sin(r) };
+}
+
+// True when the image is turned or mirrored at all — the gate every writer uses to stay on
+// the OLD, byte-identical path for an untouched picture (BI-59).
+function imageXformed(a) {
+  return !!(a && (normImgRot(a.rot) !== 0 || a.flipH || a.flipV));
+}
+
+// Where the picture's own four corners (TL = the first pixel of the file, as stored) land in
+// the annot's display space after flip + turn. Returns { tl, tr, bl, br }, each { x, y }.
+// The bake maps THREE of these independently to PDF space and builds the image matrix from
+// them (BI-45 loop 1: points mapped one by one are right on a /Rotate page for free).
+function imageCorners(a) {
+  const w = a.w || 0;
+  const h = a.h || 0;
+  const cx = (a.x || 0) + w / 2;
+  const cy = (a.y || 0) + h / 2;
+  const { c, s } = cosSinDeg(a.rot);
+  const fx = a.flipH ? -1 : 1;
+  const fy = a.flipV ? -1 : 1;
+  // y points DOWN, so an anti-clockwise turn by θ is (x cosθ + y sinθ, −x sinθ + y cosθ).
+  const at = (ux, uy) => {
+    const px = ux * fx;
+    const py = uy * fy;
+    return { x: cx + px * c + py * s, y: cy - px * s + py * c };
+  };
+  return {
+    tl: at(-w / 2, -h / 2), tr: at(w / 2, -h / 2),
+    bl: at(-w / 2, h / 2), br: at(w / 2, h / 2),
+  };
+}
+
+// The axis-aligned box the TURNED image occupies. A flip alone never changes it. At rot 0
+// it is the annot's own box, returned as the very same numbers (no float round trip).
+function imageBounds(a) {
+  const w = a.w || 0;
+  const h = a.h || 0;
+  if (!normImgRot(a.rot)) return { x: a.x || 0, y: a.y || 0, w, h };
+  const k = imageCorners(a);
+  const xs = [k.tl.x, k.tr.x, k.bl.x, k.br.x];
+  const ys = [k.tl.y, k.tr.y, k.bl.y, k.br.y];
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
+// What a menu command does to { rot, flipH, flipV }. `op`: "rotL" | "rotR" (a quarter turn,
+// left = anti-clockwise) | "flipH" | "flipV" (MIRROR ON SCREEN) | "reset". Returns the new
+// triple with flags as real booleans and rot normalised; the caller deletes default values.
+//
+// A screen mirror of an already-turned picture is NOT "toggle the flag": F·R(θ) = R(−θ)·F,
+// so the angle negates as well — otherwise a picture turned 30° would mirror about its OWN
+// axis and swing the wrong way, which is the one thing a "Lật ngang" must never do.
+function imageOp(a, op) {
+  const rot = normImgRot(a && a.rot);
+  const fh = !!(a && a.flipH);
+  const fv = !!(a && a.flipV);
+  if (op === "rotL") return { rot: normImgRot(rot + 90), flipH: fh, flipV: fv };
+  if (op === "rotR") return { rot: normImgRot(rot - 90), flipH: fh, flipV: fv };
+  if (op === "flipH") return { rot: normImgRot(-rot), flipH: !fh, flipV: fv };
+  if (op === "flipV") return { rot: normImgRot(-rot), flipH: fh, flipV: !fv };
+  return { rot: 0, flipH: false, flipV: false }; // "reset"
+}
+
+// Corner-grip resize of a TURNED box. The grips are children of the turned element, so the
+// user's drag (dx, dy in PAGE space) has to be brought back into the box's own frame first;
+// resizeRect then does the sizing exactly as for an upright box, and the corner OPPOSITE the
+// held one is re-pinned in PAGE space by moving the centre. At rot 0 this is resizeRect,
+// number for number (the grid pins that).
+//   orig  { x, y, w, h } of the UNTURNED box at drag start; rotDeg its turn.
+function resizeRotated(dir, orig, dx, dy, ratio, min, rotDeg) {
+  const { c, s } = cosSinDeg(rotDeg);
+  // R(−θ) applied to the drag vector.
+  const lx = dx * c - dy * s;
+  const ly = dx * s + dy * c;
+  const g = resizeRect(dir, orig, lx, ly, ratio, min);
+  const west = dir.indexOf("w") >= 0;
+  const north = dir.indexOf("n") >= 0;
+  // Offset of the pinned (opposite) corner from the box centre, in the box's own frame.
+  const o0 = { x: west ? orig.w / 2 : -orig.w / 2, y: north ? orig.h / 2 : -orig.h / 2 };
+  const o1 = { x: west ? g.w / 2 : -g.w / 2, y: north ? g.h / 2 : -g.h / 2 };
+  const turn = (p) => ({ x: p.x * c + p.y * s, y: -p.x * s + p.y * c });
+  const t0 = turn(o0);
+  const t1 = turn(o1);
+  const cx = orig.x + orig.w / 2 + t0.x - t1.x;
+  const cy = orig.y + orig.h / 2 + t0.y - t1.y;
+  return { x: cx - g.w / 2, y: cy - g.h / 2, w: g.w, h: g.h };
+}
+
+// The turn a rotate-grip drag asks for. `c` = box centre, `from` = where the pointer went
+// down, `to` = where it is now (all page space), `rot0` = the turn when the drag started.
+// RELATIVE to the grab point so the picture does not jump to the pointer's angle on press.
+// `snap` (Shift) rounds the RESULT to ANGLE_SNAP_DEG, so 0° / 90° are always reachable.
+function rotateDragAngle(c, from, to, rot0, snap) {
+  // Anti-clockwise degrees of the pointer about the centre, y down: straight up = 0.
+  const ang = (p) => (Math.atan2(c.x - p.x, c.y - p.y) * 180) / Math.PI;
+  let r = normImgRot((+rot0 || 0) + ang(to) - ang(from));
+  if (snap) r = normImgRot(Math.round(r / ANGLE_SNAP_DEG) * ANGLE_SNAP_DEG);
+  return r;
 }
 
 // Stretch a POINT LIST so that its bounding box becomes `box` — the resize gesture for
@@ -846,6 +980,7 @@ if (typeof module !== "undefined" && module.exports) {
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
+    normImgRot, cosSinDeg, imageXformed, imageCorners, imageBounds, imageOp, resizeRotated, rotateDragAngle,
   };
 }
 if (typeof window !== "undefined") {
@@ -858,5 +993,6 @@ if (typeof window !== "undefined") {
     fitShift, polyPath, quadsFromRects, resizeRect, scalePts, simplifyStroke,
     snapLineEnd, strokeExtend, strokePath, symbolStrokes,
     translateAnnot, unionBounds,
+    normImgRot, cosSinDeg, imageXformed, imageCorners, imageBounds, imageOp, resizeRotated, rotateDragAngle,
   };
 }
