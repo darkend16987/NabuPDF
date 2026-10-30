@@ -4,7 +4,21 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-24 · v0.2.80 (xoay / lật ảnh chèn, ngay dưới) · v0.2.79 · v0.2.78 là bản trước đó_
+_Cập nhật: 2026-10-30 · v0.2.81 (núm xoay hộp chữ + sửa nhiều hộp chữ, ngay dưới) · v0.2.80 · v0.2.79 là bản trước đó_
+
+> **v0.2.81 — Núm xoay hộp chữ + sửa style nhiều hộp chữ cùng lúc** (2026-10-30; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
+> Kế hoạch: `docs/PLAN-2026-10-30-text-rotate-multiedit.md` · sổ bất biến **BI-117** (núm xoay) + **BI-118** (nhiều hộp) — đọc trước khi sửa ·
+> **Không đổi `*.py`** ⇒ sidecar KHÔNG build lại (marker `0dc20cfb`, `check-sidecar-fresh.js`: OK). 2 commit tính năng:
+> 1. **Đợt A (BI-117)** — núm tròn trên đầu MỘT hộp chữ: kéo = xoay tự do (Shift 15°, Esc huỷ), ô Xoay chạy theo. Tâm xoay = **tâm raster**
+>    (`textRotateCenter`, BI-110), không phải tâm hộp (dùng tâm hộp ⇒ góc kéo lệch 3–6°). Không đổi mô hình lưu / bake / codec; không cho `_foreign`.
+> 2. **Đợt B+C (BI-118)** — Ctrl+click chọn nhiều hộp (đã có) rồi cỡ chữ, font, B/I/U, Xoay / +90°, cả bảng Định dạng, Viền, Xoá định dạng, Nền áp lên
+>    **mọi hộp chữ đang chọn**, một bước undo. Qua helper `textTargets` / `forTextTargets` (editor.js, ngay sau `selAnnots`). Nhóm lẫn loại: chỉ hộp chữ nhận
+>    điều khiển chữ; hiện/ẩn điều khiển theo `GROUP_CTLS`; Sắp xếp theo trang xám khi 2+ hộp. **Không tách commit refactor B0** (xem ghi chú BI-118).
+> Kiểm: JS 56/56 · Python 25/25 · `test:multiedit` 76 ý (mới) · đột biến 8/8 (Đợt A) + 15/16 (Đợt B+C; M8 tương đương hành vi) · probe app thật 49/49 (núm xoay) +
+> 23/23 (nhiều hộp) — file đã lưu khớp màn hình (xoay: ≤ 1 pt sau khi trừ độ lệch DOM–raster của ca đối chứng 0°; nền+viền: 0,00 pt).
+> ⚠️ **Còn mở:** chưa test **Acrobat / Foxit**; `/Rotate` 180/270 chưa e2e; chưa có kéo khung chọn / Ctrl+A; bảng không có trạng thái "hỗn hợp"; chưa đo hiệu năng nhóm vài chục hộp;
+> ô **Xoay** vẫn không chặn `_foreign` (nghi mất góc khi mở lại FreeText của phần mềm khác — chưa tái hiện); hộp có `opacity` < 1 thì núm cũng mờ.
+> Script probe / đột biến nằm ngoài repo (cần gói `ws`; xem "Cách kiểm cho lần sau" trong BI-117 / BI-118).
 
 > **v0.2.80 — Xoay / lật ảnh chèn** (2026-10-24; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
 > Kế hoạch: `docs/PLAN-2026-10-23-image-rotate-flip.md` · sổ bất biến **BI-116** (đọc mục đó trước khi sửa) · **Không đổi `*.py`** ⇒ sidecar KHÔNG

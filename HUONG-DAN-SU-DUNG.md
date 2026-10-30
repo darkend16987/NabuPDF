@@ -435,6 +435,16 @@ của Word. Mở bằng `Ctrl+H` hoặc nút **⇄** ở cuối ô *Tìm trong t
 > - Chỗ xuống dòng trên màn hình **đúng y** chỗ xuống dòng trong file đã lưu. Hộp đang xoay không có tay nắm
 >   (bỏ xoay về 0° để kéo).
 
+> **Từ v0.2.81 — xoay hộp chữ bằng chuột và sửa nhiều hộp chữ cùng lúc:**
+> - Bấm chọn **một** hộp chữ → kéo **núm tròn phía trên hộp** để xoay tự do (giữ **Shift** để nhảy từng 15°, **Esc** để huỷ giữa chừng);
+>   ô **Xoay** trên thanh công cụ chạy theo. Hộp xoay quanh đúng điểm mà file đã lưu xoay, nên mở lại không bị lệch.
+> - Giữ **Ctrl** và bấm để chọn **nhiều hộp chữ** (cùng một trang), rồi sửa một lần cho cả nhóm: cỡ chữ, font, **B / I / U**, màu, **Nền**,
+>   **Xoay** / **+90°** (mỗi hộp cộng thêm từ góc riêng), và toàn bộ bảng **Định dạng văn bản** (căn lề, danh sách, giãn dòng / chữ, co ngang,
+>   độ mờ, tự xuống dòng, bề rộng khung, xoá định dạng) cùng **Viền khung**. Một lần **Ctrl+Z** hoàn tác cả nhóm.
+> - Hình chữ nhật, ảnh… nằm lẫn trong nhóm không bị đổi kiểu chữ; chọn hình chữ nhật trước rồi **Ctrl+bấm** thêm hộp chữ thì thanh font và bảng
+>   **Định dạng** vẫn hiện. Nội dung chữ, vị trí và nhóm **Sắp xếp theo trang** vẫn là từng hộp một (nút xám khi chọn 2 hộp trở lên).
+> - Chưa có kéo khung để chọn nhiều hộp; chọn nhiều chỉ trong **một trang**.
+
 > **Từ v0.2.80 — xoay / lật ảnh và chữ ký đã chèn:**
 > - Bấm chọn ảnh → kéo **núm tròn phía trên ảnh** để xoay tự do (giữ **Shift** để nhảy từng 15°, **Esc** để huỷ giữa chừng).
 > - **Chuột phải** lên ảnh → **Xoay trái 90° / Xoay phải 90° / Lật ngang / Lật dọc / Đặt lại xoay / lật**.
