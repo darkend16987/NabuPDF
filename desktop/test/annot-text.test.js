@@ -434,6 +434,8 @@ check("node import exposes exactly the surface editor.js calls by bare name",
    "rotatedBox", "textFont",
    // the raster's rectangle — renderTextPng's arithmetic, read back by the overlay
    "textRasterBoxPt", "textRasterGeom",
+   // the same point in page space — the centre the rotate knob turns a text box about
+   "textRotateCenter",
    // where a turned box turns (the raster's centre) — overlay + inline editor (BI-110)
    "textRotationPivot",
    "textStyle",
@@ -873,6 +875,41 @@ check("X1 the placement pad is the bake's 0.15em", TEXT_PLACE_PAD_EM, 0.15);
     /if \(existing && st\.rot\) \{\s*const pv = window\.AnnotText\.textRotationPivot\(existing\.text, st, existing\.fontSize\);\s*const cx = \(existing\.x \+ pv\.x\) \* state\.scale;\s*const cy = \(existing\.y \+ pv\.y\) \* state\.scale;/.test(ed), true);
   check("X3c no rotation pivot left on the element's centre (a.w / 2 · a.h / 2)",
     /const cxPx = \(a\.w \* s\) \/ 2;|existing\.x \+ existing\.w \/ 2/.test(ed), false);
+}
+
+// Y — the rotate KNOB on a text box (BI-117). Its centre is the raster's pivot in page space, and
+// the knob's wiring in editor.js is pinned against the shipping source.
+const { textRotateCenter } = A;
+{
+  const hint = () => {
+    const c = { font: "10px x", measureText(str) { const px = parseFloat(/([\d.]+)px/.exec(c.font)[1]); return { width: [...str].length * Math.round(px * 0.55 + 0.4) }; } };
+    return c;
+  };
+  for (const size of [16, 48]) for (const charScale of [1, 0.6]) {
+    const a = { kind: "text", x: 100, y: 200, w: 90, h: 30, text: "Nhãn ghi chú", fontSize: size, charScale };
+    const pv = textRotationPivot(a.text, normTextStyle(a), size, hint());
+    const c = textRotateCenter(a, hint());
+    check(`Y1 ${size}pt cs ${charScale}: knob centre = (x,y) + textRotationPivot`, c, { x: 100 + pv.x, y: 200 + pv.y });
+    const turned = textRotateCenter(Object.assign({}, a, { rot: 90 }), hint());
+    check(`Y1b ${size}pt cs ${charScale}: …and it does not depend on the current turn`, turned, c);
+    check(`Y1c ${size}pt cs ${charScale}: …and it is NOT the box centre (that jumps ~pad on grab)`,
+      Math.abs(c.x - (a.x + a.w / 2)) > 0.05 * size || Math.abs(c.y - (a.y + a.h / 2)) > 0.05 * size, true);
+  }
+}
+{
+  const ed = require("fs").readFileSync(require("path").join(__dirname, "..", "renderer", "editor.js"), "utf8").replace(/\r\n/g, "\n");
+  check("Y2 a text box gets the knob: lone selection, never a partner's FreeText",
+    /if \(a\.kind === "text" && gripsFor\(a\.id\) && !a\._foreign\) \{\n\s+const h = document\.createElement\("div"\);\n\s+h\.className = "handle h-rot";\n\s+h\.dataset\.rot = "1";/.test(ed), true);
+  check("Y2b …squeezed boxes counter-scale the knob (charScale ≠ 1)",
+    /const cs = normTextStyle\(a\)\.charScale;\n\s+if \(cs !== 1\) h\.style\.transform = `scaleX\(\$\{1 \/ cs\}\)`;/.test(ed), true);
+  check("Y3 onDown: a text box's drag turns about textRotateCenter, a picture's about its box centre",
+    /center: a\.kind === "text"\n\s+\? window\.AnnotText\.textRotateCenter\(a\)\n\s+: \{ x: a\.x \+ a\.w \/ 2, y: a\.y \+ a\.h \/ 2 \},/.test(ed), true);
+  check("Y3b onDown: the knob branch accepts exactly image and text",
+    /if \(!hitR \|\| \(hitR\.a\.kind !== "image" && hitR\.a\.kind !== "text"\)\) return;/.test(ed), true);
+  check("Y4 onMove: a text angle is kept to 0.1° and the Xoay field follows the knob",
+    /if \(a\.kind === "text"\) r = normRot\(Math\.round\(r \* 10\) \/ 10\);\n\s+if \(r\) a\.rot = r;\n\s+else delete a\.rot;\n\s+if \(a\.kind === "text"\) \$\("ed-textrot"\)\.value = String\(r\);/.test(ed), true);
+  check("Y4b cancelDrag: Esc puts the field back with the angle",
+    /else delete a\.rot;\n\s+if \(a\.kind === "text"\) \$\("ed-textrot"\)\.value = String\(d\.orig\.rot\);/.test(ed), true);
 }
 
 console.log(`\nannot-text: ${pass} pass, ${fail} fail`);

@@ -457,6 +457,14 @@ function textRotationPivot(text, style, fontSizePt, ctx) {
   const pad = fontSizePt * TEXT_PLACE_PAD_EM;
   return { x: rb.w / 2 - pad, y: rb.h / 2 - pad };
 }
+// The same point in PAGE space (pt): where the rotate knob's drag turns the box about. It must
+// be this and not the box centre, or the box jumps by ~pad the moment the knob is grabbed and
+// then disagrees with the saved file (BI-110). Independent of `rot` — the layout it measures is
+// the upright box's — so one reading at the start of a drag stays right for the whole drag.
+function textRotateCenter(a, ctx) {
+  const pv = textRotationPivot(a.text, normTextStyle(a), a.fontSize, ctx);
+  return { x: a.x + pv.x, y: a.y + pv.y };
+}
 
 // ---- viền khung (border) of a text box ---------------------------------------
 //
@@ -580,7 +588,7 @@ if (typeof module !== "undefined" && module.exports) {
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
     TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
-    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot,
+    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot, textRotateCenter,
   };
 }
 if (typeof window !== "undefined") {
@@ -591,6 +599,6 @@ if (typeof window !== "undefined") {
     normRot, rotatedBox,
     TEXT_DEFAULT_KEYS, TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_DEFAULT, pickTextDefault, parseTextDefault,
     TEXT_RS, textRasterGeom, textRasterBoxPt, TEXT_BORDER_MIN, TEXT_BORDER_MAX, normTextBorder,
-    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot,
+    copyTextFormat, applyTextFormat, TEXT_PLACE_PAD_EM, textRotationPivot, textRotateCenter,
   };
 }

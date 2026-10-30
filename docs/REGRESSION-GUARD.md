@@ -3174,6 +3174,38 @@ _Ghi 2026-09-30 (v0.2.73)._
   trước; núm không bấm được ở ảnh sát mép trên; mở lại file xoay mất `rot`/`flip`; Áp nhiều trang hoặc Dán làm rơi góc xoay / lật; một lệnh menu
   tạo nhiều bước undo cho một nhóm.
 
+### BI-117 · Núm xoay chuột cho HỘP CHỮ: xoay quanh **tâm raster** (không phải tâm hộp), dùng lại mô hình `rot` có từ v0.2.63
+- Kế hoạch: `docs/PLAN-2026-10-30-text-rotate-multiedit.md` (Đợt A). **Chỉ renderer, không đổi `*.py`.** Không đổi mô hình lưu, bake, codec.
+  - `annot-text.js` `textRotateCenter(a)` = `(a.x, a.y) + textRotationPivot(...)` (điểm BI-110, tính ở không gian TRANG) · `editor.js`: khối knob
+    `text` ở cuối `renderAnnot` (khối của ảnh để **nguyên** — `test:imgxf` ghim nó), `onDown` nhánh `data-rot` nhận `text` và lấy `center` theo loại,
+    `onMove` làm tròn 0,1° **chỉ cho chữ** + đẩy giá trị vào `#ed-textrot`, `cancelDrag` trả ô Xoay về góc cũ · `help.js` (VI+EN).
+- **Luật:**
+  - **Tâm kéo = `textRotateCenter`, KHÔNG phải tâm hộp.** Dùng tâm hộp ⇒ góc kéo lệch 3–6° ở mọi cú kéo (đo, đột biến M1 của probe: 90°→84,4°;
+    33°→28,1°; 60°→54,8°; Shift 120°→105°). Pivot **không phụ thuộc `rot`** (layout là của hộp thẳng) nên đọc một lần ở `onDown` là đủ.
+  - **Chữ không theo luật "vắng mặt = mặc định" của ảnh (BI-116):** `serializeManaged` luôn ghi `rot: s.rot` cho chữ (đã từ trước). Vẫn `delete a.rot` khi 0° cho gọn.
+  - Núm chỉ cho **một** hộp đang chọn (`gripsFor`) và **không** cho `_foreign` (FreeText của phần mềm khác: `writeFreeText` không ghi `rot` về dict
+    ⇒ mở lại sẽ mất xoay — BI-100). Hộp co ngang (`charScale ≠ 1`) bị `scaleX` kéo méo cả núm ⇒ núm tự `scaleX(1/charScale)`.
+  - Kéo núm **không** đổi mặc định `ed.textRot` của hộp mới ("hộp này", khác ô Xoay vốn đặt cả mặc định) — quyết định của người làm, chưa hỏi chủ dự án.
+- **Đo (app thật, chuột / phím thật qua CDP, pixel thật; PDF 2 trang, trang 2 `/Rotate 90`) — 49/49:**
+  - Kéo 90° → 89,9°; 33° → 32,1°; 60° (trang `/Rotate 90`) → 60,1° (sai số = chuột CDP làm tròn pixel nguyên, R = 150 px). Shift 118° → 120° và ô Xoay
+    = `120`; Esc giữa chừng trả **cả** góc và ô Xoay; một Ctrl+Z sau Esc hoàn lại đúng cú kéo trước (Esc không ăn bước undo).
+  - **File đã lưu = overlay quanh cùng một điểm:** hộp 0° có độ lệch hằng giữa chữ DOM và chữ raster (≈ −3,5 pt dọc — có sẵn, không do núm); ba
+    hộp xoay (90° · 32,1° co ngang 60% · 60,1° trang `/Rotate 90`) cho tâm vùng mực **lệch R(θ)·(độ lệch hằng) không quá 1,0 pt** (sai số còn lại = 1 px).
+    Pivot sai sẽ cộng thêm 2·pad·√2·sin(θ/2) ≈ 4,8 pt ở 90° ⇒ probe bắt được.
+  - Áp dụng → mở lại phiên sửa: cả 5 hộp (kể cả 0°) về đúng góc đã kéo.
+- **Lưới:** `test:text` nhóm **Y** (Y1 `textRotateCenter` ba ý × 4 cỡ/co ngang — gồm "không đổi theo `rot`" và "không phải tâm hộp"; Y2–Y4b ghim bề mặt
+  `editor.js`) · `test:imgxf` hai ghim `onDown` / `onMove` được **sửa có chủ đích** (thêm nhánh text), khối knob ảnh nguyên văn. Đột biến: 8/8 đỏ (tâm hộp,
+  knob cho `_foreign`, bỏ làm tròn, `onDown` không nhận text, Esc không trả ô Xoay, bỏ đối trọng `charScale`, pivot lệch 2 pt, ô Xoay không theo núm) +
+  probe app thật 5 ca đỏ với M1.
+- **Đã biết / chưa làm:** ô **Xoay** (`setTextRot`) **không chặn `_foreign`** (có từ trước; xoay một FreeText của phần mềm khác rồi lưu — chưa tái hiện, nghi mất
+  góc khi mở lại); hộp có `opacity` < 1 thì núm cũng mờ; chưa kiểm Acrobat / Foxit; `/Rotate` 180 / 270 chưa e2e; chưa có núm cho nhiều hộp (xoay nhóm bằng ô Xoay / +90°).
+- **Cách kiểm cho lần sau:** probe CDP viết ngoài repo (cần gói `ws`, cổng 9335). **Bẫy đã gặp:** (1) bấm `btn-edit` ngay sau lần vẽ trang đầu tiên **bị nuốt**
+  (đợi ~3 s sau khi nạp); (2) `applyTextFmt` ghi cả **mặc định palette** ⇒ ô `fmt-scale` đặt cho hộp trước **rò** sang hộp tạo sau (đã làm hỏng dự đoán tâm của ca
+  trang 2 lúc đầu — lỗi probe, không phải lỗi sản phẩm) ⇒ luôn đặt lại `fmt-scale` cho mỗi hộp; (3) so mực overlay-vs-file phải có **ca đối chứng 0°** cùng trang,
+  vì DOM và raster đặt chữ lệch nhau một vector hằng.
+- **Vỡ khi:** bấm vào núm làm hộp nhảy hoặc góc kéo lệch vài độ (tâm sai); ô Xoay không theo núm; Esc ăn mất bước undo; hộp co ngang có núm méo / lệch;
+  FreeText của phần mềm khác có núm; hộp 0° ra `/NabuData` khác bản trước; ảnh mất núm hoặc đổi cách xoay.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
@@ -3257,6 +3289,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Sửa nội dung — Căn lề / Gạch ngang (`api.py` `edit_text` `align`/`strike`, `_insert_line_pitch`; `text-edit.js` `#te-align`, `#te-strike`) | BI-114 · `test_edit_text_align.py` + `npm run test:teformat` + toàn bộ `test_edit_text_*.py` · **build lại sidecar** · **test tay**: Sửa nội dung → bấm số trong cột căn phải → gõ số dài hơn → Căn phải → Áp dụng → mép phải không đổi · tiêu đề căn giữa → giữ tâm · S trên một dòng → gạch giữa chữ · sửa KHÔNG chọn căn lề → như trước |
 | Sửa nội dung — nút định dạng khi ô gõ đang mở (`onControlChange`, `beginEdit` `before` / `cancel`) | BI-115 · `npm run test:teformat` · **test tay**: Sửa nội dung → bấm một đoạn → gõ vài chữ → bấm **B** → ô gõ còn mở, gõ tiếp được → Enter → Áp dụng → đủ chữ · bấm đoạn khác → B → **Esc** → đoạn đó không bị tính là đã sửa |
 | Xoay / lật ảnh (`annot-geom.js` `imageXformed`/`imageCorners`/`imageCm`/`imageBounds`/`imageOp`/`resizeRotated`/`rotateDragAngle` · `serializeManaged`/`deserializeManaged` nhánh image · `addManagedAnnot` + `drawOneAnnot` nhánh image · `renderAnnot` ảnh, `.handle.h-rot`, `onDown`/`onMove`/`cancelDrag` nhánh `rotate`, `applyImageOp`, mục menu chuột phải, `applyImgPages`) | BI-116 · `cd desktop ; npm run test:imgxf ; npm run test:rotate ; npm run test:managed ; npm run test:cloud` · **hồi quy quan trọng nhất (BI-59):** ảnh **chưa chạm** bake ra **byte y hệt** bản trước (dựng harness sha256 trên HEAD cũ và mới, ảnh thường ở trang 0/90/180/270 + phẳng + chế độ che) · **test tay**: chèn ảnh nhiều màu (4 góc khác màu) → kéo **núm** trên đầu ảnh sang trái → xoay ngược chiều kim đồng hồ, giữ **Shift** nhảy 15°, **Esc** giữa chừng về góc cũ, Ctrl+Z lùi đúng một bước · kéo 4 góc ảnh **đang xoay** → góc đối diện đứng yên · chuột phải → Xoay trái/phải 90°, Lật ngang/dọc (ảnh đang xoay 30° lật ngang → đối xứng qua trục dọc trên màn hình), Đặt lại → **hết** transform (xám khi chưa chạm) · Ctrl+click 2 ảnh → mỗi ảnh quanh tâm riêng, **một** Ctrl+Z hoàn lại cả hai · Xong → **mở lại file** (cả trang `/Rotate 90`, ảnh JPEG) → ảnh **đúng chỗ, đúng chiều** như trước khi lưu, còn sửa tiếp được · Áp nhiều trang và Sao chép → Dán → bản sao **giữ góc xoay / lật** · mở file đã bake bằng **Foxit + Acrobat + Chrome** → thấy đúng chiều · ảnh sát mép **trên** trang → núm vẫn bấm được |
+| Núm xoay hộp chữ (`textRotateCenter` ở `annot-text.js` · `renderAnnot` khối knob của `text` · `onDown` nhánh `data-rot` · `onMove`/`cancelDrag` nhánh `rotate`, đồng bộ ô `#ed-textrot`) | BI-117 · `cd desktop ; npm run test:text ; npm run test:imgxf ; npm run test:rotate ; npm run test:fmtpanel` · **test tay**: chọn MỘT hộp chữ → núm tròn trên đầu hộp → kéo sang trái = xoay ngược chiều kim đồng hồ, ô **Xoay** chạy theo, Shift nhảy 15°, Esc về góc cũ, Ctrl+Z lùi đúng **một** bước · hộp **co ngang 60%**, hộp **cố định bề rộng**, hộp ở trang `/Rotate 90` → xoay quanh đúng tâm (hộp **không nhảy** lúc bấm vào núm) · Xong → mở lại → góc còn, sửa tiếp được · chọn 2 hộp → **không** có núm (dùng ô Xoay / +90°) · FreeText của phần mềm khác → **không** có núm · ảnh vẫn xoay bằng núm như cũ (BI-116) |
 | `renderer/batch-variants.js` · Tạo bản theo mẫu · `dialog:choose-dir` / `file:write-new-pdf` | BI-103 · `npm test -- batch-variants tabs-logic ipc-contract global-scope` · **test tay trên bộ bản vẽ thật**: Ctrl+H → "Tạo bản theo mẫu…" → mã `I1`, giá trị `I2, I3` → Quét → **25 chỗ / 13 trang**, danh sách ngữ cảnh đúng → bỏ tích 1 dòng → "sẽ thay 24" → Tạo file → 2 file mới cạnh file gốc, mở ra số hiệu **cao bằng** `DAOL.` · bấm Tạo lần nữa → hỏi **Ghi đè?** từng file, nằm **trên** hộp thoại · Ctrl+Z trên file đang mở → **không** có bước nào từ việc này · đang Chú thích → bị từ chối |
 | Lớp chữ của chữ vẽ lại (`drawn_fonts`, `_merge_tounicode`, CMap) | `test_edit_text_tounicode.py` · Ctrl+H thay `I1`→`I2` trên bản vẽ thật rồi **tìm lại** `I2_BD-S` → ra đủ số chỗ; copy số hiệu dán Notepad → còn dấu `-` (BI-102) |
 | Redaction / `add_redact_annot` / `apply_redactions` | `test_edit_text_layout.py` **và** `test_translate_layout.py` · sửa 1 chữ trong ô bảng **có nền** → không vệt trắng, không mất đường kẻ (BI-23) |

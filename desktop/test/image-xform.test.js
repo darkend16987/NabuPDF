@@ -306,13 +306,13 @@ check("B null", G.imageXformed(null), false);
   check("I onDown: the rotate-knob branch exists", iRot > 0, true);
   check("I onDown: …and sits before the box-corner branch", iRot > 0 && iBox > iRot, true);
   has("onDown: the drag is relative to the unclamped pointer and remembers the turn it started from",
-    /type: "rotate", page: i, id, layer, sx: p\.x, sy: p\.y,\n\s+rx: raw\.x, ry: raw\.y,\n\s+orig: \{ rot: window\.AnnotGeom\.normImgRot\(a\.rot\) \},\n\s+center: \{ x: a\.x \+ a\.w \/ 2, y: a\.y \+ a\.h \/ 2 \}/);
+    /type: "rotate", page: i, id, layer, sx: p\.x, sy: p\.y,\n\s+rx: raw\.x, ry: raw\.y,\n\s+orig: \{ rot: window\.AnnotGeom\.normImgRot\(a\.rot\) \},\n(?:\s+\/\/[^\n]*\n)*\s+center: a\.kind === "text"\n\s+\? window\.AnnotText\.textRotateCenter\(a\)\n\s+: \{ x: a\.x \+ a\.w \/ 2, y: a\.y \+ a\.h \/ 2 \}/);
   has("pointer: layerPointRaw does NOT clamp to the sheet",
     /function layerPointRaw\(layer, e\) \{\n\s+const r = layer\.getBoundingClientRect\(\);\n\s+const s = state\.scale;\n\s+return \{ x: \(e\.clientX - r\.left\) \/ s, y: \(e\.clientY - r\.top\) \/ s \};\n\s+\}/);
 
   // onMove: Shift live off the event; 0° stored as absence
   has("onMove: rotate reads Shift off the event and stores 0° as ABSENCE",
-    /if \(drag\.type === "rotate"\) \{[\s\S]*?rotateDragAngle\(drag\.center, \{ x: drag\.rx, y: drag\.ry \}, raw, drag\.orig\.rot, e\.shiftKey\);\n\s+if \(r\) a\.rot = r;\n\s+else delete a\.rot;/);
+    /if \(drag\.type === "rotate"\) \{[\s\S]*?rotateDragAngle\(drag\.center, \{ x: drag\.rx, y: drag\.ry \}, raw, drag\.orig\.rot, e\.shiftKey\);\n(?:\s+\/\/[^\n]*\n)*\s+if \(a\.kind === "text"\) r = normRot\(Math\.round\(r \* 10\) \/ 10\);\n\s+if \(r\) a\.rot = r;\n\s+else delete a\.rot;/);
   has("onMove: rotate pushes undo lazily, on the first REAL move of the raw pointer",
     /if \(!drag\.pushed && \(raw\.x !== drag\.rx \|\| raw\.y !== drag\.ry\)\) \{\n\s+drag\.pushed = true;\n\s+pushEdUndo\(\);/);
 

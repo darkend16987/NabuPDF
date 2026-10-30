@@ -1457,6 +1457,19 @@
       h.dataset.rot = "1";
       el.appendChild(h);
     }
+    // The same knob on a TEXT box (its `rot` has existed since v0.2.63; only the mouse door was
+    // missing). Not a branch of the image condition above, so that block stays as shipped. The
+    // element already carries the box's turn, so the knob follows it; a box squeezed by
+    // `charScale` squeezes the knob too, hence the counter-scale. Never on a partner's FreeText:
+    // writeFreeText does not write a turn back, so it would be lost on reopen (BI-100).
+    if (a.kind === "text" && gripsFor(a.id) && !a._foreign) {
+      const h = document.createElement("div");
+      h.className = "handle h-rot";
+      h.dataset.rot = "1";
+      const cs = normTextStyle(a).charScale;
+      if (cs !== 1) h.style.transform = `scaleX(${1 / cs})`;
+      el.appendChild(h);
+    }
     return el;
   }
 
@@ -2209,14 +2222,17 @@
     if (e.target.classList.contains("handle") && e.target.dataset.rot) {
       const id = +e.target.closest(".an").dataset.id;
       const hitR = findAnnot(id);
-      if (!hitR || hitR.a.kind !== "image") return;
+      if (!hitR || (hitR.a.kind !== "image" && hitR.a.kind !== "text")) return;
       const a = hitR.a;
       const raw = layerPointRaw(layer, e);
       drag = {
         type: "rotate", page: i, id, layer, sx: p.x, sy: p.y,
         rx: raw.x, ry: raw.y,
         orig: { rot: window.AnnotGeom.normImgRot(a.rot) },
-        center: { x: a.x + a.w / 2, y: a.y + a.h / 2 },
+        // A picture turns about its box centre; a text box about its RASTER's centre (BI-110).
+        center: a.kind === "text"
+          ? window.AnnotText.textRotateCenter(a)
+          : { x: a.x + a.w / 2, y: a.y + a.h / 2 },
         pushed: false,
       };
       e.preventDefault();
@@ -2515,9 +2531,13 @@
         drag.pushed = true;
         pushEdUndo();
       }
-      const r = window.AnnotGeom.rotateDragAngle(drag.center, { x: drag.rx, y: drag.ry }, raw, drag.orig.rot, e.shiftKey);
+      let r = window.AnnotGeom.rotateDragAngle(drag.center, { x: drag.rx, y: drag.ry }, raw, drag.orig.rot, e.shiftKey);
+      // A text box's angle also shows in the Xoay field and rides in /NabuData as typed, so it is
+      // kept to 0.1° (a picture's is left as the geometry gives it — shipped, pinned).
+      if (a.kind === "text") r = normRot(Math.round(r * 10) / 10);
       if (r) a.rot = r;
       else delete a.rot;
+      if (a.kind === "text") $("ed-textrot").value = String(r); // the field follows the knob
     } else if (drag.type === "move") {
       const dx = p.x - drag.sx;
       const dy = p.y - drag.sy;
@@ -2890,6 +2910,7 @@
         // Back to the turn it had (absent, not 0, when it had none — BI-59).
         if (d.orig.rot) a.rot = d.orig.rot;
         else delete a.rot;
+        if (a.kind === "text") $("ed-textrot").value = String(d.orig.rot);
       } else if (d.type === "vertex") {
         // The WHOLE point list goes back, not just the dragged vertex — same reason the
         // arrow branch below restores both ends.
