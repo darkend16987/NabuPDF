@@ -1,7 +1,6 @@
 # PLAN 2026-10-30 — Xoay hộp chữ bằng chuột + sửa định dạng nhiều hộp chữ cùng lúc
 
-Trạng thái (2026-10-30): **Đợt A (núm xoay hộp chữ) XONG, chưa commit — luật + số đo ở `REGRESSION-GUARD.md` BI-117.** Đợt B, C (sửa nhiều hộp) CHƯA làm,
-chờ chủ dự án. Ghi chú thực hiện Đợt A: khác kế hoạch ở chỗ khối knob ảnh được **để nguyên** (thêm khối `text` riêng) vì `test:imgxf` ghim nó; hai ghim
+Trạng thái (2026-10-30): **Đợt A (BI-117) và Đợt B + C (BI-118, sửa style nhiều hộp) XONG — làm B và C một lượt, không tách commit refactor B0.** Luật + số đo ở `REGRESSION-GUARD.md`. Ghi chú thực hiện Đợt A: khác kế hoạch ở chỗ khối knob ảnh được **để nguyên** (thêm khối `text` riêng) vì `test:imgxf` ghim nó; hai ghim
 `onDown`/`onMove` của `test:imgxf` đã sửa có chủ đích. Bước khảo sát ban đầu: **chờ chủ dự án duyệt.** Mức quy trình: **L** (chạm nhiều handler của
 editor, vùng có BI-75/76/107/109/110/116). Chỉ renderer — **không đổi `*.py`, sidecar không build lại**.
 

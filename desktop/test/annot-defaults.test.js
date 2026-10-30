@@ -349,7 +349,7 @@ check(
 );
 check(
   "F1 · applyFillToSel refuses a target whose kind is not the one on display",
-  /if \(a\.kind !== kind\) return;/.test(EDITOR_SRC),
+  /const targets = fillTargets\(\)\.filter\(\(x\) => x\.kind === kind\);\s*if \(!targets\.length\) return;/.test(EDITOR_SRC),
   "a rectangle left selected under the Hộp văn bản tool used to eat an undo step per slider move"
 );
 check(
@@ -499,7 +499,7 @@ group("the three background handlers (BI-76)");
   // them fails loudly here rather than quietly testing nothing.
   const BODY = [
     "clampFillPct", "setFillPctCtl", "setFillOn", "fillFromCtls",
-    "fillTargetAnnot", "applyFillToSel",
+    "fillTargetAnnot", "fillTargets", "applyFillToSel",
     "onFillColorInput", "onFillNoneToggle", "onFillOpacityInput",
     "fillCtlKind", "fillSlotFor",
   ].map((n) => cutFunction(EDITOR_SRC, n)).join("\n");
@@ -533,13 +533,15 @@ group("the three background handlers (BI-76)");
     const undos = [];
     const findAnnot = (id) => (target && target.id === id ? { page: 0, a: target } : null);
     const make = new Function(
-      "$", "ed", "findAnnot", "pushEdUndo", "syncOverlays",
+      "$", "ed", "findAnnot", "pushEdUndo", "syncOverlays", "selAnnots", "selSig",
       "FILLABLE_KINDS", "SHAPE_FILL_SLOT", "FILL_ON_FROM_ZERO_PCT",
       FILL_SLOTS_DECL + BODY +
       "; return { onFillColorInput, onFillNoneToggle, onFillOpacityInput };"
     );
     const api = make(
       $, ed, findAnnot, (t) => undos.push(t), () => {},
+      o.group ? () => o.group : () => (target && ed.sel === target.id ? [target] : []),
+      o.group ? () => o.group.map((x) => x.id).sort((p, q) => p - q).join(",") : () => String(ed.sel),
       FILLABLE_KINDS, SHAPE_FILL_SLOT, FILL_ON_FROM_ZERO_PCT
     );
     return Object.assign(
@@ -739,6 +741,62 @@ group("the three background handlers (BI-76)");
     check("a fractional value rounds, it does not floor away to 0", at(0.6) === 1);
     check("junk reads as 0, not NaN%", at("abc") === 0);
   }
+
+// ---- BI-118: the Nền controls write the whole Ctrl+click group ------------------
+
+{
+  const text = (id) => ({ id, kind: "text", text: "x" + id, fontSize: 16 });
+  const box = { id: 9, kind: "box", fill: "#00ff00", fillOpacity: 0.5 };
+  const mk = (extra) => {
+    const group = [text(1), text(2), text(3), box];
+    return Object.assign({ group, target: group[0], ctlColor: "#ff0000", ctlNone: false, ctlPct: 60, ed: { tool: "select" } }, extra || {});
+  };
+  {
+    const o = mk();
+    const r = rig(o);
+    r.onFillColorInput("#ff0000");
+    check("G1 Nền on a group of text boxes: every text box gets the wash",
+      o.group.slice(0, 3).map((x) => [x.fill, x.fillOpacity]), [["#ff0000", 0.6], ["#ff0000", 0.6], ["#ff0000", 0.6]]);
+    check("G1b …a rectangle in the same group is NOT touched (its slot is another kind's — BI-75)", [box.fill, box.fillOpacity], ["#00ff00", 0.5]);
+    check("G1c …ONE undo step for the group, keyed by the group", r.undos, ["fill:1,2,3,9"]);
+  }
+  {
+    const o = mk();
+    const r = rig(o);
+    r.onFillNoneToggle(true);
+    check("G2 'Không nền' on a group: all of them go to fill:none", o.group.slice(0, 3).map((x) => x.fill), ["none", "none", "none"]);
+  }
+  {
+    // A LONE selection: the key is still fill:<id>, and the one box is written.
+    const t = text(5);
+    const o = { group: [t], target: t, ctlColor: "#112233", ctlNone: false, ctlPct: 100, ed: { tool: "select" } };
+    const r = rig(o);
+    r.onFillColorInput("#112233");
+    check("G3 a lone text box: written, key unchanged (fill:<id>)", [t.fill, r.undos], ["#112233", ["fill:5"]]);
+  }
+  {
+    // The inline editor owns the controls: ONLY the box being retyped, never the selected group.
+    const o = mk();
+    const typing = text(2);
+    o.ed = { tool: "select", _taCommit: () => {}, _taAnnot: typing };
+    const r = rig(o);
+    r.onFillColorInput("#abcdef");
+    check("G4 with the editor open on one box, only THAT box takes the wash",
+      [o.group[0].fill, typing.fill, r.undos], [undefined, "#abcdef", ["fill:2"]]);
+  }
+  {
+    // Primary is a rectangle, group also holds text: the controls show the RECTANGLE's slot, so
+    // only rectangles are written (the tool the user is holding decides — BI-75).
+    const o = mk();
+    o.target = box;
+    const r = rig(o);
+    r.onFillColorInput("#010203");
+    check("G5 primary a rectangle: the rectangle changes, the text boxes in the group do not",
+      [box.fill, o.group.slice(0, 3).map((x) => x.fill)], ["#010203", [undefined, undefined, undefined]]);
+  }
+  check("G6 applyFillToSel writes through fillTargets(), filtered to the kind on display",
+    /const targets = fillTargets\(\)\.filter\(\(x\) => x\.kind === kind\);/.test(cutFunction(EDITOR_SRC, "applyFillToSel")), true);
+}
 }
 
 // ---- 4d. the tick's markup and the i18n dictionary agree ------------------

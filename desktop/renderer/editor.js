@@ -1551,6 +1551,42 @@
     if (!hit) return [];
     return annotsFor(hit.page).filter((a) => ids.has(a.id));
   }
+  // The text boxes among the selection — what every STYLE control (size, font, B/I/U, turn,
+  // the Format panel, border) acts on. Until v0.2.81 each of them read the primary alone, so
+  // Ctrl+click-ing three labels and pressing B bolded one of them; colour / stroke already
+  // took the whole selection (BI-118). A lone selection is the same one box as before.
+  const textTargets = () => selAnnots().filter((a) => a.kind === "text");
+  // The selection as one string, for undo-coalescing keys: it stood for the primary's id
+  // ("fsize:" + ed.sel) and for one box still does — but a burst of typing in a field must
+  // not merge with another burst made on a DIFFERENT group inside the 800 ms window.
+  const selSig = () => selIds().slice().sort((x, y) => x - y).join(",");
+  // ONE write path for a style change on the selected text boxes: ONE undo step for the
+  // whole group (pushed BEFORE anything changes), `fn(a)` on each, optional re-measure (a
+  // change that alters the layout also alters a.w / a.h — the box's own size, not the turn),
+  // one redraw. false = nothing selected to act on, nothing recorded. `key` null = never
+  // coalesced (B/I/U, font: each click is its own step, as before).
+  function forTextTargets(key, fn, remeasure) {
+    const ts = textTargets();
+    if (!ts.length) return false;
+    pushEdUndo(key ? key + ":" + selSig() : undefined);
+    for (const a of ts) {
+      fn(a);
+      if (remeasure) {
+        const m = measureText(a.text, a.fontSize, textStyle(a));
+        a.w = m.w;
+        a.h = m.h;
+      }
+    }
+    syncOverlays();
+    return true;
+  }
+  // The text box the font bar / Format panel DISPLAY while a group is selected: the primary
+  // when it is one (Word shows the first), else the first text box of the group.
+  function textRef() {
+    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
+    if (hit && hit.a.kind === "text") return hit.a;
+    return textTargets()[0] || null;
+  }
 
   // Ctrl/Cmd+click: add to (or remove from) the selection, the convention everywhere
   // from Explorer to Illustrator. Clicking an object on ANOTHER page starts a fresh
@@ -2087,13 +2123,16 @@
     } else if (a.color) {
       $("ed-color").value = toHex(a.color);
     }
-    if (a.kind === "text") {
-      $("ed-fontsize").value = String(a.fontSize);
-      $("ed-textrot").value = String(normTextStyle(a).rot);
-      $("ed-font").value = a.font || "sans";
-      setFmtBtn("ed-bold", a.bold);
-      setFmtBtn("ed-italic", a.italic);
-      setFmtBtn("ed-underline", a.underline);
+    // The font bar shows the primary when it is a text box, else the first text box of the group
+    // (otherwise it kept whatever the last selection left in it — BI-118).
+    const tx = a.kind === "text" ? a : textTargets()[0];
+    if (tx) {
+      $("ed-fontsize").value = String(tx.fontSize);
+      $("ed-textrot").value = String(normTextStyle(tx).rot);
+      $("ed-font").value = tx.font || "sans";
+      setFmtBtn("ed-bold", tx.bold);
+      setFmtBtn("ed-italic", tx.italic);
+      setFmtBtn("ed-underline", tx.underline);
     }
     if (PEN_WIDTH_KINDS.has(a.kind) && a.width) $("ed-penwidth").value = String(a.width);
     if (a.kind === "arrow") $("ed-arrowlabel").value = a.labelEnd === "tail" ? "tail" : "head";
@@ -3898,6 +3937,9 @@
     check: ["color", "penwidth"],
     cross: ["color", "penwidth"],
   };
+  // The controls whose handlers act on EVERY selected object they apply to (selAnnots /
+  // textTargets / fillTargets), so showing them for any member of a group is honest.
+  const GROUP_CTLS = new Set(["color", "font", "fontsize", "biu", "textrot", "fill", "penwidth", "dash", "labelsize"]);
   // Show the palette controls relevant to the current context: for a drawing
   // tool, the tool's controls; for Select, only the selected annotation's (or
   // none). Keeps the edit bar tidy instead of dumping every control under Select.
@@ -3906,6 +3948,14 @@
     if (tool === "select") {
       const hit = ed.sel != null ? findAnnot(ed.sel) : null;
       show = hit ? KIND_CTLS[hit.a.kind] || [] : [];
+      // A group also shows what its OTHER members can be given — but only controls whose handler
+      // really takes the whole selection (GROUP_CTLS); an arrow-reverse or a page-range button
+      // for the third member would act on the primary and lie about it (BI-118).
+      if (hit && ed.selMore.size) {
+        const more = new Set(show);
+        for (const m of selAnnots()) for (const c of KIND_CTLS[m.kind] || []) if (GROUP_CTLS.has(c)) more.add(c);
+        show = [...more];
+      }
     } else {
       show = TOOL_CTLS[tool] || [];
     }
@@ -4425,17 +4475,7 @@
   };
   $("ed-fontsize").oninput = (e) => {
     ed.fontSize = Math.max(6, +e.target.value || 16);
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && hit.a.kind === "text") {
-        pushEdUndo("fsize:" + ed.sel);
-        hit.a.fontSize = ed.fontSize;
-        const m = measureText(hit.a.text, ed.fontSize, textStyle(hit.a));
-        hit.a.w = m.w;
-        hit.a.h = m.h;
-        syncOverlays();
-      }
-    }
+    forTextTargets("fsize", (a) => { a.fontSize = ed.fontSize; }, true); // every selected box (BI-118)
   };
   // Rotation applies to the SELECTED box and is also remembered as the palette
   // default, exactly like size / font / B-I-U. What it deliberately does NOT do is
@@ -4447,36 +4487,29 @@
     const v = normRot(deg);
     ed.textRot = v;
     $("ed-textrot").value = String(v);
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && hit.a.kind === "text") {
-        pushEdUndo("trot:" + ed.sel);
-        hit.a.rot = v;
-        syncOverlays();
-      }
-    }
+    forTextTargets("trot", (a) => { a.rot = v; }); // a typed angle is ABSOLUTE: the whole group gets it
   }
   $("ed-textrot").oninput = (e) => setTextRot(+e.target.value || 0);
   $("ed-textrot-90").onclick = () => {
     // Reads the SELECTED box, not the field: with nothing selected the field is the
     // palette default and +90 still means "turn the default a quarter turn".
+    const ts = textTargets();
+    if (ts.length > 1) {
+      // A group: +90 is RELATIVE, each box from its own angle (a row of labels at different
+      // angles keeps its differences) — the palette default follows the primary, like the field.
+      const ref = textRef();
+      ed.textRot = normRot(normTextStyle(ref).rot + 90);
+      $("ed-textrot").value = String(ed.textRot);
+      forTextTargets("trot", (a) => { a.rot = normRot(normTextStyle(a).rot + 90); });
+      return;
+    }
     const hit = ed.sel != null ? findAnnot(ed.sel) : null;
     const cur = hit && hit.a.kind === "text" ? normTextStyle(hit.a).rot : (ed.textRot || 0);
     setTextRot(cur + 90);
   };
   $("ed-font").onchange = (e) => {
     ed.font = e.target.value || "sans";
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && hit.a.kind === "text") {
-        pushEdUndo();
-        hit.a.font = ed.font;
-        const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
-        hit.a.w = m.w;
-        hit.a.h = m.h;
-        syncOverlays();
-      }
-    }
+    forTextTargets(null, (a) => { a.font = ed.font; }, true);
   };
   // B / I / U toggles. preventDefault on mousedown keeps an open text editor
   // focused; the click toggles the flag and (for the selected text) re-measures.
@@ -4487,17 +4520,9 @@
     b.addEventListener("click", () => {
       b.classList.toggle("active");
       ed[prop] = b.classList.contains("active");
-      if (ed.sel != null) {
-        const hit = findAnnot(ed.sel);
-        if (hit && hit.a.kind === "text") {
-          pushEdUndo();
-          hit.a[prop] = ed[prop];
-          const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
-          hit.a.w = m.w;
-          hit.a.h = m.h;
-          syncOverlays();
-        }
-      }
+      // The button's new state (flipped from what the PRIMARY showed) is written to every
+      // selected box — Word's rule — so a group never ends up half bold (BI-118).
+      forTextTargets(null, (a) => { a[prop] = ed[prop]; }, true);
     });
   });
   // ---- text-box Format panel (paragraph / spacing / list / arrange) --------
@@ -4511,26 +4536,16 @@
   function applyTextFmt(annotKey, value, opts) {
     const o = opts || {};
     ed[o.edKey || annotKey] = value;
-    if (ed.sel != null) {
-      const hit = findAnnot(ed.sel);
-      if (hit && hit.a.kind === "text") {
-        pushEdUndo((o.undoKey || "fmt:" + annotKey) + ":" + ed.sel);
-        hit.a[annotKey] = value;
-        if (o.remeasure) {
-          const m = measureText(hit.a.text, hit.a.fontSize, textStyle(hit.a));
-          hit.a.w = m.w;
-          hit.a.h = m.h;
-        }
-        syncOverlays();
-      }
-    }
+    forTextTargets(o.undoKey || "fmt:" + annotKey, (a) => { a[annotKey] = value; }, o.remeasure);
     syncFmtPanel();
   }
 
   // Move the selected text box relative to its page (Arrange → centre / edges).
   // a.w/a.h are in the same point space as a.x/a.y and the page size (dataset.w/h).
+  // ONE box only: centring a group on the page would stack its members on the same spot, so
+  // the buttons are greyed for two or more (syncFmtPanel) and this refuses too (BI-118).
   function arrangeSelected(kind) {
-    if (ed.sel == null) return;
+    if (ed.sel == null || textTargets().length > 1) return;
     const hit = findAnnot(ed.sel);
     if (!hit || hit.a.kind !== "text") return;
     const a = hit.a;
@@ -4554,7 +4569,11 @@
     const panel = $("fmt-panel");
     if (!panel || panel.hidden) return;
     const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    const s = hit && hit.a.kind === "text" ? normTextStyle(hit.a) : normTextStyle(edTextStyle());
+    // What the panel DISPLAYS: the primary when it is a text box, else the first text box of the
+    // group (textRef). What it acts on is every text box in the selection (BI-118).
+    const ref = textRef();
+    const tts = textTargets();
+    const s = ref ? normTextStyle(ref) : normTextStyle(edTextStyle());
     const active = document.activeElement;
     const setVal = (id, v) => {
       const el = $(id);
@@ -4568,11 +4587,11 @@
     if ($("fmt-strike") !== active) $("fmt-strike").checked = s.strike;
     const wrapC = $("fmt-wrap");
     if (wrapC) {
-      wrapC.disabled = !(hit && hit.a.kind === "text");
+      wrapC.disabled = !ref;
       if (wrapC !== active) wrapC.checked = !wrapC.disabled && s.boxW > 0;
     }
     const clr = $("fmt-clear");
-    if (clr) clr.disabled = !(hit && hit.a.kind === "text");
+    if (clr) clr.disabled = !ref;
     // Sao chép / Dán định dạng: copy needs a text box; paste needs a clip AND at least one
     // selected text box (the whole selection is pasted onto, Ctrl+click groups included).
     const cpy = $("fmt-copy-style");
@@ -4583,9 +4602,11 @@
     // border would start with. A partner's FreeText keeps the border its file gave it.
     const bdC = $("fmt-border");
     if (bdC) {
-      const box = hit && hit.a.kind === "text" ? hit.a : null;
+      // A partner's FreeText keeps its own border, so only the others count here.
+      const own = tts.filter((x) => !x._foreign);
+      const box = ref && !ref._foreign ? ref : own[0] || null;
       const bd = box ? window.AnnotText.normTextBorder(box) : null;
-      bdC.disabled = !box || !!box._foreign;
+      bdC.disabled = !box;
       if (bdC !== active) bdC.checked = !!bd;
       const off = bdC.disabled || !bd;
       for (const id of ["fmt-border-color", "fmt-border-width", "fmt-border-dash"]) $(id).disabled = off;
@@ -4596,8 +4617,11 @@
     // Bề rộng khung: only a selected FIXED box has a wrap width to show or set.
     const bw = $("fmt-boxw");
     if (bw) {
-      bw.disabled = !(hit && hit.a.kind === "text" && s.boxW > 0);
-      if (bw !== active) bw.value = bw.disabled ? "" : String(Math.round(s.boxW));
+      // Enabled while any box of the group wraps; it shows the primary's width, or the first
+      // wrapping box's. Point boxes in the group are skipped when it is typed (applyBoxW).
+      const fx = ref && s.boxW > 0 ? ref : tts.find((x) => normTextStyle(x).boxW > 0) || null;
+      bw.disabled = !fx;
+      if (bw !== active) bw.value = bw.disabled ? "" : String(Math.round(normTextStyle(fx || ref || {}).boxW));
     }
     setVal("fmt-linehl", s.lineHeight);
     setVal("fmt-para", s.paraSpacing);
@@ -4606,14 +4630,20 @@
     setVal("fmt-scale", Math.round(s.charScale * 100));
     setVal("fmt-opacity", Math.round(s.opacity * 100));
     $("fmt-opacity-val").textContent = Math.round(s.opacity * 100) + "%";
+    // Arrange is page-relative, so it means one box only (arrangeSelected refuses a group too).
+    for (const id of ["fmt-center-h", "fmt-center-v", "fmt-center-both", "fmt-page-left", "fmt-page-right", "fmt-page-top", "fmt-page-bottom"]) {
+      const b = $(id);
+      if (b) b.disabled = tts.length > 1;
+    }
   }
 
   // Show the panel only in a text context (Text tool active, or a text box selected).
   function updateFmtPanel() {
     const panel = $("fmt-panel");
     if (!panel) return;
-    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    const selText = !!(hit && hit.a.kind === "text");
+    // A text box ANYWHERE in the selection opens the panel — a group whose primary is a
+    // rectangle used to hide it although its labels were selected too (BI-118).
+    const selText = textTargets().length > 0;
     panel.hidden = !(ed.active && (ed.tool === "text" || selText));
     if (!panel.hidden) syncFmtPanel();
   }
@@ -4657,8 +4687,8 @@
   });
   // Indent −/＋
   const bumpIndent = (delta) => {
-    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    const cur = hit && hit.a.kind === "text" ? hit.a.indent || 0 : ed.indent;
+    const ref = textRef();
+    const cur = ref ? ref.indent || 0 : ed.indent;
     applyTextFmt("indent", Math.max(0, cur + delta), { remeasure: true, undoKey: "indent" });
   };
   [["fmt-indent-dec", -1], ["fmt-indent-inc", 1]].forEach(([id, dir]) => {
@@ -4669,8 +4699,8 @@
   });
   // Bullet / number (clicking the active type turns the list off)
   const toggleList = (type) => {
-    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    const cur = hit && hit.a.kind === "text" ? hit.a.listType : ed.listType;
+    const ref = textRef();
+    const cur = ref ? ref.listType : ed.listType;
     applyTextFmt("listType", cur === type ? "none" : type, { remeasure: true, undoKey: "list" });
   };
   [["fmt-bullet", "bullet"], ["fmt-number", "number"]].forEach(([id, type]) => {
@@ -4691,23 +4721,19 @@
   {
     const c = $("fmt-wrap");
     if (c) c.addEventListener("change", () => {
-      const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-      if (!hit || hit.a.kind !== "text") {
+      // Each box starts at ITS OWN natural width, so nothing in a group moves until a width is typed.
+      const did = forTextTargets("wrap", (a) => {
+        if (c.checked) {
+          const natural = measureText(a.text, a.fontSize, Object.assign({}, textStyle(a), { boxW: 0 }));
+          a.boxW = Math.max(MIN_BOX_W, natural.w - 2 * a.fontSize * 0.15);
+        } else {
+          delete a.boxW;
+        }
+      }, true);
+      if (!did) {
         c.checked = false;
         return;
       }
-      const a = hit.a;
-      pushEdUndo("wrap:" + ed.sel);
-      if (c.checked) {
-        const natural = measureText(a.text, a.fontSize, Object.assign({}, textStyle(a), { boxW: 0 }));
-        a.boxW = Math.max(MIN_BOX_W, natural.w - 2 * a.fontSize * 0.15);
-      } else {
-        delete a.boxW;
-      }
-      const m = measureText(a.text, a.fontSize, textStyle(a));
-      a.w = m.w;
-      a.h = m.h;
-      syncOverlays();
       syncFmtPanel();
     });
   }
@@ -4720,9 +4746,10 @@
   {
     const bw = $("fmt-boxw");
     const applyBoxW = (final) => {
-      const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-      if (!hit || hit.a.kind !== "text" || !(hit.a.boxW > 0)) return;
-      const a = hit.a;
+      // The boxes that wrap (a point box is never turned into a fixed one by this field).
+      const fixed = textTargets().filter((x) => x.boxW > 0);
+      if (!fixed.length) return;
+      const a = fixed.find((x) => x.id === ed.sel) || fixed[0]; // the one whose width the field shows
       const v = +bw.value;
       if (!isFinite(v) || v <= 0 || (!final && v < MIN_BOX_W)) {
         if (final) bw.value = String(Math.round(a.boxW));
@@ -4730,12 +4757,14 @@
       }
       const w = Math.min(+bw.max || 14400, Math.max(MIN_BOX_W, v));
       if (final) bw.value = String(Math.round(w));
-      if (w === a.boxW) return;
-      pushEdUndo("boxw:" + ed.sel);
-      a.boxW = w;
-      const m = measureText(a.text, a.fontSize, textStyle(a));
-      a.w = m.w;
-      a.h = m.h;
+      if (fixed.every((x) => x.boxW === w)) return;
+      pushEdUndo("boxw:" + selSig());
+      for (const x of fixed) {
+        x.boxW = w;
+        const m = measureText(x.text, x.fontSize, textStyle(x));
+        x.w = m.w;
+        x.h = m.h;
+      }
       syncOverlays();
     };
     if (bw) {
@@ -4844,16 +4873,8 @@
     if (b) {
       b.addEventListener("mousedown", (ev) => ev.preventDefault());
       b.addEventListener("click", () => {
-        const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-        if (!hit || hit.a.kind !== "text") return;
-        const a = hit.a;
-        pushEdUndo("clearfmt:" + ed.sel);
         const f = window.AnnotText.pickTextDefault({});
-        for (const k of window.AnnotText.TEXT_DEFAULT_KEYS) a[k] = f[k];
-        const m = measureText(a.text, a.fontSize, textStyle(a));
-        a.w = m.w;
-        a.h = m.h;
-        syncOverlays();
+        if (!forTextTargets("clearfmt", (a) => { for (const k of window.AnnotText.TEXT_DEFAULT_KEYS) a[k] = f[k]; }, true)) return;
         syncControls();
         syncFmtPanel();
       });
@@ -4907,9 +4928,9 @@
   // with no border has the shape of one written before borders existed — BI-59). No
   // re-measure: a border is drawn inside the raster's rectangle and moves no glyph.
   function writeBorder(final) {
-    const hit = ed.sel != null ? findAnnot(ed.sel) : null;
-    if (!hit || hit.a.kind !== "text" || hit.a._foreign) return;
-    const a = hit.a;
+    // Every selected box but a partner's FreeText (it keeps the border its file gave it).
+    const own = textTargets().filter((x) => !x._foreign);
+    if (!own.length) return;
     const on = $("fmt-border").checked;
     const AT = window.AnnotText;
     let w = +$("fmt-border-width").value;
@@ -4922,16 +4943,18 @@
     const color = $("fmt-border-color").value;
     const dash = $("fmt-border-dash").value;
     const want = on ? { color, width: w, dash: dash === "dash" || dash === "dot" ? dash : "solid" } : null;
-    const cur = AT.normTextBorder(a);
-    if (JSON.stringify(want) === JSON.stringify(cur)) return;
-    pushEdUndo("border:" + ed.sel);
-    delete a.borderColor;
-    delete a.borderWidth;
-    delete a.borderDash;
-    if (want) {
-      a.borderColor = want.color;
-      a.borderWidth = want.width;
-      if (want.dash !== "solid") a.borderDash = want.dash;
+    const changed = own.filter((a) => JSON.stringify(want) !== JSON.stringify(AT.normTextBorder(a)));
+    if (!changed.length) return;
+    pushEdUndo("border:" + selSig());
+    for (const a of changed) {
+      delete a.borderColor;
+      delete a.borderWidth;
+      delete a.borderDash;
+      if (want) {
+        a.borderColor = want.color;
+        a.borderWidth = want.width;
+        if (want.dash !== "solid") a.borderDash = want.dash;
+      }
     }
     syncOverlays();
     syncFmtPanel();
@@ -5119,25 +5142,42 @@
     }
     return null;
   }
+  // The objects the three fill controls write to. An open inline editor still owns them
+  // (fillTargetAnnot: that ONE box, or nothing). Otherwise it is every selected object of the
+  // kind the controls are showing (fillCtlKind) — the primary's, under Select — so a Ctrl+click
+  // group of labels takes a background together, while a rectangle that happens to be in the
+  // group is left alone (its slot is a different one, BI-75). A lone selection is the one
+  // object it always was (BI-118).
+  function fillTargets() {
+    if (ed._taCommit) {
+      const a = fillTargetAnnot();
+      return a ? [a] : [];
+    }
+    const kind = fillCtlKind();
+    if (!kind || !FILLABLE_KINDS.has(kind)) return [];
+    return selAnnots().filter((x) => x.kind === kind);
+  }
   // Interior fill: picking a colour turns fill on (and clears the transparent
   // toggle); the toggle turns it back off. Both update the target shape live.
   function applyFillToSel() {
     const kind = fillCtlKind();
-    const a = fillTargetAnnot();
-    if (!a || !kind || !FILLABLE_KINDS.has(kind)) return;
+    if (!kind || !FILLABLE_KINDS.has(kind)) return;
     // `a.kind !== kind` happens for real, and silently: leave a rectangle selected, switch
     // to the Hộp văn bản tool, move Mờ nền. The controls now show the TEXT slot while the
     // selection is still a rectangle, so the old code wrote effFill("box") — the shape's
     // own unchanged values — back onto it. No visible change, but a wasted undo step and a
     // session marked dirty for nothing. The tool the user is holding decides the target.
-    if (a.kind !== kind) return;
+    const targets = fillTargets().filter((x) => x.kind === kind);
+    if (!targets.length) return;
     // From the CONTROLS, not from `ed[slot]` via effFill() — see fillFromCtls and BI-76.
     // effFill()/effFillOpacity() stay in use, but only on the CREATE paths, which is the
     // one place the remembered slot really is the answer.
     const f = fillFromCtls();
-    pushEdUndo("fill:" + a.id);
-    a.fill = f.fill;
-    a.fillOpacity = f.fillOpacity;
+    pushEdUndo("fill:" + (targets.length > 1 ? selSig() : targets[0].id));
+    for (const a of targets) {
+      a.fill = f.fill;
+      a.fillOpacity = f.fillOpacity;
+    }
     // Safe to rebuild the layer with an editor open: renderLayer carries it across (BI-75).
     syncOverlays();
   }

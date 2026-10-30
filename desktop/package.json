@@ -35,6 +35,7 @@
     "test:managed": "node test/managed-image.test.js",
     "test:text": "node test/annot-text.test.js",
     "test:fmtpanel": "node test/fmt-panel.test.js",
+    "test:multiedit": "node test/text-multiedit.test.js",
     "test:taresize": "node test/text-editor-resize.test.js",
     "test:labelsize": "node test/label-size.test.js",
     "test:penwidth": "node test/pen-width.test.js",

@@ -59,6 +59,17 @@ function el(props) {
   }, props);
 }
 
+// The group helpers every style handler now goes through (BI-118), CUT from the shipping source
+// so the rigs below run the real textTargets / selSig / forTextTargets / textRef, not stand-ins.
+// A rig supplies the lowest layer (selIds / selAnnots over its one box) and the editor's own
+// primitives; the helpers are prepended to the block under test inside one Function scope.
+const HELP_SRC = cut("  const textTargets = ", "  // Ctrl/Cmd+click: add to (or remove from)");
+const selLayer = (ed, box) => ({
+  selIds: () => (ed.sel == null ? [] : [ed.sel]),
+  selAnnots: () => (box && ed.sel != null ? [box] : []),
+});
+const runBlock = (env, src) => new Function(...Object.keys(env), HELP_SRC + "\n" + src)(...Object.values(env));
+
 // =============================================================================
 // P2 · Bề rộng khung
 // =============================================================================
@@ -81,7 +92,8 @@ function boxwRig(annot, opts) {
     syncOverlays: () => overlays++,
     MIN_BOX_W: 24,
   };
-  new Function(...Object.keys(env), BOXW_SRC)(...Object.values(env));
+  Object.assign(env, selLayer(ed, annot));
+  runBlock(env, BOXW_SRC);
   return { bw, undo, overlays: () => overlays, a: annot };
 }
 
@@ -143,9 +155,9 @@ function boxwRig(annot, opts) {
 // syncFmtPanel's half: enabled only for a selected FIXED box, rounded, never clobbering
 // the field while it is being typed into.
 check("K7 syncFmtPanel enables the field only for a selected fixed box",
-  /bw\.disabled = !\(hit && hit\.a\.kind === "text" && s\.boxW > 0\);/.test(ED), true);
+  /bw\.disabled = !fx;/.test(ED), true);
 check("K7b …shows the rounded width, blank when disabled, and skips the focused field",
-  /if \(bw !== active\) bw\.value = bw\.disabled \? "" : String\(Math\.round\(s\.boxW\)\);/.test(ED), true);
+  /if \(bw !== active\) bw\.value = bw\.disabled \? "" : String\(Math\.round\(normTextStyle\(fx \|\| ref \|\| \{\}\)\.boxW\)\);/.test(ED), true);
 check("K7c a grip drag ends with the panel re-synced (the field shows the new width)",
   /renderLayer\(layer, page\);\s*\/\/[^\n]*\n[^\n]*\n\s*syncFmtPanel\(\);\s*\}/.test(ED), true);
 {
@@ -326,7 +338,8 @@ function defRig(opts) {
       wordSpacing: ed.wordSpacing, charScale: ed.charScale, indent: ed.indent, listType: ed.listType,
       opacity: ed.textOpacity, rot: ed.textRot, fill: "none", fillOpacity: 1 }),
   };
-  new Function(...Object.keys(env), DEF_SRC)(...Object.values(env));
+  Object.assign(env, selLayer(ed, box));
+  runBlock(env, DEF_SRC);
   return { ed, ctl, btnState, writes, toasts, log, box };
 }
 {
@@ -393,7 +406,7 @@ function defRig(opts) {
     r2.log.slice(-4), ["undo:clearfmt:7", "syncOverlays", "syncControls", "syncFmtPanel"]);
 }
 check("D7 syncFmtPanel: Xoá định dạng is enabled only with a text box selected",
-  /clr\.disabled = !\(hit && hit\.a\.kind === "text"\);/.test(ED), true);
+  /clr\.disabled = !ref;/.test(ED), true);
 {
   // The factory has three spellings that must agree: ed's literal, the size field's
   // markup, and pickTextDefault({}) (what Xoá định dạng writes).
@@ -505,7 +518,8 @@ function borderRig(box, ctlv) {
     syncOverlays: () => log.push("syncOverlays"),
     syncFmtPanel: () => log.push("syncFmtPanel"),
   };
-  new Function(...Object.keys(env), BORDER_SRC)(...Object.values(env));
+  Object.assign(env, selLayer(ed, box));
+  runBlock(env, BORDER_SRC);
   return { c, log, box };
 }
 {
@@ -542,7 +556,7 @@ function borderRig(box, ctlv) {
   check("B5b nothing selected ⇒ nothing happens", r2.log, []);
 }
 check("B6 syncFmtPanel disables the border controls for a partner's FreeText, and the sub-controls while off",
-  /bdC\.disabled = !box \|\| !!box\._foreign;[\s\S]{0,200}?const off = bdC\.disabled \|\| !bd;/.test(ED), true);
+  /const own = tts\.filter\(\(x\) => !x\._foreign\);[\s\S]{0,300}?bdC\.disabled = !box;[\s\S]{0,200}?const off = bdC\.disabled \|\| !bd;/.test(ED), true);
 {
   // The overlay half — renderAnnot cannot run in node, so its shape is pinned.
   check("B7 renderAnnot draws the border on the RASTER's rectangle (textRasterBoxPt), and the wash with it",
