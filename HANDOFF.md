@@ -4,7 +4,17 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-10-30 · v0.2.81 (núm xoay hộp chữ + sửa nhiều hộp chữ, ngay dưới) · v0.2.80 · v0.2.79 là bản trước đó_
+_Cập nhật: 2026-11-18 · v0.2.82 (sửa chữ trên PDF AutoCAD "text as geometry", ngay dưới) · v0.2.81 · v0.2.80 là bản trước đó_
+
+> **v0.2.82 — Sửa chữ / Tìm & Thay trên PDF AutoCAD không còn để chữ cũ dưới chữ mới** (2026-11-18; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
+> Sổ bất biến **BI-119** — đọc trước khi sửa `/edit-text` · commit `8c9ecd0` · **Đổi `api.py` ⇒ sidecar ĐÃ build lại** (marker = `8c9ecd04`).
+> **Lỗi:** file xuất từ AutoCAD ("plot text as geometry") vẽ mỗi glyph thành nét vector và giữ chữ thật ở render mode 3 (vô hình). `/edit-text` chỉ xoá lớp vô hình
+> (BI-23: redaction chỉ lấy chữ) nên chữ mới **đè lên** chữ cũ còn nhìn thấy. **Sửa:** `_erase_outlined_glyphs` (bước 0b) — chỉ với span là chữ vô hình, xoá các nét `f`
+> cùng màu chữ nằm trong hộp span bằng MỘT redact rect hợp nhất; trang chữ thật đi đúng đường cũ. Không tô nền (sẽ che đường kẻ).
+> Kiểm: Python 26/26 (có `test_edit_text_outlined.py` mới, 6 ca theo điểm ảnh) · JS 56/56 · đột biến 5/5 · file khách `CT3_Thang bo-thang may thap.pdf`: Ctrl+H
+> `T.K.B.V.T.C → T.K.K.T` ⇒ 7 trang AutoCAD mực chữ cũ 470→0, 0 điểm ảnh lệch ngoài vùng sửa, 44 trang Revit y hệt từng điểm ảnh.
+> ⚠️ **Còn mở:** chưa bấm tay trong app Electron (chỉ gọi thẳng sidecar); `/translate` cùng cách redact **chưa** áp; PDF quét có lớp OCR vô hình trên ảnh (không có nét vector để xoá);
+> nét outline lệch hộp lớp chữ > 1.5 pt ngang không bị xoá.
 
 > **v0.2.81 — Núm xoay hộp chữ + sửa style nhiều hộp chữ cùng lúc** (2026-10-30; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
 > Kế hoạch: `docs/PLAN-2026-10-30-text-rotate-multiedit.md` · sổ bất biến **BI-117** (núm xoay) + **BI-118** (nhiều hộp) — đọc trước khi sửa ·
