@@ -2518,6 +2518,103 @@ def _bbox_is_size_fallback(e: "TextEdit") -> bool:
     return abs(thick / float(e.orig_size) - 1.0) <= _SIZE_FALLBACK_TOL
 
 
+# --- Outlined text with an invisible text layer (BI-119) ---------------------------------
+# AutoCAD's "plot text as geometry" (and some Bluebeam / print-to-PDF paths) draw every
+# glyph as a FILLED VECTOR PATH and keep the real characters only as an INVISIBLE layer
+# (render mode 3) so the page stays searchable. /text-find and /text-spans see only that
+# layer, so an edit redacts it — and the redaction below is deliberately text-only
+# (BI-23: graphics=LINE_ART_NONE) — which leaves the visible outlines untouched and the
+# new text lands on top of the old: "T.K.K.T" over "T.K.B.V.T.C".
+#
+# Measured on the customer's 54-page set (CT3_Thang bo-thang may thap.pdf): 7 AutoCAD
+# pages, 100 % of whose text runs are invisible; the other 44 (Revit, real text) were
+# already clean. Wording of the fix is pinned by test_edit_text_outlined.py.
+_OUTLINE_PAD = 1.5      # pt: outlines overshoot the text layer's box (measured 1.0 pt)
+_OUTLINE_GROW = 0.6     # pt: curve bounds from control points exceed the reported rect
+_COLOR_TOL = 0.02
+_MIN_OVERLAP = 0.5      # share of the span's box a text-layer run must cover to be "it"
+
+
+def _erase_outlined_glyphs(fitz, page, edits) -> int:
+    """For each edit whose span is an INVISIBLE (Tr 3) text run, delete the filled vector
+    glyphs drawn for it. Returns how many shapes were targeted.
+
+    Does nothing — and costs one cheap get_texttrace() — unless the page has invisible
+    text, so a page of real text (every Word / Revit / PDFsharp file) takes exactly the
+    pre-BI-119 path. Only filled paths in the text's own colour that lie wholly inside
+    the span's box (+ _OUTLINE_PAD) are candidates; thin rules, strokes, white boxes and
+    anything bigger than the span survive. The shapes go out under ONE redaction rect per
+    span: many rects in a single apply_redactions left a stray glyph (measured on this
+    file), one union rect did not."""
+    covered_mode = getattr(fitz, "PDF_REDACT_LINE_ART_REMOVE_IF_COVERED", None)
+    if covered_mode is None:
+        return 0  # PyMuPDF too old for the mode: keep the pre-BI-119 behaviour
+    try:
+        runs = [t for t in page.get_texttrace() if t.get("type") == 3]
+    except Exception as ex:
+        logger.debug("get_texttrace failed, outlined-text step skipped: %s", ex)
+        return 0
+    if not runs:
+        return 0
+
+    drawings = None
+    rects = []
+    n = 0
+    for e in edits:
+        if len(e.bbox) != 4:
+            continue
+        eb = fitz.Rect(*e.bbox)
+        area = eb.get_area()
+        if area <= 0:
+            continue
+        mine = None
+        for t in runs:
+            ov = fitz.Rect(t["bbox"]) & eb
+            if not ov.is_empty and ov.get_area() >= _MIN_OVERLAP * area:
+                mine = t
+                break
+        if mine is None:
+            continue
+        col = tuple(mine.get("color") or ())
+        if len(col) != 3:
+            continue
+        if drawings is None:
+            drawings = page.get_drawings()
+        zone = fitz.Rect(eb.x0 - _OUTLINE_PAD, eb.y0 - _OUTLINE_PAD,
+                         eb.x1 + _OUTLINE_PAD, eb.y1 + _OUTLINE_PAD)
+        bw, bh = eb.width, eb.height
+        union = None
+        for d in drawings:
+            if d.get("type") != "f":
+                continue
+            fill = d.get("fill")
+            if not fill or len(fill) != 3 or any(abs(a - b) > _COLOR_TOL for a, b in zip(fill, col)):
+                continue
+            r = fitz.Rect(d["rect"])
+            if not zone.contains(r):
+                continue
+            # a rule (underline / table line), not a glyph — never the span's own text
+            if r.height < 0.12 * bh and r.width > 0.6 * bw and bw > 0:
+                continue
+            union = fitz.Rect(r) if union is None else (union | r)
+            n += 1
+        if union is not None:
+            rects.append(fitz.Rect(union.x0 - _OUTLINE_GROW, union.y0 - _OUTLINE_GROW,
+                                   union.x1 + _OUTLINE_GROW, union.y1 + _OUTLINE_GROW))
+    if not rects:
+        return 0
+    for r in rects:
+        page.add_redact_annot(r, fill=False)
+    kwargs = dict(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=covered_mode)
+    try:
+        # text=NONE: the text layer is the next step's business (BI-23); this one only
+        # touches the vector shapes.
+        page.apply_redactions(text=fitz.PDF_REDACT_TEXT_NONE, **kwargs)
+    except (TypeError, AttributeError):
+        page.apply_redactions(**kwargs)
+    return n
+
+
 class EditTextRequest(BaseModel):
     pdf_b64: str
     edits: list[TextEdit]
@@ -2586,6 +2683,11 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
             page_font_exact = _page_font_programs_exact(
                 doc, page, {e.font for e in edits if _bbox_is_size_fallback(e)}
             )
+            # 0b. Outlined text over an invisible text layer (AutoCAD "text as geometry",
+            #     BI-119): the visible glyphs are vector paths the text-only redaction
+            #     below cannot see. Erase just those, or the replacement is drawn over
+            #     the old words. No-op on any page without invisible text.
+            _erase_outlined_glyphs(fitz, page, edits)
             # 1. Physically remove the old glyphs under each box — and NOTHING else.
             #    The box is the text's own bbox, so everything it overlaps (a shaded
             #    table cell, the rule under a heading, a scanned letterhead) was
