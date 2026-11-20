@@ -271,7 +271,8 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
 - `api.py` `/edit-text` (khối chọn font) + `src/pdf/fonts.py`.
 - Thứ tự **bắt buộc**: (1) font hệ thống theo họ (`_resolve_local_font`, thử lần lượt
   `_family_candidates`) → (2) chính font **nhúng trong PDF nguồn**
-  (`_page_font_buffers` + `embed_page_font`) → (3) DejaVu bó sẵn.
+  (`_page_font_buffers` + `embed_page_font`) → **(2b) font hệ thống theo TÊN NẰM TRONG
+  chương trình font nhúng** (`_embedded_font_name`, thêm 2026-11-20) → (3) DejaVu bó sẵn.
 - Bậc 1 hỏng ở tên kiểu **“TimesNewRomanBold”** (kiểu chữ dính liền, không dấu gạch)
   → rơi thẳng xuống DejaVu, người dùng thấy **đổi font trong im lặng** dù đã chọn
   “Giữ nguyên”. Đó là lỗi đã sửa 2026-07-26.
@@ -280,8 +281,29 @@ Mỗi mục: **bất biến → ở đâu → vì sao → dấu hiệu vỡ.**
   `needs_unicode`: chữ ASCII thuần cũng có thể thiếu glyph → ra ô vuông (□) đúng
   kiểu hồi quy v0.2.34.
 - `_page_font_buffers` phải gọi **TRƯỚC `apply_redactions()`**.
-- **Vỡ khi:** sửa chữ xong đổi sang font khác hẳn · hoặc ra □.
-- Lưới: `.venv\Scripts\python test_edit_text_font.py` (8 ca) + `test_edit_text_rounds.py`.
+- **Bậc 2b (căn cứ: file khách `0. TH.pdf`, 2026-11-20).** `/BaseFont` do công cụ tạo file
+  ghi tuỳ ý (`CIDFont+F1`, `F2`…) nên bậc 1 — chỉ nhìn **tên span** — không bao giờ tới font
+  cài trên máy; bậc 2 lại từ chối vì subset thiếu glyph (`Ề`, `Ố`) → cả dòng rơi DejaVu.
+  Nhưng *bảng tên trong chính chương trình font* vẫn nói "Times New Roman Bold". Bậc 2b
+  tra tên đó (`_resolve_local_font`) rồi **vẫn qua `_font_covers` trên file đã resolve, TRƯỚC
+  khi nhúng** (trượt thì không để lại font thừa trên trang).
+  - **Phải đứng SAU bậc 2.** Nó chỉ chạm các ca trước đây rơi thẳng xuống DejaVu ⇒ mọi ca bậc
+    1/2 đang chạy giữ **byte y hệt**. Đưa lên trước bậc 2 = đổi nguồn glyph của mọi tài
+    liệu đang ổn (đột biến M2 bắt được).
+  - Tên tra được chỉ là **khoá tra cứu**, không quyết định cái gì được vẽ; `_font_covers` vẫn quyết định.
+  - Đo trên `0. TH.pdf`, Tìm&Thay 22 chỗ: trước 11 DejaVu + 11 Times; sau **22/22 Times New Roman
+    Bold**, cỡ y hệt gốc (12.0/9.72…, DejaVu từng ép xuống 10.35/9.0); mực in vùng "Tên dự án: "
+    cố định lệch **0.0 %** so với bản gốc (trước sửa: +25 %).
+  - Giới hạn đã biết: máy **không cài** họ font đó (Mac/Linux, font CAD riêng) vẫn rơi DejaVu.
+  - **"Chữ hoa" không phải nguyên nhân** — là glyph có nằm trong subset của TRANG đó không
+    (trang 0 thiếu `Ề Ố`; trang 5 lại thiếu chữ thường `ề ố ộ ự…`).
+- **Vỡ khi:** sửa chữ xong đổi sang font khác hẳn (kể cả trên PDF có tên font chung kiểu
+  `CIDFont+Fn` dù họ font thật đã cài) · hoặc ra □.
+- Lưới: `.venv\Scripts\python test_edit_text_font.py` (13 ca; 5 ca của bậc 2b, đột biến 4/4:
+  bỏ bậc 2b · đưa lên trước bậc 2 · bỏ kiểm glyph · quên bold) + `test_edit_text_rounds.py`.
+  Ca cũ `test_subset_font_that_cannot_cover…` giữ **nguyên khẳng định**, chỉ đổi fixture
+  (`rename=True`: tên thật trong chương trình font cũng là họ không ai cài) — trước đó fixture
+  còn nói "DejaVu Serif" nên ngầm khẳng định chính cái khoảng hở này.
 
 ### BI-22 · Toàn màn hình: MAIN là nguồn sự thật, renderer chỉ phản ứng
 - `src/tabs.js` (`setPresentation` / `_applyPresentation` / `_layout`) + `main.js`
@@ -3374,7 +3396,7 @@ _Ghi 2026-09-30 (v0.2.73)._
 | Màu chú thích mặc định (`DEFAULT_ANNOT_COLOR`, `savedAnnotColor`, `COLOR_SLOTS`, `colorSlotFor`, `setDefaultColor`, `#set-annot-color`) | `cd desktop ; npm run test:defaults` · xoá key `nabu-annot-color` → vẽ **cả 10** loại dùng màu chung (hộp văn bản, mũi tên, mây, mây vẽ tay, chữ nhật, tròn, bút vẽ, ghi chú, đo) → **tất cả đỏ** · **✓ vẫn xanh, ✗ vẫn đỏ, Tô sáng vẫn vàng, Màu che vẫn đen, Nền vẫn trắng** · Cài đặt đổi màu **khi hộp thoại còn mở** → vật thể mới theo màu mới, **vật thể cũ không đổi** · ô **Màu** trên thanh đổi màu vật thể đang chọn nhưng **không** ghi vào Cài đặt · Ctrl+click 3 mục rồi đổi màu → **cả 3** đổi · khởi động lại app → vẫn nhớ · Áp dụng + Lưu + mở lại → màu trong file đúng · mở file **đã lưu từ bản ≤0.2.59** có mũi tên/ghi chú round-trip → màu **giữ nguyên** · đổi VI↔EN → hàng Cài đặt dịch đúng, ô màu không bị reset (BI-61, BI-10) |
 | Kéo–thả nhiều PDF vào cửa sổ (`drop` ở `app.js`, `openDroppedPdfs`, `combineDroppedPdfs`, `droppedPath`, `pathForFile`) | `cd desktop ; npm run test:confirm` · kéo **1** file → mở luôn, **không** hỏi gì · kéo **3** file → hộp thoại 3 lựa chọn; **Enter** = Mở từng file, nút **Gộp thành một file**, **Esc = không làm gì cả** (tài liệu đang đọc phải còn y nguyên) · chọn Gộp → danh sách đúng **thứ tự đã kéo** (không phải thứ tự tên) · chọn Mở từng file khi tab **đã có** tài liệu → ra **tab mới**, tài liệu cũ không bị thay (đây là ca canh gác BI-63: `File.path` đã chết, nếu `webUtils` không chạy thì nó sẽ **đè** tài liệu đang mở) · tab **trắng** + kéo 3 file → file đầu vào chính tab trắng đó · kéo file **không phải PDF** → không hỏi, không làm gì · kéo PDF vào **dải thumbnail** → vẫn là đường **chèn trang** cũ, **không** ra hộp thoại này (BI-63, BI-8, BI-35, BI-26) |
 | Verb Explorer “Gộp bằng Nabu PDF” (`shell-combine.js`, `combineBucket`, `openCombineBatch`, `sendCombineToView`, `createTab combinePaths`, `combineFromShell`, `installer.nsh`) | `cd desktop ; npm run test:combine` · **phần còn lại CHỈ test được trên bản ĐÃ ĐÓNG GÓI + ĐÃ CÀI** (dev không đăng ký verb, và `electron .` không dựng được verb): `reg query "HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\NabuCombine" /s` thấy đủ `MUIVerb` (tiếng Việt đúng, không mojibake) + `MultiSelectModel=Player` + `command` · **app đang mở với tài liệu BẨN** → chọn 3 PDF → Gộp → tab **mới**, tài liệu cũ **còn nguyên, vẫn bẩn, không bị hỏi câu nào** · **app CHƯA chạy** → chọn 5 PDF → Gộp → **một** hộp thoại **đủ 5 mục**, lặp **≥10 lần** (đây là ca đua khoá single-instance, xem BI-62) · 20 file · tên tiếng Việt có dấu · đường dẫn có dấu cách · ổ mạng UNC · file có mật khẩu lẫn trong loạt → bị bỏ kèm toast, loạt còn lại vẫn gộp · chọn **1** file → hộp thoại 1 mục, “Gộp & lưu” mờ, “Thêm file PDF…” dùng được · sắp lại thứ tự → Gộp & lưu → mở kết quả kiểm **đúng thứ tự + đủ trang** · huỷ hộp thoại Lưu → kết quả vẫn mở, Ctrl+S lưu được · **double-click MỘT file PDF vẫn mở tài liệu, KHÔNG ra hộp thoại Gộp** (ca canh gác thứ tự hỏi) · gỡ app → khoá registry mất hẳn · Win11: mục nằm trong **“Hiện thêm tùy chọn”** (BI-62, BI-35, BI-8) |
-| Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) |
+| Chọn font ở `/edit-text` hay `src/pdf/fonts.py` | `test_edit_text_font.py` **và** `test_edit_text_rounds.py` · mở 1 hoá đơn Times New Roman thật, sửa 1 dòng với “Giữ nguyên” → **không** đổi sang DejaVu, **không** ra □ (BI-21) · mở PDF có tên font chung (`CIDFont+F1`, ví dụ `0. TH.pdf`), Ctrl+H thay thành chuỗi chữ hoa có `Ề`/`Ố` → **mọi** chỗ vẫn Times New Roman Bold, cùng cỡ (bậc 2b) |
 | Toàn màn hình (`setPresentation`, `_layout`, `.presenting`) | `npm run test:tabs` (10 ca cuối) · F11 vào/ra · Esc ra · thoát bằng nút cửa sổ → thanh công cụ phải quay lại · chuyển tab khi đang toàn màn hình · thử bật lúc đang Chú thích (phải từ chối) — BI-22 |
 | `pan.js` hay bất kỳ listener chuột nào trên `#viewer` | `cd desktop ; npm run test:pan` (57 ca) · bật Bàn tay → kéo trang chạy, **không** bôi đen chữ · tắt Bàn tay → bôi đen chữ lại được · giữ Space kéo rồi thả → về đúng công cụ cũ · kéo chuột giữa lúc **đang Chú thích** → trang chạy, **không** vẽ ra hình · lúc **đang Copy ảnh** → trang chạy, **không** ra khung marquee · bấm vào ghi chú (note marker) khi Bàn tay bật → popup vẫn mở (BI-30, BI-31) |
 | Toàn màn hình / dải thumbnail (`applyPresentation`, `body.presenting .sidebar`, `#present-rail`) | F11 → trang vẫn vừa trọn màn hình · rê chuột mép trái → dải trượt ra mà trang **không nhúc nhích** · F4 ghim/bỏ ghim · thu sidebar rồi mới F11 → F4 vẫn gọi lại được dải · thoát F11 → sidebar về đúng trạng thái cũ (BI-32, BI-22) |

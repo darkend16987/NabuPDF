@@ -63,9 +63,17 @@ def _dejavu_serif() -> str | None:
     return str(cand) if cand.is_file() else None
 
 
-def _subset_font(fontfile: str, keep: str) -> bytes | None:
+_UNKNOWN_FAMILY = "ZzQuux CadFont"
+
+
+def _subset_font(fontfile: str, keep: str, *, rename: bool = False) -> bytes | None:
     """`fontfile` cut down to just the characters in `keep` — a real subset program,
-    the way a font actually arrives inside a PDF. Returns None without fontTools."""
+    the way a font actually arrives inside a PDF. Returns None without fontTools.
+
+    `rename` also rewrites the program's own name table to a family no machine has
+    (`_UNKNOWN_FAMILY`): a subset whose TRUE name is not installed either, i.e. the
+    case where nothing but DejaVu can supply the missing glyphs (BI-21 bậc 3). Without
+    it the program still says "DejaVu Serif", which bậc 2b rightly finds."""
     try:
         from fontTools import subset as ft_subset
         from fontTools.ttLib import TTFont
@@ -81,6 +89,13 @@ def _subset_font(fontfile: str, keep: str) -> bytes | None:
     subsetter = ft_subset.Subsetter(options=ft_subset.Options(notdef_outline=True))
     subsetter.populate(text=keep)
     subsetter.subset(font)
+    if rename:
+        names = {1: _UNKNOWN_FAMILY, 2: "Regular", 4: _UNKNOWN_FAMILY + " Regular",
+                 6: _UNKNOWN_FAMILY.replace(" ", "") + "-Regular", 16: _UNKNOWN_FAMILY, 17: "Regular"}
+        for rec in list(font["name"].names):
+            if rec.nameID in names:
+                font["name"].setName(names[rec.nameID], rec.nameID, rec.platformID,
+                                     rec.platEncID, rec.langID)
     buf = io.BytesIO()
     font.save(buf)
     return buf.getvalue()
@@ -254,9 +269,12 @@ def test_subset_font_that_cannot_cover_the_new_text_falls_back():
     Reusing it for text with other characters draws notdef boxes and reports success,
     so coverage has to be checked for every character — including plain ASCII."""
     serif = _dejavu_serif()
-    buf = _subset_font(serif, "AAA") if serif else None
+    # rename=True: the program's OWN name is unknown too, so nothing installed can
+    # stand in for it (bậc 2b finds nothing) and DejaVu Sans really is the last resort.
+    buf = _subset_font(serif, "AAA", rename=True) if serif else None
     if not buf:
         return  # no fontTools → can't build a genuine subset here
+    assert not _resolve_local_font(fitz.Font(fontbuffer=buf).name, False, False), "fixture name is installed?!"
     pdf = _src_pdf("AAA", fontbuffer=buf, retag="ZzQuuxCadFontRegular")
     out, drawn = _keep_font_round(pdf, "Chữ hoàn toàn khác")
     assert _notdef(out) == 0, f"subset font was reused blindly (redrawn in {drawn!r})"
@@ -275,6 +293,98 @@ def test_ascii_only_edit_also_checks_coverage():
     assert _notdef(out) == 0, f"ASCII edit drew notdef boxes from a subset font ({drawn!r})"
 
 
+# ---- 3. bậc 2b: the program's OWN name finds the installed family ----------
+#
+# Real file: 0. TH.pdf. Its fonts are /BaseFont /CIDFont+F1 — the family is gone from
+# the NAME, so bậc 1 (installed font by span name) finds nothing; the embedded program
+# is a subset missing "Ề"/"Ố", so bậc 2 refuses it; and the redraw fell to DejaVu Sans
+# Bold. But the program's name table still says "Times New Roman Bold", which IS
+# installed. Stand-in here: DejaVu Serif, so the assertions run on any machine.
+
+
+def _font_refs(pdf_b64: str) -> set[str]:
+    """Resource names (/src = the document's own program, /loc = an installed font,
+    /vnedit = bundled DejaVu) of the fonts page 0 ends up with."""
+    doc = fitz.open(stream=base64.b64decode(pdf_b64), filetype="pdf")
+    try:
+        return {f[4] for f in doc[0].get_fonts()}
+    finally:
+        doc.close()
+
+
+def test_subset_that_cannot_cover_uses_the_installed_family_named_inside_it():
+    """The reported case. Span name `CIDFont+F1` (resolves to nothing), program is a
+    subset without the new glyphs, true family installed → keep the family."""
+    serif = _dejavu_serif()
+    buf = _subset_font(serif, "AAA") if serif else None
+    if not buf:
+        return
+    assert not _resolve_local_font("CIDFont+F1", False, False), "fixture name is installed?!"
+    pdf = _src_pdf("AAA", fontbuffer=buf, retag="CIDFont+F1")
+    out, drawn = _keep_font_round(pdf, "Chữ hoàn toàn khác")
+    assert "Serif" in drawn, f"original family dropped for DejaVu Sans: redrawn in {drawn!r}"
+    assert "loc" in _font_refs(out), "expected the installed font to be embedded (/loc)"
+    assert _notdef(out) == 0, "redraw produced notdef boxes"
+
+
+def test_bold_survives_the_embedded_name_lookup():
+    """The reported run is BOLD ("Times New Roman Bold"). The program's name carries
+    the style word; it must be peeled off to reach the family and the bold variant
+    picked from the span's own flag."""
+    serif = _dejavu_serif()
+    bold_ttf = Path(serif).with_name("DejaVuSerif-Bold.ttf") if serif else None
+    buf = _subset_font(str(bold_ttf), "AAA") if bold_ttf and bold_ttf.is_file() else None
+    if not buf:
+        return
+    pdf = _src_pdf("AAA", fontbuffer=buf, retag="CIDFont+F1")
+    out, drawn = _keep_font_round(pdf, "Chữ hoàn toàn khác")
+    assert "Serif" in drawn and "Bold" in drawn, f"expected DejaVu Serif Bold, got {drawn!r}"
+    assert _notdef(out) == 0
+
+
+def test_a_covering_subset_still_wins_over_the_installed_family():
+    """Ordering guarantee: bậc 2b sits AFTER bậc 2, so a document whose own subset
+    already covers the new text is redrawn exactly as before — /src, never /loc.
+    This is what keeps every case that worked before byte-identical."""
+    serif = _dejavu_serif()
+    base = "Chữ hoàn toàn khác"
+    buf = _subset_font(serif, base) if serif else None
+    if not buf:
+        return
+    pdf = _src_pdf(base, fontbuffer=buf, retag="CIDFont+F1")
+    out, drawn = _keep_font_round(pdf, "Chữ khác")
+    refs = _font_refs(out)
+    assert "src" in refs and "loc" not in refs, f"bậc 2 was bypassed: {refs}"
+    assert "Serif" in drawn
+
+
+def test_embedded_name_lookup_still_checks_coverage():
+    """Bậc 2b finds a family, not a licence to draw: the installed font must cover
+    the text too, or the redraw is notdef boxes (□) and the API still says success.
+    U+2234 is in DejaVu Sans but not in DejaVu Serif, so Serif is found by name,
+    refused on coverage, and the Sans fallback has to take over."""
+    serif = _dejavu_serif()
+    buf = _subset_font(serif, "AAA") if serif else None
+    if not buf:
+        return
+    assert fitz.Font(fontfile=serif).has_glyph(0x2234) == 0, "fixture glyph is in DejaVu Serif?!"
+    pdf = _src_pdf("AAA", fontbuffer=buf, retag="CIDFont+F1")
+    out, drawn = _keep_font_round(pdf, "AAA ∴")
+    assert _notdef(out) == 0, f"installed font was used without a coverage check ({drawn!r})"
+    assert "Serif" not in drawn, f"expected the DejaVu Sans fallback, got {drawn!r}"
+
+
+def test_embedded_font_name_helper():
+    from src.pdf.fonts import _embedded_font_name
+
+    serif = _dejavu_serif()
+    buf = _subset_font(serif, "AAA") if serif else None
+    if not buf:
+        return
+    assert "dejavuserif" in _embedded_font_name(buf).lower().replace(" ", "")
+    assert _embedded_font_name(b"definitely not a font program") == ""
+
+
 if __name__ == "__main__":
     # No pytest in the project venv — plain runner, same style as test_export.py.
     for fn in (
@@ -286,6 +396,11 @@ if __name__ == "__main__":
         test_page_font_buffers_reads_the_untouched_page,
         test_subset_font_that_cannot_cover_the_new_text_falls_back,
         test_ascii_only_edit_also_checks_coverage,
+        test_subset_that_cannot_cover_uses_the_installed_family_named_inside_it,
+        test_bold_survives_the_embedded_name_lookup,
+        test_a_covering_subset_still_wins_over_the_installed_family,
+        test_embedded_name_lookup_still_checks_coverage,
+        test_embedded_font_name_helper,
     ):
         fn()
         print(f"PASS {fn.__name__}")

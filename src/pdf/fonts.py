@@ -448,6 +448,22 @@ def _page_font_programs_exact(doc, page, names) -> dict[str, bytes]:
     return out
 
 
+def _embedded_font_name(buf: bytes) -> str:
+    """The name a font program carries INSIDE itself ("Times New Roman Bold"), or ""
+    when it has none / will not parse.
+
+    Why it exists (BI-21 bậc 2b): a PDF's /BaseFont is whatever the producing tool
+    wrote — "CIDFont+F1", "F2", a random subset tag — and only the PROGRAM's own name
+    table still says what the face really is. The span name is all bậc 1 looks at, so
+    a document like that never reached an installed font even when the very family was
+    sitting in C:\\Windows\\Fonts. The result is only a LOOKUP KEY for
+    `_resolve_local_font`: it never decides what is drawn, `_font_covers` still does."""
+    try:
+        return str(_font_object(fontbuffer=buf).name or "").strip()
+    except Exception:
+        return ""
+
+
 # ---- the text layer of what /edit-text draws ----------------------------------
 #
 # insert_text on an embedded TrueType writes a ToUnicode CMap built by REVERSING the

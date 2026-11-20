@@ -58,6 +58,7 @@ from src.pdf.fonts import (
     _DEJAVU_SUFFIX,
     _clean_font_name,
     _dejavu_variant,
+    _embedded_font_name,
     _family_index,
     _font_covers,
     _font_object,
@@ -2882,6 +2883,22 @@ async def edit_text(req: EditTextRequest, raw: bool = False):
                         pe = embed_page_font(_norm_fam(_clean_font_name(fam_raw)), buf)
                         if pe:
                             fontname, fontbuffer = pe
+
+                    # Bậc 2b (BI-21): the embedded program is a subset that cannot
+                    # cover this text, and the span's NAME found no installed font
+                    # (bậc 1) — "CIDFont+F1" says nothing about the family. The
+                    # program's own name table still does: look THAT up. Reached only
+                    # by cases that used to fall straight to DejaVu, so everything
+                    # bậc 1/2 already handled is untouched. Coverage is checked on the
+                    # resolved file BEFORE embedding, so a miss adds nothing to the page.
+                    if fontname is None and buf:
+                        real = _embedded_font_name(buf)
+                        if real:
+                            vp = _resolve_local_font(real, bool(e.bold), bool(e.italic))
+                            if vp and _font_covers(txt, fontfile=vp):
+                                lf = embed_local(real, bool(e.bold), bool(e.italic))
+                                if lf:
+                                    fontname, fontfile = lf
 
                 # Fallback to bundled DejaVu (real bold/italic variant) when nothing
                 # above resolved; faux styling only as the final resort.
