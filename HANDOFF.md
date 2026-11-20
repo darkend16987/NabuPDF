@@ -4,7 +4,16 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-11-18 · v0.2.82 (sửa chữ trên PDF AutoCAD "text as geometry", ngay dưới) · v0.2.81 · v0.2.80 là bản trước đó_
+_Cập nhật: 2026-11-20 · v0.2.83 (sửa chữ giữ đúng font gốc, ngay dưới) · v0.2.82 · v0.2.81 là bản trước đó_
+
+> **v0.2.83 — Sửa chữ / Tìm & Thay giữ đúng font gốc khi tên font trong PDF là `CIDFont+Fn`** (2026-11-20; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
+> Sổ bất biến **BI-21** (thêm bậc 2b) — đọc trước khi sửa `/edit-text` · commit `ced1d69` · memo `docs/RESEARCH-2026-11-20-edit-text-font-subset-gap.md` ·
+> **Đổi `api.py` + `src/pdf/fonts.py` ⇒ sidecar ĐÃ build lại.**
+> **Lỗi (file khách `0. TH.pdf`):** Tìm & Thay thành chuỗi chữ hoa có `Ề`/`Ố` làm cả dòng đổi sang DejaVu Sans Bold (22 chỗ: 11 DejaVu + 11 Times). **Không phải hồi quy** —
+> DejaVu ở cả 8 phiên bản v0.2.34→v0.2.82: bậc 1 tra font cài theo TÊN span (`CIDFont+F1` không khớp họ nào), bậc 2 từ chối subset thiếu glyph, bậc 3 rơi DejaVu.
+> **Sửa:** bậc 2b — tra font cài theo tên nằm TRONG chương trình font nhúng (`_embedded_font_name`), vẫn kiểm glyph trước khi nhúng; đứng sau bậc 2 nên các ca đang chạy không đổi.
+> Kiểm: Python 26/26 (`test_edit_text_font.py` 8→13 ca) · JS 56/56 · đột biến 4/4 · `0. TH.pdf`: 22/22 Times New Roman Bold đúng cỡ gốc, mực in vùng cố định lệch 0.0 %.
+> ⚠️ **Còn mở:** chưa bấm tay trong app Electron; máy không cài họ font đó vẫn rơi DejaVu (chủ ý BI-21); `/translate-pdf` cùng cách chọn font, chưa đo.
 
 > **v0.2.82 — Sửa chữ / Tìm & Thay trên PDF AutoCAD không còn để chữ cũ dưới chữ mới** (2026-11-18; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
 > Sổ bất biến **BI-119** — đọc trước khi sửa `/edit-text` · commit `8c9ecd0` · **Đổi `api.py` ⇒ sidecar ĐÃ build lại** (marker = `8c9ecd04`).
