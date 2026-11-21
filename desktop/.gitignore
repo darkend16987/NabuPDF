@@ -6,3 +6,6 @@ scripts/.keys/
 # docs/REGRESSION-GUARD.md). It stubs window.desktop — including a license bridge
 # that always reports "licensed" — so it must never be committed.
 renderer/_probe.html
+
+# Báo cáo của lưới quét corpus (desktop/scripts/corpus-sweep.js) — chạy tay, không commit.
+.sweep/

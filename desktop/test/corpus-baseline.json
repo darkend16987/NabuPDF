@@ -1,0 +1,30 @@
+{
+ "note": "Mốc của lưới quét corpus (desktop/scripts/corpus-sweep.js). 'known' chỉ liệt kê file KHÔNG sạch; file xấu đi so với đây là hồi quy.",
+ "corpus": {
+  "dir": "D:\\GitHub\\_refs\\pdfjs-corpus\\test\\pdfs",
+  "files": 1104,
+  "commit": "57dead10694ead8fb21b97f7812fc95311a38ea1"
+ },
+ "generated": "2026-11-21T13:07:02.133Z",
+ "summary": {
+  "ok": 1052,
+  "encrypted": 26,
+  "broken_input": 8,
+  "load_fail_broken_input": 9,
+  "load_fail": 5,
+  "output_error": 2,
+  "output_warn": 1,
+  "edit_fail": 1
+ },
+ "known": {
+  "bug1250079.pdf": "load_fail",
+  "bug1606566.pdf": "load_fail",
+  "bug1980958.pdf": "output_error",
+  "doc_actions.pdf": "output_warn",
+  "filled-background.pdf": "edit_fail",
+  "issue15716.pdf": "output_error",
+  "issue21436.pdf": "load_fail",
+  "issue5334.pdf": "load_fail",
+  "issue6069.pdf": "load_fail"
+ }
+}
