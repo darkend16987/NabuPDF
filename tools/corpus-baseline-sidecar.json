@@ -1,0 +1,47 @@
+{
+ "note": "Moc cua luoi quet sidecar (tools/corpus_sweep_sidecar.py). 'known' chi liet ke file KHONG sach; file xau di so voi day la hoi quy.",
+ "corpus": {
+  "dir": "D:\\GitHub\\_refs\\pdfjs-corpus\\test\\pdfs",
+  "files": 1104,
+  "commit": "57dead10694ead8fb21b97f7812fc95311a38ea1"
+ },
+ "generated": "2026-11-22T05:08:29",
+ "summary": {
+  "ok": 1043,
+  "broken_input:pagenum": 25,
+  "crash": 4,
+  "timeout": 2,
+  "encrypted": 12,
+  "op_fail:compress": 6,
+  "op_fail:pagenum": 5,
+  "output_warn:pagenum": 2,
+  "op_fail:split": 1,
+  "open_fail": 1,
+  "broken_input": 2,
+  "output_warn:split": 1
+ },
+ "known": {
+  "blendmode.pdf": "crash",
+  "bomb_giant.pdf": "timeout",
+  "bug1978317.pdf": "timeout",
+  "bug_jpx.pdf": "crash",
+  "clippath.pdf": "op_fail:compress",
+  "issue18894.pdf": "op_fail:compress",
+  "issue19326.pdf": "op_fail:compress",
+  "issue19517.pdf": "op_fail:compress",
+  "issue21436.pdf": "op_fail:pagenum",
+  "issue22011.pdf": "op_fail:pagenum",
+  "issue3188.pdf": "output_warn:pagenum",
+  "issue5896.pdf": "output_warn:pagenum",
+  "jpx_numcomps.pdf": "op_fail:compress",
+  "jpx_smaskindata.pdf": "op_fail:compress",
+  "opt_demo.pdf": "op_fail:split",
+  "perf_structure_transfer_functions.pdf": "crash",
+  "poppler-67295-0.pdf": "open_fail",
+  "poppler-90-0-fuzzed.pdf": "crash",
+  "poppler-91414-0-53.pdf": "op_fail:pagenum",
+  "poppler-91414-0-54.pdf": "op_fail:pagenum",
+  "prefilled_f1040.pdf": "output_warn:split",
+  "xobject-image.pdf": "op_fail:pagenum"
+ }
+}

@@ -50,3 +50,6 @@ build-package.log
 
 # local sidecar smoke-test stderr
 scratch_sidecar.err
+
+# Bao cao cua luoi quet corpus (tools/corpus_sweep_sidecar.py) - chay tay, khong commit.
+.sweep/

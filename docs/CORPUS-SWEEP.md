@@ -5,11 +5,18 @@ Lưới test thứ ba của repo, bên cạnh `run_tests.py` (Python) và `npm t
 độc lập chấm.** Mượn cách làm của PdfCraft — xem
 [RESEARCH-2026-11-21-pdfcraft-learnings.md](RESEARCH-2026-11-21-pdfcraft-learnings.md) §2.4.
 
-- Chạy: `cd desktop && npm run sweep:corpus`
-- Mã: [`desktop/scripts/corpus-sweep.js`](../desktop/scripts/corpus-sweep.js) (điều phối) +
-  [`corpus-sweep-one.js`](../desktop/scripts/corpus-sweep-one.js) (một file / một tiến trình)
-- Mốc so sánh: `desktop/test/corpus-baseline.json` (**có commit**)
-- Báo cáo: `desktop/.sweep/report.json` (**không commit**)
+App có **hai nửa ghi file**, nên có **hai lưới song sinh**: chung corpus, chung trọng tài, chung
+cách đọc kết quả, **mốc riêng** vì chúng chạy hai đường khác nhau.
+
+| | Nửa renderer (pdf-lib) | Nửa sidecar (PyMuPDF) |
+|---|---|---|
+| Chạy | `cd desktop && npm run sweep:corpus` | `.venv\Scripts\python tools/corpus_sweep_sidecar.py` |
+| Mã | [`desktop/scripts/corpus-sweep.js`](../desktop/scripts/corpus-sweep.js) + [`corpus-sweep-one.js`](../desktop/scripts/corpus-sweep-one.js) | [`tools/corpus_sweep_sidecar.py`](../tools/corpus_sweep_sidecar.py) + [`..._one.py`](../tools/corpus_sweep_sidecar_one.py) |
+| Mốc (**có commit**) | `desktop/test/corpus-baseline.json` | `tools/corpus-baseline-sidecar.json` |
+| Báo cáo (**không commit**) | `desktop/.sweep/report.json` | `.sweep/sidecar-report.json` |
+| Thao tác | mở → lưu nguyên trạng → xoay trang 1 → lưu | đánh số trang · tách file · nén · mã hoá↔giải mã |
+
+Phần dưới mô tả nửa renderer trước; nửa sidecar ở [mục riêng](#nửa-sidecar-pymupdf) cuối file.
 
 ## Vì sao cần nó
 
@@ -160,3 +167,126 @@ Lưới đã được **thử cho đỏ**: bỏ `tracemonkey.pdf` khỏi mốc r
   **13** file, nhưng qpdf chỉ từng kêu **9** — 4 file kia (`bug1727053`, `issue10572`,
   `issue19517`, `issue9243`) mất byte trong stream mà vẫn giải nén được, nên `--check` không
   thấy. Muốn bắt lớp này phải so **byte đầu ra** giữa hai phiên bản mã, không chỉ chấm cấu trúc.
+
+---
+
+# Nửa sidecar (PyMuPDF)
+
+```powershell
+.venv\Scripts\python tools/corpus_sweep_sidecar.py
+.venv\Scripts\python tools/corpus_sweep_sidecar.py --limit 40 --jobs 6
+.venv\Scripts\python tools/corpus_sweep_sidecar.py --filter rotate
+.venv\Scripts\python tools/corpus_sweep_sidecar.py --update-baseline
+```
+
+Gọi **thẳng hàm async của `api.py`** (không dựng server) — đúng đường mà app gọi qua HTTP, trừ
+lớp mạng. Cùng kiểu với `test_endpoints_stubbed.py`.
+
+## Bốn nhóm thao tác, và vì sao chọn chúng
+
+| Thao tác | Chạm vào | Vì sao vào lưới |
+|---|---|---|
+| `/add-page-numbers` | **mọi trang** | phép thử rẻ nhất cho đường ghi: đụng từng trang rồi lưu |
+| `/split` | sao chép trang sang tài liệu mới | kiểm **từng file con** trong .zip + tổng số trang phải bằng bản gốc |
+| `/compress` | giải nén và nén lại **ảnh nhúng**, gom rác | đường nặng nhất, chạm sâu nhất vào cấu trúc file |
+| `/encrypt` → `/decrypt` | vòng tròn mã hoá | chấm trên bản **đã giải mã**: sai ở đâu cũng lộ |
+
+Không vào lưới (và vì sao): `/searchable` và `/ocr` cần model VietOCR (chậm, không tất định),
+`/translate-pdf` cần Gemini (mạng), `/compare-drawings` và `/overlay-drawings` cần **hai** file,
+`/edit-text` cần phân tích span riêng cho từng tài liệu. `/edit-text` là món đáng làm tiếp nhất.
+
+`--size` của `/split` chọn theo số trang (≤ 8 trang → mỗi trang một file; dài hơn → chia 4 phần):
+một file 500 trang mà `size=1` sẽ sinh 500 PDF trong một .zip, không giống thực tế người dùng.
+
+## Mỗi file một tiến trình — ở đây là bắt buộc
+
+PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **giết cả tiến trình**. Lần quét
+đầu đã bắt đúng hai ca như vậy. Tiến trình cha phải giết được tiến trình con theo hạn giờ và quy
+đúng tội cho đúng file — nên worker in một dòng JSON, và **không có dòng JSON nào = `crash`**.
+
+## Xếp hạng (khác lưới JS ở chỗ có tên thao tác)
+
+| Từ | Nghĩa |
+|---|---|
+| `ok` · `encrypted` · `broken_input*` | trạng thái bình thường của corpus, **không** tính là lỗi của ta |
+| **`crash`** | tiến trình chết giữa chừng — PyMuPDF segfault |
+| **`timeout`** | quá 120 s cho một file |
+| **`op_fail:<thao tác>`** | endpoint ném lỗi hoặc trả `success=False` |
+| **`pagecount:<thao tác>`** | số trang đầu ra khác bản gốc |
+| **`output_error:<thao tác>`** / **`output_warn:<thao tác>`** | gốc không hỏng mà đầu ra bị qpdf kêu |
+| **`open_fail`** | qpdf đọc được, PyMuPDF không mở nổi |
+
+## Kết quả lần quét đầu tiên (2026-11-22)
+
+1.104 file, 8 tiến trình song song, **183 giây**.
+
+| | |
+|---|---|
+| `ok` | 1.045 |
+| gốc hỏng sẵn (`broken_input*`) | 27 |
+| `encrypted` (bỏ qua) | 12 |
+| **ta làm xấu đi** | **20** |
+
+20 file đó đã ghim vào mốc. Nặng nhất, theo thứ tự:
+
+- **`crash` — PyMuPDF segfault, giết cả tiến trình sidecar. Thủ phạm là `/compress`.**
+  Chạy riêng từng thao tác, **3 lần mỗi thao tác, trong tiến trình sạch**:
+
+  | file | pagenum | split | **compress** | encrypt |
+  |---|---|---|---|---|
+  | `blendmode.pdf` | 0/3 | 0/3 | **3/3 chết** | 0/3 |
+  | `bug_jpx.pdf` | 0/3 | 0/3 | **3/3 chết** | 0/3 |
+  | `perf_structure_transfer_functions.pdf` | 0/3 | 0/3 | **3/3 chết** | 0/3 |
+  | `poppler-90-0-fuzzed.pdf` | 0/3 | 0/3 | 0/3 | 0/3 |
+
+  Mã thoát **0xC0000005** (access violation). Ba file đầu chết **chắc chắn** khi `/compress` là
+  việc đầu tiên tiến trình làm; trong vòng quét đầy đủ chúng lúc chết lúc không, vì segfault phụ
+  thuộc trạng thái bộ cấp phát sau các thao tác trước đó. Đó cũng là lý do hai lần quét liên tiếp
+  cho **2** rồi **4** file `crash` — xem mục "không tất định" dưới.
+
+  Hậu quả thật: `src/sidecar.js` bắt được cái chết đó và `main.js` hiện *"Engine đã dừng đột ngột
+  (mã …). Khởi động lại app để dùng tiếp."* — **không tự khởi động lại**. Tức một file như thế
+  làm người dùng phải khởi động lại cả app. Đây là việc đáng sửa trước nhất.
+- **2 × `timeout`** (> 120 s): `bomb_giant.pdf` (bom giải nén — đúng loại file mà sidecar **không**
+  có hạn giờ, nên app sẽ treo chứ không báo lỗi), `bug1978317.pdf`.
+- **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và
+  `pixmap may not have alpha to save as JPEG` (`issue19326`, `issue19517`, `jpx_numcomps`,
+  `jpx_smaskindata`). Người dùng bấm Nén và nhận thông báo lỗi trên file mở được bình thường.
+- **5 × `op_fail:pagenum`** — `cannot save with zero pages` (`issue21436`, `poppler-91414-0-53`,
+  `poppler-91414-0-54`), `not a dict (null)` (`issue22011`), `index out of bounds` (`xobject-image`).
+- **1 × `op_fail:split`** — `opt_demo.pdf`: `22 is not in list`. Lỗi **Python thuần** trong mã tách
+  file của ta, không phải lỗi PyMuPDF — đáng soi.
+- **3 × `output_warn`** — `issue3188`, `issue5896` (sau đánh số trang), `prefilled_f1040` (sau tách).
+- **1 × `open_fail`** — `poppler-67295-0.pdf`: qpdf đọc được, PyMuPDF không.
+
+## `crash` là lớp KHÔNG tất định — đọc con số cho đúng
+
+Segfault của PyMuPDF đến và đi theo trạng thái bộ cấp phát, nên cùng một corpus, cùng một mã, hai
+lần quét có thể cho số `crash` khác nhau (đo được: 2 rồi 4). Lưới xử lý bằng cách **chạy lại tuần
+tự từng file `crash` thêm 2 lần** và ghi `attempts` vào báo cáo:
+
+```
+Chay lai tuan tu 4 file 'crash', toi da 2 lan nua...
+  blendmode.pdf                             3/3 lan chet  ['crash', 'crash', 'crash']
+  perf_structure_transfer_functions.pdf     1/3 lan chet  ['crash', 'ok', 'ok']
+```
+
+`timeout` **không** chạy lại: nó tất định (bom giải nén vẫn là bom) và mỗi lần chạy lại tốn trọn
+hạn giờ — đo được, chạy lại 2 file `timeout` đẩy vòng quét từ ~3 phút lên **hơn 11 phút** mà không
+thêm thông tin nào.
+
+Verdict vẫn là `crash` dù chỉ chết một lần — **đã chết một lần là một phát hiện thật**. Nhưng khi
+lưới báo một file `crash` **mới** so với mốc, hãy chạy lại riêng nó (`--filter <tên-file>`) trước
+khi kết luận là hồi quy; script cũng in đúng lời nhắc đó.
+
+Chiều ngược lại (mốc ghi `crash`, lần này sạch) được báo là "đã sạch hơn mốc" và **không** làm
+lưới đỏ — đúng như mong muốn, vì nó có thể chỉ là may.
+
+## Giới hạn đã biết
+
+- Mới phủ **4 trên khoảng 10** endpoint ghi PDF; `/edit-text` là khoảng trống lớn nhất.
+- Không có phép so **byte đầu ra** giữa hai phiên bản mã như đã làm cho bản vá BI-120 — nên nó
+  cũng **báo thiếu** đúng như nửa JS.
+- Hạn giờ 120 s/file là của **lưới**, không phải của sidecar: `bomb_giant.pdf` cho thấy sidecar
+  thật không có hạn giờ nào.
+- Tài liệu mã hoá bị bỏ qua (app bắt người dùng giải mã trước).

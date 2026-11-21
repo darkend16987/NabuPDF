@@ -29,11 +29,18 @@ npm run test:geom                            # một bộ cụ thể (xem "scrip
 
 Xanh = `N/N test files passed`. `/deploy` chạy cả hai; **bất kỳ đỏ nào → dừng**.
 
-Lưới thứ ba, **ngoài** `/deploy`: `cd desktop && npm run sweep:corpus` — mở → sửa → lưu **1.104 file
-PDF thật** (corpus pdf.js) rồi để **qpdf** chấm kết quả. Nó bắt đúng loại lỗi hai bộ trên không thấy:
-lưu ra file hỏng, mất trang, mất góc xoay, pdf-lib treo. **Bắt buộc chạy khi đụng đường đọc/ghi PDF
-hoặc nâng cấp pdf-lib.** Cần corpus + qpdf đặt ngoài repo — cài đặt và cách đọc kết quả ở
-`docs/CORPUS-SWEEP.md`.
+Lưới thứ ba, **ngoài** `/deploy` — chạy đường ghi file thật trên **1.104 file PDF thật** (corpus
+pdf.js) rồi để **qpdf** chấm. App có hai nửa ghi file nên có hai lưới song sinh:
+
+```bash
+cd desktop && npm run sweep:corpus              # nửa renderer (pdf-lib)
+.venv\Scripts\python tools/corpus_sweep_sidecar.py   # nửa sidecar (PyMuPDF)
+```
+
+Chúng bắt đúng loại lỗi hai bộ test trên không thấy: lưu ra file hỏng, mất trang, mất góc xoay,
+thư viện treo hoặc **chết cả tiến trình**. **Bắt buộc chạy khi đụng đường đọc/ghi PDF** — nửa nào
+thì chạy lưới nửa đó, nâng `pdf-lib` hay `PyMuPDF` thì chạy cả hai. Cần corpus + qpdf đặt ngoài
+repo; cài đặt, bảng xếp hạng kết quả và giới hạn đã biết ở `docs/CORPUS-SWEEP.md`.
 Bộ test JS **không** chạy được `app.js`/`editor.js` (DOM). Chúng hoặc `require()` file thuần, hoặc **cắt hàm ra khỏi file đang ship rồi `eval`**, hoặc **ghim regex lên mã nguồn**. Ghim regex đỏ sau khi bạn đổi tên/di chuyển hàm là **tín hiệu để hiểu**, không phải để sửa cho xanh.
 
 Ba bộ canh *cấu trúc* (không đổi hành vi, đừng làm chúng im đi):
