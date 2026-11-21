@@ -866,13 +866,24 @@ def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
 # there is no second executable to build, sign or ship, and the frozen binary already
 # contains everything the work needs.
 
-_COMPRESS_WORKER_FLAG = "--compress-worker"
+# Một nguồn duy nhất, và nó nằm ở module lá: sidecar.py phải đọc được cờ này TRƯỚC
+# khi import api (xem `src/pdf/compress.py`).
+_COMPRESS_WORKER_FLAG = _compress_core.WORKER_FLAG
 
-# Below this, compress in-process. Starting the worker costs a fresh `import api`
-# (measured 2.1 s in dev, more for the frozen exe), while compression itself runs at
-# ~0.138 s/MB — so under ~25 MB the worker would be pure overhead on a job the user
-# never notices, and over it the startup is amortised many times over.
-_COMPRESS_WORKER_MIN_BYTES = 25_000_000
+# MỌI lần nén đều đi qua tiến trình con — không còn ngưỡng dung lượng nào.
+#
+# Lý do thứ hai, và là lý do bắt buộc (BI-121). Lưới quét corpus sidecar bắt được
+# `doc.rewrite_images()` làm MuPDF **segfault** (0xC0000005) trên file thật:
+# blendmode.pdf, bug_jpx.pdf, perf_structure_transfer_functions.pdf — mỗi file chết
+# 1–2 trên 3 lần, cả khi mở từ đường dẫn lẫn từ stream. Segfault KHÔNG bắt được bằng
+# try/except: nó giết cả tiến trình sidecar, và app chỉ còn cách bảo người dùng khởi
+# động lại. Không có điều kiện nội dung nào chặn trước được (xác suất, không tất
+# định), nên cô lập tiến trình là cách duy nhất chắc chắn.
+#
+# Giá phải trả, đo trên tracemonkey.pdf (1 MB): in-process 0,31 s · worker dev
+# 0,76 s · worker đóng gói 3,72 s. Chính con số 3,72 s là lý do commit trước tách
+# lõi nén ra module chỉ cần PyMuPDF và commit này cho sidecar.py xử lý cờ worker
+# TRƯỚC khi import api — xem số đo cập nhật trong docs/CORPUS-SWEEP.md.
 
 # Exit codes the worker speaks. Kept narrow on purpose: the parent has to tell "your
 # request was wrong" (400, message shown to the user) from "we broke" (reported as a
@@ -936,6 +947,24 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> bytes:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> bytes:
+    """Nén trong TIẾN TRÌNH CON — đường duy nhất của cả hai route (BI-121).
+
+    Chạy trên worker thread vì `_compress_via_worker_blocking` chỉ ghi file, chờ một
+    tiến trình và đọc file — cả ba đều nhả GIL, nên event loop vẫn trả lời tab khác.
+
+    Chỉ quay về nén tại chỗ khi **không khởi động nổi** tiến trình con (thiếu script,
+    hết chỗ trong temp, máy bị khoá chính sách). Đó là đánh đổi có chủ ý: mất tính
+    năng chắc chắn tệ hơn một rủi ro segfault hiếm. Worker CHẾT (segfault, mã thoát
+    khác 0) thì KHÔNG thử lại tại chỗ — làm thế là tự giết sidecar đúng như cũ.
+    """
+    try:
+        return await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
+    except OSError as e:
+        logger.warning("compress worker unavailable (%s) — compressing in-process", e)
+        return _compress_pdf_bytes(pdf_bytes, preset)
+
+
 @app.post("/compress", response_model=CompressResponse)
 async def compress(req: CompressRequest):
     """Shrink a PDF: downsample/recompress high-DPI images + strip redundant objects.
@@ -960,7 +989,7 @@ async def compress(req: CompressRequest):
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
     try:
-        out_bytes = _compress_pdf_bytes(pdf_bytes, req.preset)
+        out_bytes = await _compress_anywhere(pdf_bytes, req.preset)
     except HTTPException:
         raise
     except Exception as e:
@@ -1008,22 +1037,7 @@ async def compress_bin(request: Request, preset: str = "ebook"):
 
     original_size = len(pdf_bytes)
     try:
-        if len(pdf_bytes) >= _COMPRESS_WORKER_MIN_BYTES:
-            # Big enough that blocking the loop would be felt in every other tab —
-            # see the note above _COMPRESS_WORKER_FLAG for why this must be a process
-            # and not a thread doing the PyMuPDF work.
-            try:
-                out_bytes = await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
-            except OSError as e:
-                # The worker could not be launched (missing script, no temp space, a
-                # locked-down machine). Never lose the FEATURE over that: fall back to
-                # compressing here, which is exactly the pre-worker behaviour.
-                logger.warning("compress worker unavailable (%s) — compressing in-process", e)
-                out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
-        else:
-            # Small document: in-process is sub-second, and starting a worker would
-            # cost more than the compression itself.
-            out_bytes = _compress_pdf_bytes(pdf_bytes, preset)
+        out_bytes = await _compress_anywhere(pdf_bytes, preset)
     except HTTPException:
         raise
     except Exception as e:

@@ -18,17 +18,18 @@ program means there is no second binary to build, sign or ship.
 
 from __future__ import annotations
 
-import argparse
 import sys
 
-import uvicorn
-
-from api import app  # the existing FastAPI app (OCR endpoints, lifespan, CORS)
-
-# Imported, not re-declared. api.py builds the argv that launches this mode, so a second
-# copy of the string here would let the two drift: the flag would stop being recognised,
-# argparse would reject it, and the parent would report a bare "exited with code 2".
-from api import _COMPRESS_WORKER_FLAG as COMPRESS_WORKER_FLAG
+# CHU Y THU TU IMPORT (BI-121). O day CHI duoc import nhung gi tien trinh worker can.
+# `api`, `uvicorn` va `argparse` duoc import BEN TRONG main(), sau khi co worker da
+# duoc xu ly, vi moi lan nen deu chay qua tien trinh con nay: do duoc, worker phai
+# `import api` ton 0,378 s o ban dev va 3,72 s o ban dong goi, trong khi lam viec that
+# chi ton 0,31 s. Dung dua `from api import ...` tro lai cap module nay.
+#
+# Co duoc lay tu module la (chi can PyMuPDF), khong re-declare: mot ban sao thu hai
+# o day se de hai noi lech nhau - co ngung duoc nhan ra va cha chi thay "exited with
+# code 2".
+from src.pdf.compress import WORKER_FLAG as COMPRESS_WORKER_FLAG
 
 
 def _err(msg: str) -> None:
@@ -64,16 +65,14 @@ def _run_compress_worker(argv: list[str]) -> int:
         return 1
     src, dst, preset = argv[0], argv[1], argv[2]
     try:
-        from fastapi import HTTPException
-
-        from api import _compress_pdf_bytes
+        from src.pdf.compress import CompressRequestError, compress_pdf_bytes
 
         with open(src, "rb") as f:
             data = f.read()
         try:
-            out = _compress_pdf_bytes(data, preset)
-        except HTTPException as e:
-            _err(str(e.detail))
+            out = compress_pdf_bytes(data, preset)
+        except CompressRequestError as e:
+            _err(str(e))
             return 3
         with open(dst, "wb") as f:
             f.write(out)
@@ -88,6 +87,13 @@ def main() -> None:
     # argparse would exit(2) on it before this branch ever ran.
     if len(sys.argv) > 1 and sys.argv[1] == COMPRESS_WORKER_FLAG:
         raise SystemExit(_run_compress_worker(sys.argv[2:]))
+
+    # Nap muon: chi tien trinh SERVER moi can nhung thu nay (xem khoi import o dau file).
+    import argparse
+
+    import uvicorn
+
+    from api import app  # the existing FastAPI app (OCR endpoints, lifespan, CORS)
 
     parser = argparse.ArgumentParser(description="Nabu PDF desktop sidecar")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind")

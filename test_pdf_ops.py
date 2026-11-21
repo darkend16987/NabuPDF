@@ -361,17 +361,57 @@ def test_compress_worker_command_shape():
         assert cmd[2] == api._COMPRESS_WORKER_FLAG
 
 
-def test_compress_worker_threshold_keeps_small_files_in_process():
-    """The worker costs a fresh `import api` (~2s). Below the threshold that would be
-    pure overhead on a job nobody notices, so small documents must NOT pay it."""
-    assert api._COMPRESS_WORKER_MIN_BYTES >= 1_000_000, "threshold too low to be worth a process"
-    assert api._COMPRESS_WORKER_MIN_BYTES < api._MAX_PDF_BIN
+def test_compress_always_runs_out_of_process():
+    """MỌI lần nén phải đi qua tiến trình con — không còn ngưỡng dung lượng (BI-121).
+
+    Vì sao đổi: `doc.rewrite_images()` làm MuPDF segfault trên file thật (đo được:
+    blendmode.pdf, bug_jpx.pdf, perf_structure_transfer_functions.pdf, mỗi file chết
+    1–2/3 lần). Segfault không bắt được bằng try/except; nó giết cả sidecar và app
+    chỉ còn cách bảo người dùng khởi động lại. File nhỏ chạy tại chỗ nghĩa là đúng
+    những file đó không được bảo vệ, nên ngưỡng 25 MB cũ đã bị bỏ.
+    """
+    assert not hasattr(api, "_COMPRESS_WORKER_MIN_BYTES"), "ngưỡng đã bỏ — đừng khôi phục"
     src = base64.b64decode(_npage_pdf(2))
-    assert len(src) < api._COMPRESS_WORKER_MIN_BYTES, "fixture grew past the threshold"
-    # …and the small-file route still returns a real PDF through the in-process path.
-    resp = _run(api.compress_bin(_bin_request(src), preset="lossless"))
-    assert resp.media_type == "application/pdf"
-    assert bytes(resp.body[:4]) == b"%PDF"
+
+    # Cả hai route phải gọi _compress_anywhere; nếu ai đó nối thẳng lại vào
+    # _compress_pdf_bytes thì lần nén đó chạy ngay trong sidecar và segfault trở lại.
+    seen = []
+    real = api._compress_anywhere
+
+    async def spy(pdf_bytes, preset):
+        seen.append(preset)
+        return await real(pdf_bytes, preset)
+
+    api._compress_anywhere = spy
+    try:
+        resp = _run(api.compress_bin(_bin_request(src), preset="lossless"))
+        assert resp.media_type == "application/pdf"
+        assert bytes(resp.body[:4]) == b"%PDF"
+        r = _run(api.compress(api.CompressRequest(pdf_b64=base64.b64encode(src).decode(), preset="lossless")))
+        assert r.success and base64.b64decode(r.data_b64)[:4] == b"%PDF"
+    finally:
+        api._compress_anywhere = real
+    assert seen == ["lossless", "lossless"], f"route không đi qua tiến trình con: {seen}"
+
+
+def test_compress_worker_does_not_import_the_whole_server():
+    """Worker chỉ được cần PyMuPDF.
+
+    Đo được: `import api` tốn 0,378 s ở bản dev và ~3,4 s ở bản đóng gói, trong khi
+    việc nén thật chỉ tốn 0,31 s — nên nếu sidecar.py nạp `api` ở cấp module thì mỗi
+    lần nén trả giá đó. Ghim nguồn, vì sai lầm này im lặng: mọi thứ vẫn CHẠY, chỉ
+    chậm hẳn đi.
+    """
+    import pathlib
+
+    src = pathlib.Path(api.__file__).with_name("sidecar.py").read_text(encoding="utf8")
+    head = src[: src.index("def main(")]
+    # Chỉ nhìn lệnh import THẬT: docstring và comment của chính file đó có nhắc tên
+    # `api` (đúng là nó phải nhắc, để giải thích luật này).
+    lines = [ln for ln in head.splitlines() if ln.strip().startswith(("import ", "from "))]
+    offenders = [ln for ln in lines if ln.strip().startswith(("import api", "from api "))]
+    assert not offenders, f"sidecar.py nap `api` o cap module: {offenders}"
+    assert any("from src.pdf.compress import" in ln for ln in lines), "co worker phai lay tu module la"
 
 
 # --------------------------------------------------------------------------- #
@@ -571,7 +611,8 @@ if __name__ == "__main__":
         test_compress_worker_reports_caller_errors_as_400,
         test_compress_worker_rejects_an_unopenable_file,
         test_compress_worker_command_shape,
-        test_compress_worker_threshold_keeps_small_files_in_process,
+        test_compress_always_runs_out_of_process,
+        test_compress_worker_does_not_import_the_whole_server,
         test_compress_page_cap_is_generous,
         test_text_find_reports_every_occurrence,
         test_text_find_hits_are_in_reading_order,

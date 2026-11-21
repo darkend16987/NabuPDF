@@ -38,6 +38,12 @@ PRESETS = {
 MAX_PAGES = 3000
 
 
+# Cờ dòng lệnh mà sidecar.py nhận ra để chạy ở chế độ "nén một file rồi thoát".
+# Nằm ở ĐÂY chứ không ở api.py vì sidecar.py phải đọc được nó TRƯỚC khi import api —
+# đó là cả mục đích của việc tách module này ra (BI-121).
+WORKER_FLAG = "--compress-worker"
+
+
 class CompressRequestError(ValueError):
     """Yêu cầu sai (preset lạ, file không mở được, quá nhiều trang).
 
