@@ -23,8 +23,9 @@ import sys
 # CHU Y THU TU IMPORT (BI-121). O day CHI duoc import nhung gi tien trinh worker can.
 # `api`, `uvicorn` va `argparse` duoc import BEN TRONG main(), sau khi co worker da
 # duoc xu ly, vi moi lan nen deu chay qua tien trinh con nay: do duoc, worker phai
-# `import api` ton 0,378 s o ban dev va 3,72 s o ban dong goi, trong khi lam viec that
-# chi ton 0,31 s. Dung dua `from api import ...` tro lai cap module nay.
+# `import api` ton 0,378 s o ban dev, trong khi lam viec that chi ton 0,29 s. Dung dua
+# `from api import ...` tro lai cap module nay. (Con so "3,72 s o ban dong goi" tung
+# ghi o day la do lan chay DAU khi anh exe chua vao cache; xem khoi so do trong api.py.)
 #
 # Co duoc lay tu module la (chi can PyMuPDF), khong re-declare: mot ban sao thu hai
 # o day se de hai noi lech nhau - co ngung duoc nhan ra va cha chi thay "exited with

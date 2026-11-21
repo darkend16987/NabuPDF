@@ -892,10 +892,17 @@ _COMPRESS_WORKER_FLAG = _compress_core.WORKER_FLAG
 # động lại. Không có điều kiện nội dung nào chặn trước được (xác suất, không tất
 # định), nên cô lập tiến trình là cách duy nhất chắc chắn.
 #
-# Giá phải trả, đo trên tracemonkey.pdf (1 MB): in-process 0,31 s · worker dev
-# 0,76 s · worker đóng gói 3,72 s. Chính con số 3,72 s là lý do commit trước tách
-# lõi nén ra module chỉ cần PyMuPDF và commit này cho sidecar.py xử lý cờ worker
-# TRƯỚC khi import api — xem số đo cập nhật trong docs/CORPUS-SWEEP.md.
+# Giá phải trả, đo trên tracemonkey.pdf (1 MB), ảnh sidecar.exe ĐÃ ẤM trong cache:
+#
+#     nén tại chỗ (dev)                0,29 s
+#     worker dev                       0,38 s
+#     worker bản đóng gói              0,55 s   <- đường chạy thật
+#     worker bản đóng gói, lần đầu     3,04 s   <- ảnh 75 MB còn lạnh
+#
+# Tức ra tiến trình con tốn thêm ~0,25 s, không phải ~3,4 s. Con số 3,72 s từng ghi
+# ở đây là ĐO SAI: nó là lần chạy đầu khi ảnh chưa vào cache hệ điều hành. Trong app
+# thật sidecar.exe vốn đang chạy nên ảnh luôn ấm. Giữ lại cả hai con số ở đây vì
+# chính cái bẫy "đo lần chạy đầu" mới là thứ dễ vấp lại — xem BI-121.
 
 # Exit codes the worker speaks. Kept narrow on purpose: the parent has to tell "your
 # request was wrong" (400, message shown to the user) from "we broke" (reported as a
