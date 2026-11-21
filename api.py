@@ -197,7 +197,10 @@ app.add_middleware(
     # Routes whose body is the PDF itself (/edit-text?raw=1, /compress-bin) carry
     # their metadata in X-* headers, and without this line those headers come back
     # as null in the renderer with no error anywhere — a silent, hard-to-place bug.
-    expose_headers=["X-Original-Size", "X-Compressed-Size", "X-Filename", "X-Pages-Changed"],
+    expose_headers=[
+        "X-Original-Size", "X-Compressed-Size", "X-Filename", "X-Pages-Changed",
+        "X-Images-Failed",
+    ],
 )
 
 
@@ -805,6 +808,10 @@ class CompressResponse(BaseModel):
     data_b64: str = ""
     original_size: int = 0
     compressed_size: int = 0
+    # True = đã nén xong nhưng KHÔNG nén lại được ảnh (BI-122). Không phải lỗi: file
+    # trả về vẫn hợp lệ, chỉ là mới được deflate + gom rác. Lớp UI nói lại cho người
+    # dùng để họ không phải đoán vì sao file ảnh nặng lại chỉ nhỏ đi vài phần trăm.
+    images_failed: bool = False
     error: str | None = None
 
 
@@ -821,17 +828,22 @@ _COMPRESS_MAX_PAGES = _compress_core.MAX_PAGES
 _MAX_PDF_BIN = 1_000_000_000  # 1 GB of actual PDF bytes
 
 
-def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
+def _compress_pdf_bytes_ex(pdf_bytes: bytes, preset: str) -> _compress_core.CompressResult:
     """Cầu nối HTTP cho lõi nén ở `src/pdf/compress.py`.
 
     Giữ nguyên hợp đồng cũ: lỗi của người gọi ra `HTTPException` 400 với đúng câu
-    chữ như trước, mọi lỗi khác để nguyên cho route báo cáo. Mọi chỗ gọi cũ — và
-    `test_pdf_ops.py` — không phải đổi gì.
+    chữ như trước, mọi lỗi khác để nguyên cho route báo cáo.
     """
     try:
-        return _compress_core.compress_pdf_bytes(pdf_bytes, preset)
+        return _compress_core.compress_pdf_bytes_ex(pdf_bytes, preset)
     except _compress_core.CompressRequestError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
+    """Chỉ byte kết quả — hợp đồng cũ, `test_pdf_ops.py` đang ghim theo tên này."""
+    return _compress_pdf_bytes_ex(pdf_bytes, preset).data
+
 
 # ---------------------------------------------------------------------------
 # Running the compressor OUT OF PROCESS
@@ -891,6 +903,10 @@ _COMPRESS_WORKER_FLAG = _compress_core.WORKER_FLAG
 _WORKER_OK = 0
 _WORKER_INTERNAL = 1
 _WORKER_BAD_REQUEST = 3
+# Nén xong, file hợp lệ, nhưng bước nén lại ảnh đã gãy (BI-122). Một mã riêng chứ
+# không phải chuỗi trên stdout: stdout của worker cố ý để trống, và mã thoát là thứ
+# duy nhất không thể lẫn với dữ liệu.
+_WORKER_IMAGES_FAILED = 4
 
 
 def _compress_worker_cmd(src: str, dst: str, preset: str) -> list[str]:
@@ -905,12 +921,14 @@ def _compress_worker_cmd(src: str, dst: str, preset: str) -> list[str]:
     return [sys.executable, os.path.join(here, "sidecar.py"), _COMPRESS_WORKER_FLAG, src, dst, preset]
 
 
-def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> bytes:
+def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_core.CompressResult:
     """Compress in a child process. Runs on a worker THREAD (see the route).
 
     The thread is safe here precisely because it does no PyMuPDF work — it writes a
     file, waits on a process, and reads a file. All three release the GIL, so the
     event loop keeps running, and MuPDF stays confined to one process at a time.
+
+    Trả về `CompressResult`: byte kết quả + `images_failed` (worker thoát 4, BI-122).
 
     Raises HTTPException for caller errors, RuntimeError for a worker failure, and
     OSError when the worker could not be launched at all (the caller falls back).
@@ -937,17 +955,19 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> bytes:
 
         if proc.returncode == _WORKER_BAD_REQUEST:
             raise HTTPException(status_code=400, detail=err or "Không nén được PDF.")
-        if proc.returncode != _WORKER_OK:
+        if proc.returncode not in (_WORKER_OK, _WORKER_IMAGES_FAILED):
             raise RuntimeError(err or f"Tiến trình nén thoát với mã {proc.returncode}.")
         if not os.path.exists(dst):
             raise RuntimeError("Tiến trình nén không tạo ra file kết quả.")
         with open(dst, "rb") as f:
-            return f.read()
+            return _compress_core.CompressResult(
+                f.read(), proc.returncode == _WORKER_IMAGES_FAILED
+            )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> bytes:
+async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> _compress_core.CompressResult:
     """Nén trong TIẾN TRÌNH CON — đường duy nhất của cả hai route (BI-121).
 
     Chạy trên worker thread vì `_compress_via_worker_blocking` chỉ ghi file, chờ một
@@ -957,12 +977,37 @@ async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> bytes:
     hết chỗ trong temp, máy bị khoá chính sách). Đó là đánh đổi có chủ ý: mất tính
     năng chắc chắn tệ hơn một rủi ro segfault hiếm. Worker CHẾT (segfault, mã thoát
     khác 0) thì KHÔNG thử lại tại chỗ — làm thế là tự giết sidecar đúng như cũ.
+
+    WORKER CHẾT THÌ THỬ LẠI MỘT LẦN, KHÔNG NÉN ẢNH (BI-122). Segfault của MuPDF nằm
+    trong `rewrite_images()`, nên preset "lossless" — vốn không gọi hàm đó — đi qua
+    được. Đo bằng CHÍNH lệnh worker này (`sidecar.py --compress-worker`), 10 lần mỗi
+    file mỗi preset, mỗi lần một tiến trình sạch:
+
+        file                                   ebook chết   lossless chết
+        blendmode.pdf                            10/10          0/10
+        perf_structure_transfer_functions.pdf     8/10          0/10
+        bug_jpx.pdf                               7/10          0/10
+
+    Cột trái KHÔNG ổn định giữa các lần đo (cùng file, cùng mã, có loạt cho 5/5 và có
+    loạt cho 3/5) — đúng tính chất đã ghi ở BI-121: segfault phụ thuộc trạng thái bộ
+    cấp phát. Cột phải thì ổn định: 30/30 lần `lossless` đều sống. Đó mới là thứ bản
+    vá này dựa vào.
+
+    Lần thử lại VẪN ở tiến trình con: nếu lỗi hoá ra không nằm ở bước ảnh thì nó chết
+    lần nữa — và chết ở đó chứ không phải trong sidecar. `lossless` thì không thử
+    lại (chẳng còn gì để bỏ bớt), lỗi nổi lên như cũ.
     """
     try:
         return await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
     except OSError as e:
         logger.warning("compress worker unavailable (%s) — compressing in-process", e)
-        return _compress_pdf_bytes(pdf_bytes, preset)
+        return _compress_pdf_bytes_ex(pdf_bytes, preset)
+    except RuntimeError as e:
+        if preset == "lossless":
+            raise
+        logger.warning("compress worker died (%s) — retrying without image rewriting", e)
+        res = await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, "lossless")
+        return _compress_core.CompressResult(res.data, True)
 
 
 @app.post("/compress", response_model=CompressResponse)
@@ -989,7 +1034,7 @@ async def compress(req: CompressRequest):
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
     try:
-        out_bytes = await _compress_anywhere(pdf_bytes, req.preset)
+        out_bytes, images_failed = await _compress_anywhere(pdf_bytes, req.preset)
     except HTTPException:
         raise
     except Exception as e:
@@ -1003,6 +1048,7 @@ async def compress(req: CompressRequest):
         data_b64=base64.b64encode(out_bytes).decode("ascii"),
         original_size=len(pdf_bytes),
         compressed_size=len(out_bytes),
+        images_failed=images_failed,
     )
 
 
@@ -1037,7 +1083,7 @@ async def compress_bin(request: Request, preset: str = "ebook"):
 
     original_size = len(pdf_bytes)
     try:
-        out_bytes = await _compress_anywhere(pdf_bytes, preset)
+        out_bytes, images_failed = await _compress_anywhere(pdf_bytes, preset)
     except HTTPException:
         raise
     except Exception as e:
@@ -1052,6 +1098,10 @@ async def compress_bin(request: Request, preset: str = "ebook"):
             "X-Original-Size": str(original_size),
             "X-Compressed-Size": str(len(out_bytes)),
             "X-Filename": f"compressed_{ts}.pdf",
+            # Chỉ gửi khi ĐÚNG là đã gãy, để phía renderer chỉ cần hỏi "có header
+            # này không". Nhớ giữ tên trong expose_headers của CORS, nếu không
+            # renderer đọc ra null mà không báo lỗi ở đâu cả.
+            **({"X-Images-Failed": "1"} if images_failed else {}),
         },
     )
 

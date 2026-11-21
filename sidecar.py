@@ -55,6 +55,8 @@ def _run_compress_worker(argv: list[str]) -> int:
 
     Exit codes are the contract with api.py `_compress_via_worker_blocking`:
       0 = done, `dst` holds the PDF
+      4 = done, `dst` holds the PDF, NHUNG buoc nen lai anh da gay (BI-122) — cha
+          bao len cho nguoi dung biet file chi duoc deflate + gom rac
       3 = the request was wrong (bad preset, unopenable PDF, too many pages); stderr
           carries the Vietnamese message the user should see
       1 = anything else; stderr carries the detail for the log
@@ -65,18 +67,18 @@ def _run_compress_worker(argv: list[str]) -> int:
         return 1
     src, dst, preset = argv[0], argv[1], argv[2]
     try:
-        from src.pdf.compress import CompressRequestError, compress_pdf_bytes
+        from src.pdf.compress import CompressRequestError, compress_pdf_bytes_ex
 
         with open(src, "rb") as f:
             data = f.read()
         try:
-            out = compress_pdf_bytes(data, preset)
+            res = compress_pdf_bytes_ex(data, preset)
         except CompressRequestError as e:
             _err(str(e))
             return 3
         with open(dst, "wb") as f:
-            f.write(out)
-        return 0
+            f.write(res.data)
+        return 4 if res.images_failed else 0
     except Exception as e:  # noqa: BLE001 — the parent turns this into a user-visible error
         _err(f"{type(e).__name__}: {e}")
         return 1

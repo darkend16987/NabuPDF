@@ -4151,13 +4151,22 @@ async function runCompress() {
     // the readout cannot break if the CORS expose_headers list ever drifts.
     const originalSize = state.bytes.length;
     const compressedSize = buf.byteLength;
+    // Engine đã nén xong nhưng không nén lại được ảnh (BI-122): MuPDF từ chối một
+    // ảnh trong file, nên bản lưu ra mới chỉ được deflate + gom rác. Không phải lỗi
+    // — nhưng im lặng thì người dùng chọn "ebook" cho một file đầy ảnh lại thấy nó
+    // gần như không nhỏ đi, và không có cách nào biết vì sao.
+    const imagesFailed = res.headers.get("X-Images-Failed") === "1";
     const pct = originalSize ? Math.round((100 * compressedSize) / originalSize) : 100;
     const bytes = new Uint8Array(buf);
     const name = `${baseName(state.name)}-nen.pdf`;
     const r = await window.desktop.savePdf(bytes, name);
     if (r.saved) {
       const msg = `Đã nén: ${fmtBytes(originalSize)} → ${fmtBytes(compressedSize)} (${pct}%)`;
-      toast(pct >= 100 ? "Không giảm thêm được — đã lưu bản gốc tối ưu." : msg, "good");
+      const note = imagesFailed ? " Ảnh trong file này không nén lại được." : "";
+      toast(
+        (pct >= 100 ? "Không giảm thêm được — đã lưu bản gốc tối ưu." : msg) + note,
+        imagesFailed ? "warn" : "good",
+      );
     }
   } catch (err) {
     toast("Lỗi nén: " + err.message, "bad");

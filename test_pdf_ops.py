@@ -304,7 +304,10 @@ def test_compress_worker_produces_the_same_document():
     """The worker is not a second implementation — it calls the same compressor. If
     these two ever disagree, the process boundary is corrupting something."""
     src = base64.b64decode(_npage_pdf(3))
-    via_worker = api._compress_via_worker_blocking(src, "ebook")
+    # Tra ve CompressResult(data, images_failed) tu BI-122, khong con la bytes tran.
+    res = api._compress_via_worker_blocking(src, "ebook")
+    assert res.images_failed is False, "tai lieu lanh ma bao la anh gay"
+    via_worker = res.data
     in_process = api._compress_pdf_bytes(src, "ebook")
     a = fitz.open(stream=via_worker, filetype="pdf")
     b = fitz.open(stream=in_process, filetype="pdf")
@@ -392,6 +395,260 @@ def test_compress_always_runs_out_of_process():
     finally:
         api._compress_anywhere = real
     assert seen == ["lossless", "lossless"], f"route không đi qua tiến trình con: {seen}"
+
+
+# --------------------------------------------------------------------------- #
+# Nén lại ảnh gãy -> vẫn phải nén được phần còn lại (BI-122)
+#
+# VÌ SAO LÀ GIẢ LẬP, KHÔNG PHẢI FILE THẬT. Hai lỗi mà lưới quét corpus bắt được đều
+# đến từ sâu trong MuPDF trên ảnh JPX/pattern ("Bad PatternType", "pixmap may not
+# have alpha to save as JPEG"), và không dựng lại được bằng PyMuPDF: thử insert_image
+# với RGBA/LA ở ba cỡ đều KHÔNG làm rewrite_images ném lỗi (nó tách alpha thành
+# /SMask nên ảnh nền hết alpha). Repo cũng không giữ file PDF nhị phân trong test.
+# Nên ở đây ta thay chính `rewrite_images` bằng một hàm ném lỗi — thứ cần kiểm là
+# NHÁNH XỬ LÝ, không phải khả năng dựng lại một file JPX méo. File thật được chấm ở
+# lưới thứ ba: tools/corpus_sweep_sidecar.py (6 file, xem docs/CORPUS-SWEEP.md).
+# --------------------------------------------------------------------------- #
+def _no_image_rewrite(mutate=None):
+    """Context manager thay fitz.Document.rewrite_images bằng một hàm luôn ném lỗi.
+
+    `mutate(doc)` chạy TRƯỚC khi ném, để giả lập "đã sửa dở tài liệu rồi mới gãy".
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def cm():
+        real = fitz.Document.rewrite_images
+
+        def boom(self, *a, **k):
+            if mutate:
+                mutate(self)
+            raise RuntimeError("code=4: pixmap may not have alpha to save as JPEG")
+
+        fitz.Document.rewrite_images = boom
+        try:
+            yield
+        finally:
+            fitz.Document.rewrite_images = real
+
+    return cm()
+
+
+def test_compress_survives_an_image_rewrite_failure():
+    """MuPDF từ chối một ảnh => vẫn trả về PDF, không ném lỗi lên người dùng.
+
+    Phần lớn phần thắng của việc nén nằm ở deflate + garbage=4, không cần ảnh. Trước
+    bản vá này, một ảnh hỏng làm hỏng cả thao tác và người dùng không nhận được gì.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(3))
+    with _no_image_rewrite():
+        res = core.compress_pdf_bytes_ex(src, "ebook")
+    assert res.images_failed is True, "phải báo lên là ảnh không nén lại được"
+    assert res.data[:4] == b"%PDF"
+    doc = fitz.open(stream=res.data, filetype="pdf")
+    try:
+        assert doc.page_count == 3
+        assert "Page 1 content" in doc[0].get_text()
+    finally:
+        doc.close()
+
+
+def test_compress_discards_a_half_rewritten_document():
+    """Gãy giữa chừng => mở LẠI từ byte gốc, không lưu tài liệu đang dở.
+
+    `rewrite_images` không phải thao tác nguyên tử: nó có thể thay vài ảnh rồi mới
+    ném. Lưu tiếp tài liệu đó là lưu một trạng thái không ai biết. Ở đây hàm giả lập
+    xoá hẳn một trang trước khi ném — nếu ai đó đổi sang "lưu tiếp cho nhanh", test
+    này đỏ với 2 trang thay vì 3.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(3))
+    with _no_image_rewrite(mutate=lambda d: d.delete_page(0)):
+        res = core.compress_pdf_bytes_ex(src, "ebook")
+    doc = fitz.open(stream=res.data, filetype="pdf")
+    try:
+        assert doc.page_count == 3, "tài liệu đã bị sửa dở lọt ra ngoài"
+        assert "Page 1 content" in doc[0].get_text()
+    finally:
+        doc.close()
+
+
+def test_compress_lossless_never_claims_an_image_failure():
+    """"lossless" vốn không nén ảnh — cờ này nói "không làm được việc đã hứa"."""
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    assert core.compress_pdf_bytes_ex(src, "lossless").images_failed is False
+
+
+def test_compress_route_passes_the_image_failure_to_the_client():
+    """Cả hai route phải nói ra, mỗi route theo cách của nó: /compress có trường
+    `images_failed`, /compress-bin có header X-Images-Failed — và header đó phải nằm
+    trong expose_headers, nếu không renderer đọc ra null mà không báo lỗi ở đâu cả."""
+    src = base64.b64decode(_npage_pdf(2))
+    with _no_image_rewrite():
+        # Ép nén tại chỗ: tiến trình con là một process khác, không thấy bản vá trên.
+        real = api._compress_via_worker_blocking
+
+        def unavailable(*a, **k):
+            raise OSError("worker tat trong test")
+
+        api._compress_via_worker_blocking = unavailable
+        try:
+            js = _run(api.compress(api.CompressRequest(
+                pdf_b64=base64.b64encode(src).decode(), preset="ebook")))
+            raw = _run(api.compress_bin(_bin_request(src), preset="ebook"))
+        finally:
+            api._compress_via_worker_blocking = real
+
+    assert js.success and js.images_failed is True
+    assert raw.headers.get("x-images-failed") == "1", dict(raw.headers)
+    exposed = [
+        mw.kwargs["expose_headers"]
+        for mw in api.app.user_middleware
+        if getattr(mw, "kwargs", {}).get("expose_headers")
+    ]
+    assert exposed, "khong tim thay expose_headers cua CORS"
+    assert "X-Images-Failed" in exposed[0], exposed[0]
+
+
+def test_compress_bin_stays_silent_when_images_were_fine():
+    """Header chỉ gửi khi ĐÚNG là đã gãy — renderer chỉ cần hỏi "có header này không"."""
+    src = base64.b64decode(_npage_pdf(1))
+    raw = _run(api.compress_bin(_bin_request(src), preset="ebook"))
+    assert "x-images-failed" not in {k.lower() for k in raw.headers}
+
+
+def test_compress_retries_without_images_when_the_worker_dies():
+    """Worker chết (segfault) => thử lại MỘT lần ở "lossless", vẫn trong tiến trình con.
+
+    Segfault của MuPDF nằm trong `rewrite_images()`, nên bỏ bước đó là đi qua được.
+    Đo bằng chính lệnh worker, 10 lần mỗi file mỗi preset, mỗi lần một tiến trình
+    sạch: `blendmode.pdf` chết 10/10 ở `ebook` và 0/10 ở `lossless`;
+    `perf_structure_transfer_functions.pdf` 8/10 · 0/10; `bug_jpx.pdf` 7/10 · 0/10.
+    Cột `ebook` không ổn định giữa các loạt đo (BI-121: segfault phụ thuộc trạng thái
+    bộ cấp phát); cột `lossless` thì ổn định 30/30 — đó là chỗ bản vá đứng.
+    """
+    src = base64.b64decode(_npage_pdf(2))
+    real = api._compress_via_worker_blocking
+    seen = []
+
+    def flaky(pdf_bytes, preset):
+        seen.append(preset)
+        if preset != "lossless":
+            raise RuntimeError("Tien trinh nen thoat voi ma 3221225477.")
+        return real(pdf_bytes, preset)
+
+    api._compress_via_worker_blocking = flaky
+    try:
+        res = _run(api._compress_anywhere(src, "ebook"))
+    finally:
+        api._compress_via_worker_blocking = real
+
+    assert seen == ["ebook", "lossless"], seen
+    assert res.images_failed is True
+    assert res.data[:4] == b"%PDF"
+
+
+def test_compress_does_not_retry_a_lossless_worker_death():
+    """Không còn gì để bỏ bớt — thử lại chỉ là chết lần nữa, chậm gấp đôi."""
+    src = base64.b64decode(_npage_pdf(1))
+    real = api._compress_via_worker_blocking
+    calls = []
+
+    def dying(pdf_bytes, preset):
+        calls.append(preset)
+        raise RuntimeError("Tien trinh nen thoat voi ma 3221225477.")
+
+    api._compress_via_worker_blocking = dying
+    try:
+        _run(api._compress_anywhere(src, "lossless"))
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
+    finally:
+        api._compress_via_worker_blocking = real
+    assert calls == ["lossless"], calls
+
+
+def test_worker_exit_four_is_success_not_death():
+    """Mã 4 là THÀNH CÔNG kèm ghi chú, không phải "worker chết".
+
+    Đọc nhầm nó thành chết sẽ khiến mọi file có ảnh gãy đi vào nhánh thử lại — tốn
+    thêm một tiến trình cho đúng cái việc worker vừa làm xong. Ở đây ta giả lập lớp
+    `subprocess` chứ không phải PyMuPDF: tiến trình con là một process khác nên không
+    có cách nào bắt worker thật thoát 4 từ một PDF dựng trong test.
+    """
+    import subprocess as _sp
+
+    src = base64.b64decode(_npage_pdf(1))
+    real_run = api.subprocess.run
+
+    class _Proc:
+        returncode = api._WORKER_IMAGES_FAILED
+        stdout = b""
+        stderr = b""
+
+    def fake_run(cmd, **kw):
+        # argv la [..., src, dst, preset] - worker that ghi vao dst, ta cung vay.
+        with open(cmd[-2], "wb") as f:
+            f.write(src)
+        return _Proc()
+
+    api.subprocess.run = fake_run
+    try:
+        res = api._compress_via_worker_blocking(src, "ebook")
+    finally:
+        api.subprocess.run = real_run
+    assert res.data == src
+    assert res.images_failed is True, "ma 4 phai thanh images_failed, khong phai loi"
+    assert _sp is api.subprocess  # da tra lai dung module
+
+
+def test_compress_core_stays_cheap_to_import():
+    """`src/pdf/compress.py` là module LÁ: mỗi lần nén nạp lại nó trong một tiến
+    trình mới, nên mọi import ở cấp module bị trả giá mỗi lần.
+
+    Đo được: `import typing` 0,0156 s và `logging` không kéo nó theo — 6% chi phí của
+    một tiến trình con, đổi lấy đúng một lớp 2 trường. `collections` thì logging đã
+    nạp sẵn nên miễn phí. Ghim theo DANH SÁCH TRẮNG: thêm import mới ở đây là một
+    quyết định phải đo, không phải một dòng gõ thêm cho tiện.
+    """
+    import pathlib
+    import re
+
+    from src.pdf import compress as core
+
+    allowed = {"__future__", "collections", "logging"}
+    src = pathlib.Path(core.__file__).read_text(encoding="utf8")
+    # Bat dau SAU docstring: chinh docstring cua file do co ke "import fitz 0,082 s /
+    # import fastapi 0,267 s / import api 0,378 s" — do la so do, khong phai import.
+    # (Ghim cua phien truoc da vap dung bay nay mot lan.)
+    head = src[src.index("from __future__") : src.index("PRESETS = {")]
+    mods = set()
+    for line in head.splitlines():
+        m = re.match(r"(?:from|import)\s+([\w.]+)", line.strip())
+        if m:
+            mods.add(m.group(1).split(".")[0])
+    extra = mods - allowed
+    assert not extra, f"import moi o cap module cua compress.py: {sorted(extra)}"
+    # `import fitz` phai nam TRONG ham: no la thu nang nhat va chi can khi nen that.
+    assert "import fitz" in src and "import fitz" not in head
+
+
+def test_worker_exit_code_four_is_the_same_number_on_both_sides():
+    """Mã thoát 4 là hợp đồng giữa hai file. Một bên đổi, bên kia đọc thành "worker
+    chết" và người dùng mất tính năng — im lặng, không lỗi ở đâu cả. Ghim nguồn."""
+    import pathlib
+    import re
+
+    assert api._WORKER_IMAGES_FAILED == 4
+    src = pathlib.Path(api.__file__).with_name("sidecar.py").read_text(encoding="utf8")
+    assert re.search(r"return\s+4\s+if\s+\w+\.images_failed", src), \
+        "sidecar.py khong con tra ve 4 khi nen lai anh that bai"
 
 
 def test_compress_worker_does_not_import_the_whole_server():
@@ -613,6 +870,16 @@ if __name__ == "__main__":
         test_compress_worker_command_shape,
         test_compress_always_runs_out_of_process,
         test_compress_worker_does_not_import_the_whole_server,
+        test_compress_survives_an_image_rewrite_failure,
+        test_compress_discards_a_half_rewritten_document,
+        test_compress_lossless_never_claims_an_image_failure,
+        test_compress_route_passes_the_image_failure_to_the_client,
+        test_compress_bin_stays_silent_when_images_were_fine,
+        test_compress_retries_without_images_when_the_worker_dies,
+        test_compress_does_not_retry_a_lossless_worker_death,
+        test_worker_exit_code_four_is_the_same_number_on_both_sides,
+        test_compress_core_stays_cheap_to_import,
+        test_worker_exit_four_is_success_not_death,
         test_compress_page_cap_is_generous,
         test_text_find_reports_every_occurrence,
         test_text_find_hits_are_in_reading_order,

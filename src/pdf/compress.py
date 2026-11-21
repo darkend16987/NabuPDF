@@ -19,6 +19,7 @@ dịch thành HTTP 400 — `test_pdf_ops.py` ghim đúng các thông điệp đ�
 
 from __future__ import annotations
 
+import collections
 import logging
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,20 @@ MAX_PAGES = 3000
 WORKER_FLAG = "--compress-worker"
 
 
+# Kết quả nén: byte ra, kèm một lá cờ nói phần nén lại ảnh có chạy được không.
+#
+# `images_failed` CHỈ đúng khi preset có yêu cầu nén lại ảnh mà `rewrite_images` ném
+# lỗi — tức người dùng chọn "ebook" nhưng nhận về một file chỉ được deflate + gom rác.
+# Preset "lossless" vốn không nén ảnh nên nó luôn là False: lá cờ này nói "không làm
+# được việc đã hứa", không phải "đã bỏ qua ảnh".
+#
+# `collections.namedtuple` chứ không phải `typing.NamedTuple`: đo được, `import typing`
+# tốn 0,0156 s và `logging` KHÔNG kéo nó theo, trong khi `collections` thì logging đã
+# nạp sẵn (thêm 0,0000 s) và dựng lớp tốn 0,00007 s. 15 ms trên ~250 ms chi phí của mỗi
+# tiến trình con là 6% — đúng loại mỡ mà commit trước đã cất công cắt (BI-121).
+CompressResult = collections.namedtuple("CompressResult", "data images_failed", defaults=(False,))
+
+
 class CompressRequestError(ValueError):
     """Yêu cầu sai (preset lạ, file không mở được, quá nhiều trang).
 
@@ -53,6 +68,14 @@ class CompressRequestError(ValueError):
 
 
 def compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
+    """Chỉ lấy byte kết quả — hợp đồng cũ, nhiều chỗ gọi và nhiều lưới đang ghim.
+
+    Cần biết ảnh có nén lại được hay không thì gọi `compress_pdf_bytes_ex`.
+    """
+    return compress_pdf_bytes_ex(pdf_bytes, preset).data
+
+
+def compress_pdf_bytes_ex(pdf_bytes: bytes, preset: str) -> CompressResult:
     """Shrink `pdf_bytes` per `preset`; returns the ORIGINAL bytes if that is smaller.
 
     Dùng chung bởi /compress (base64 JSON), /compress-bin (nhị phân) và tiến trình
@@ -60,24 +83,47 @@ def compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
 
     Ném `CompressRequestError` cho lỗi của người gọi (preset sai, PDF không mở được,
     quá nhiều trang); mọi lỗi khác để nguyên cho lớp trên báo cáo.
+
+    NÉN LẠI ẢNH LÀ VIỆC "CỐ GẮNG", KHÔNG PHẢI ĐIỀU KIỆN SỐNG CÒN (BI-122). Lưới quét
+    corpus bắt được `rewrite_images()` ném lỗi trên 6 file thật — hai kiểu, cả hai
+    đều từ sâu trong MuPDF chứ không phải từ mã của ta:
+
+        FzErrorFormat   code=7: Bad PatternType                     (2 file)
+        FzErrorArgument code=4: pixmap may not have alpha to save as JPEG (4 file)
+
+    Trước đây lỗi đó nổi thẳng lên và cả thao tác nén hỏng — người dùng không nhận
+    được gì. Nhưng phần lớn phần thắng của việc nén nằm ở `tobytes(deflate, garbage=4,
+    clean)`, không cần ảnh: đo được trên đúng 6 file ấy, bỏ bước ảnh vẫn ra file hợp
+    lệ (qpdf sạch 5/6, file thứ sáu đã cảnh báo sẵn từ bản gốc). Nên khi bước ảnh gãy,
+    ta **bỏ tài liệu đã bị sửa dở, mở lại từ byte gốc** rồi lưu — và báo lên bằng
+    `images_failed` để lớp trên nói thật với người dùng.
+
+    Vì sao mở lại chứ không lưu tiếp tài liệu đang có: `rewrite_images` ném lỗi ở
+    giữa chừng thì tài liệu có thể đã thay một phần ảnh. Đo trên 6 file này hai cách
+    cho ra file dài bằng nhau, nhưng đó là 6 file — không phải một lời hứa. Mở lại
+    tốn thêm một lần `fitz.open` trên một nhánh hiếm, đổi lấy việc không bao giờ phải
+    tự hỏi "tài liệu này đang ở trạng thái nào".
     """
     import fitz  # PyMuPDF
 
     if preset != "lossless" and preset not in PRESETS:
         raise CompressRequestError("preset phải là screen|ebook|printer|lossless")
 
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise CompressRequestError(f"Không mở được PDF: {e}")
+    def _open():
+        try:
+            return fitz.open(stream=pdf_bytes, filetype="pdf")
+        except Exception as e:
+            raise CompressRequestError(f"Không mở được PDF: {e}")
 
+    doc = _open()
     if doc.page_count > MAX_PAGES:
         doc.close()
         raise CompressRequestError(f"PDF quá nhiều trang (tối đa {MAX_PAGES}).")
 
-    try:
-        if preset != "lossless":
-            p = PRESETS[preset]
+    images_failed = False
+    if preset != "lossless":
+        p = PRESETS[preset]
+        try:
             doc.rewrite_images(
                 dpi_threshold=p["dpi_threshold"],
                 dpi_target=p["dpi_target"],
@@ -85,6 +131,13 @@ def compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
                 lossy=True,
                 lossless=True,
             )
+        except Exception as e:  # MuPDF từ chối một ảnh -> nén phần còn lại, đừng bỏ cuộc
+            logger.warning("rewrite_images failed (%s) - saving without image rewriting", e)
+            images_failed = True
+            doc.close()
+            doc = _open()
+
+    try:
         try:
             doc.subset_fonts()
         except Exception as e:  # font subsetting is best-effort
@@ -96,4 +149,5 @@ def compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
         doc.close()
 
     # If compression somehow grew the file, hand back the original instead.
-    return pdf_bytes if len(out_bytes) >= len(pdf_bytes) else out_bytes
+    smaller = pdf_bytes if len(out_bytes) >= len(pdf_bytes) else out_bytes
+    return CompressResult(smaller, images_failed)
