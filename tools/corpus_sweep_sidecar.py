@@ -187,6 +187,9 @@ def main() -> int:
         for r in bad[:25]:
             op = r["verdict"].split(":")[-1]
             d = r.get("note") or (r.get("ops", {}).get(op, {}) or {}).get("text", "")
+            # Thong diep loi den TU SIDECAR va la tieng Viet; console Windows la cp1252
+            # nen in thang se lam CHET chinh luoi nay o dong cuoi cung (da vap that).
+            d = d.encode("ascii", "replace").decode("ascii")
             print(f"  {r['verdict']:<26}{r['file']}" + (f"  - {d[:90]}" if d else ""))
         if len(bad) > 25:
             print(f"  ... con {len(bad) - 25} file nua, xem {out}")

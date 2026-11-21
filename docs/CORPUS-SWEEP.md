@@ -227,6 +227,10 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
 | `encrypted` (bỏ qua) | 12 |
 | **ta làm xấu đi** | **20** |
 
+> **Mốc hiện tại (sau khi sửa BI-121): 1.044 `ok`, 20 file không sạch, `crash` = 0.** Vòng quét
+> ~213 s (mỗi lần nén giờ là một tiến trình con). Phần dưới giữ nguyên ảnh chụp TRƯỚC khi sửa,
+> vì nó là căn cứ của bản vá.
+
 20 file đó đã ghim vào mốc. Nặng nhất, theo thứ tự:
 
 - **`crash` — PyMuPDF segfault, giết cả tiến trình sidecar. Thủ phạm là `/compress`.**
@@ -246,7 +250,13 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
 
   Hậu quả thật: `src/sidecar.js` bắt được cái chết đó và `main.js` hiện *"Engine đã dừng đột ngột
   (mã …). Khởi động lại app để dùng tiếp."* — **không tự khởi động lại**. Tức một file như thế
-  làm người dùng phải khởi động lại cả app. Đây là việc đáng sửa trước nhất.
+  làm người dùng phải khởi động lại cả app.
+
+  > **ĐÃ SỬA (BI-121).** Mọi lần nén giờ chạy trong **tiến trình con**: segfault chỉ giết tiến
+  > trình đó, route trả về lỗi sạch. Quét lại sau khi sửa: **`crash` 4 → 0**; bốn file kia
+  > chuyển thành `op_fail:compress` (lỗi bắt được). Kèm theo, `main.js` **tự dựng lại** sidecar
+  > sau mỗi cái chết (trần 3 lần / 5 phút) nên mọi cái chết khác cũng không còn bắt người dùng
+  > khởi động lại app. Chi phí đo được: ~0,25 s mỗi lần nén ở bản đóng gói khi ảnh exe đã ấm.
 - **2 × `timeout`** (> 120 s): `bomb_giant.pdf` (bom giải nén — đúng loại file mà sidecar **không**
   có hạn giờ, nên app sẽ treo chứ không báo lỗi), `bug1978317.pdf`.
 - **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và

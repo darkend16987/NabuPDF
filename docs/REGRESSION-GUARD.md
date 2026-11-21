@@ -3325,6 +3325,24 @@ _Ghi 2026-09-30 (v0.2.73)._
 - **Chưa kiểm / còn mở:** chưa bấm tay qua **giao diện** (probe gọi thẳng `PDFLib` trong trang, không đi qua nút Lưu / hộp thoại của app); 9 file còn lại trong mốc chưa sửa (5 `load_fail`, 2 `output_error`, 1 `edit_fail`, `doc_actions.pdf` `output_warn` — nguyên nhân khác).
 - **Vỡ khi:** nâng pdf-lib lên bản mới (kiểm lại tên `PDFObjectParser` / `PDFParser` / `parseDictOrStream` còn lộ ra ở bundle UMD không), hoặc thêm một file mở PDF mà nạp **trước** `pdflib-stream-length.js`.
 
+### BI-121 · `/compress` phải chạy trong TIẾN TRÌNH CON — `rewrite_images` segfault được, và segfault thì giết cả sidecar
+- **Căn cứ (đo 2026-11-22, lưới `tools/corpus_sweep_sidecar.py` trên 1.104 file corpus pdf.js):** `doc.rewrite_images()` làm MuPDF **segfault** (`0xC0000005`).
+  Chạy riêng từng thao tác, **3 lần mỗi thao tác, trong tiến trình sạch**: `blendmode.pdf`, `bug_jpx.pdf`, `perf_structure_transfer_functions.pdf` đều **3/3 chết ở `compress`**, **0/3** ở `pagenum` / `split` / `encrypt`.
+  Chết cả khi mở từ **đường dẫn** lẫn từ **stream** (mỗi file 1–2 trên 3 lần) ⇒ **không phải** lỗi cách mở file của ta.
+  Trong vòng quét đầy đủ, số file `crash` thay đổi giữa hai lần chạy (2 rồi 4) vì segfault phụ thuộc trạng thái bộ cấp phát sau các thao tác trước đó.
+- **Vì sao không chặn theo nội dung:** nó **không tất định**. Không có điều kiện nào trên dữ liệu chặn trước được một cách đáng tin, và `try/except` **không bắt được segfault** — tiến trình chết ngay. Cô lập tiến trình là cách duy nhất chắc chắn.
+- **Sửa:** bỏ ngưỡng `_COMPRESS_WORKER_MIN_BYTES` (25 MB). `/compress` **và** `/compress-bin` đều đi qua `_compress_anywhere` ⇒ **mọi** lần nén chạy trong tiến trình con.
+- **Luật:**
+  1. **Không route nào được gọi thẳng `_compress_pdf_bytes`.** Nối thẳng lại = lần nén đó chạy trong chính sidecar và segfault quay lại. `test_compress_always_runs_out_of_process` ghim điều này bằng cách thay `_compress_anywhere` và đếm.
+  2. **Chỉ quay về nén tại chỗ khi KHÔNG KHỞI ĐỘNG NỔI tiến trình con** (`OSError`: thiếu script, hết chỗ temp, máy bị khoá chính sách) — mất tính năng tệ hơn một rủi ro hiếm. Worker **chết** (mã thoát khác 0) thì **không** thử lại tại chỗ.
+  3. **`sidecar.py` không được `import api` ở cấp module.** Cờ `--compress-worker` phải xử lý trước; `api`, `uvicorn`, `argparse` nạp bên trong `main()`. Lõi nén ở `src/pdf/compress.py` **chỉ phụ thuộc PyMuPDF** (đo: `import fitz` 0,082 s · `import fastapi` 0,267 s · `import api` 0,378 s). Ghim: `test_compress_worker_does_not_import_the_whole_server`.
+  4. **Thông điệp lỗi của worker là hợp đồng**: `CompressRequestError` → mã thoát 3 → `HTTPException` 400 với nguyên văn tiếng Việt, đi qua ranh giới tiến trình bằng **UTF-8** cả hai đầu (ghim sẵn ở `test_compress_worker_reports_caller_errors_as_400`).
+  5. **Ước lượng thời gian ở renderer cộng chi phí tiến trình con cho MỌI kích thước** (`COMPRESS_WORKER_START_S`), không còn bậc thang ở 25 MB.
+- **Số đo chi phí, kèm một đính chính của chính tôi:** 3,72 s rồi 3,04 s là **lần chạy đầu**, khi ảnh `sidecar.exe` 75 MB chưa nằm trong cache hệ điều hành. **Khi đã ấm**: `tracemonkey.pdf` **0,55 s** ở bản đóng gói so với **0,29 s** nén tại chỗ ⇒ chi phí thật ~**0,25 s**. Nén một trang rỗng ở bản đóng gói: **0,29 s**. Bản dev: 0,76 s → **0,38 s** sau khi worker thôi phải `import api`. Trong app thật `sidecar.exe` vốn đang chạy sẵn nên ảnh đã ấm.
+- **Lưới an toàn phía app:** `main.js` **tự dựng lại** sidecar sau khi nó chết, trần **3 lần / 5 phút** (`sidecar.planSidecarRestart`, hàm thuần, 8 ca trong `test:sidecar` + ghim nguồn `onExit` thật sự gọi nó). Quá trần thì quay về thông báo cũ.
+- **Chưa kiểm / còn mở:** chưa bấm tay nút "Nén" trong app đóng gói; `op_fail:compress` (6 file, `Bad PatternType` / `pixmap may not have alpha to save as JPEG`) **chưa sửa** — chúng là lỗi bắt được, không giết sidecar; chi phí ~0,25 s mỗi lần nén có thể bỏ hẳn bằng **worker thường trú**, chưa làm.
+- **Vỡ khi:** một route nén gọi thẳng `_compress_pdf_bytes`; `sidecar.py` nạp `api` trở lại ở cấp module; hoặc nâng PyMuPDF mà không chạy lại `tools/corpus_sweep_sidecar.py`.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |
