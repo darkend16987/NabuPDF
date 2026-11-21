@@ -391,7 +391,6 @@ check("no gap on a 5-page doc both counts as a move and changes nothing",
 // per MB spanned 0.098–0.189 (2x) while seconds per PAGE spanned 0.001–0.439 (439x).
 
 const COMPRESS_S_PER_MB = extractConst("renderer/app.js", "COMPRESS_S_PER_MB");
-const COMPRESS_WORKER_MIN_BYTES = extractConst("renderer/app.js", "COMPRESS_WORKER_MIN_BYTES");
 const COMPRESS_WORKER_START_S = extractConst("renderer/app.js", "COMPRESS_WORKER_START_S");
 const COMPRESS_WARN_BYTES = extractConst("renderer/app.js", "COMPRESS_WARN_BYTES");
 const compressEta = extractFn("renderer/app.js", "compressEta");
@@ -424,13 +423,13 @@ check("6.1 MB text ≈ the measured 0.6s, with no worker cost",
 check("lossless is far cheaper than ebook",
   compressEta(500 * MB, "lossless") * 5 < compressEta(500 * MB, "ebook"), true);
 
-// The worker's interpreter start is a STEP at the threshold, not a slope — a document
-// one byte over should not look dramatically slower than one byte under.
-const under = compressEta(COMPRESS_WORKER_MIN_BYTES - 1, "ebook");
-const over = compressEta(COMPRESS_WORKER_MIN_BYTES, "ebook");
-check("crossing the worker threshold adds the startup cost",
-  over - under, COMPRESS_WORKER_START_S);
-check("…and nothing more", over - under <= COMPRESS_WORKER_START_S, true);
+// Không còn ngưỡng: MỌI lần nén chạy trong tiến trình con (BI-121), nên chi phí khởi
+// động là một hằng số cộng vào mọi kích thước, không phải một bậc thang.
+const tiny = compressEta(1, "lossless");
+check("tài liệu bé nhất vẫn tính chi phí tiến trình con",
+  tiny >= COMPRESS_WORKER_START_S, true);
+check("chi phí đó là hằng số, không theo dung lượng",
+  compressEta(10 * MB, "lossless") - compressEta(5 * MB, "lossless") < COMPRESS_WORKER_START_S + 1, true);
 
 // Monotonic and never zero: "0 giây" on a real document reads as "it is broken".
 check("bigger is never faster",
@@ -461,14 +460,16 @@ const pyNum = (re) => {
   const m = re.exec(apiSrc);
   return m ? Number(m[1].replace(/_/g, "")) : NaN;
 };
-check("renderer and sidecar agree on the worker threshold",
-  pyNum(/_COMPRESS_WORKER_MIN_BYTES\s*=\s*([\d_]+)/), COMPRESS_WORKER_MIN_BYTES);
+// Nguong 25 MB da bi bo (BI-121): neu ai do khoi phuc no o api.py ma khong sua lai
+// uoc luong ben renderer thi con so hien cho nguoi dung lai sai mot lan khoi dong.
+check("khong con nguong worker nao o sidecar",
+  /_COMPRESS_WORKER_MIN_BYTES/.test(apiSrc), false);
 // The warning has to fire well before the sidecar's hard ceiling, or the only feedback
 // a user gets on an impossible document is a 400.
 check("the warn threshold sits below the sidecar's hard cap",
   COMPRESS_WARN_BYTES < pyNum(/_MAX_PDF_BIN\s*=\s*([\d_]+)/), true);
-check("…and above the worker threshold",
-  COMPRESS_WARN_BYTES > COMPRESS_WORKER_MIN_BYTES, true);
+check("…and still far above anything a desktop compresses casually",
+  COMPRESS_WARN_BYTES > 25_000_000, true);
 
 // The dialog's live line and its heads-up are built in JS, so they are NOT covered by
 // i18n's static markup sweep. A missing key is not an error at runtime — t() returns

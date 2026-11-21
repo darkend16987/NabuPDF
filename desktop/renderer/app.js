@@ -4037,11 +4037,11 @@ function fmtBytes(n) {
 // screen 0.047 · ebook 0.155 · printer 0.179 · lossless 0.003 s/MB. The numbers below
 // are rounded UP from those — an estimate that finishes early is a good surprise.
 const COMPRESS_S_PER_MB = { screen: 0.06, ebook: 0.16, printer: 0.19, lossless: 0.01 };
-// At or above this the sidecar compresses in a child process (_COMPRESS_WORKER_MIN_BYTES
-// in api.py — the two are checked against each other by the test grid), which costs one
-// interpreter start. Measured at ~3.4 s.
-const COMPRESS_WORKER_MIN_BYTES = 25000000;
-const COMPRESS_WORKER_START_S = 3;
+// MỌI lần nén đều chạy trong một tiến trình con của sidecar, không còn ngưỡng dung
+// lượng nào (BI-121: `doc.rewrite_images()` segfault được, và segfault trong chính
+// sidecar thì giết cả engine). Nên ước lượng luôn cộng một lần khởi động tiến trình.
+// Số đo sau khi worker thôi phải `import api`: xem docs/CORPUS-SWEEP.md.
+const COMPRESS_WORKER_START_S = 1;
 // A heads-up threshold, NOT a refusal. Peak memory across the whole chain is roughly
 // 4× the file (renderer bytes + Blob copy + sidecar body + worker copy), so a 300 MB
 // document reaches ~1.2 GB spread over three processes — the point where an 8 GB
@@ -4054,8 +4054,7 @@ const COMPRESS_WARN_BYTES = 300000000;
 function compressEta(bytes, preset) {
   const n = Math.max(0, Number(bytes) || 0);
   const perMb = COMPRESS_S_PER_MB[preset] || COMPRESS_S_PER_MB.ebook;
-  const worker = n >= COMPRESS_WORKER_MIN_BYTES ? COMPRESS_WORKER_START_S : 0;
-  return Math.max(1, Math.round((n / 1e6) * perMb + worker));
+  return Math.max(1, Math.round((n / 1e6) * perMb + COMPRESS_WORKER_START_S));
 }
 
 // Seconds → "45 giây" / "3 phút". Rounds to whole minutes above a minute: claiming

@@ -8,7 +8,7 @@ const { execFile } = require("child_process");
 // undefined, which is exactly right — the clipboard handlers below branch on
 // `typeof clipboard.writeImage` and never reach it. See "TWO CLIPBOARD APIs".
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, session, clipboard, nativeImage, screen, ClipboardItem, safeStorage } = require("electron");
-const { startSidecar, stopSidecar } = require("./sidecar");
+const { startSidecar, stopSidecar, planSidecarRestart } = require("./sidecar");
 const Session = require("./session");
 const Prefs = require("./prefs");
 const Signatures = require("./signatures");
@@ -715,10 +715,23 @@ function buildMenu(lang) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Tự dựng lại sidecar sau khi nó chết — nhưng có trần, để một lỗi chết-ngay-lập-tức
+// không biến thành vòng lặp đẻ tiến trình. Ba lần trong năm phút là đủ cho ca thật
+// (một thao tác làm chết engine, người dùng thử lại) mà vẫn dừng được vòng lặp.
+//
+// Vì sao cần: BI-121 cho thấy một lệnh nén có thể segfault cả sidecar. Bản vá ở
+// sidecar đã đưa việc nén ra tiến trình con, nhưng đây là lưới an toàn cho MỌI cái
+// chết khác (OOM khi xử lý file lớn, lỗi chưa biết trong PyMuPDF): trước đây người
+// dùng buộc phải khởi động lại cả app.
+let sidecarRestartTimes = [];
+
 // Spawn the Python sidecar in the background. OCR-dependent UI stays disabled
 // until this resolves; the rest of the app works without it.
-function bootSidecar() {
-  setSidecarState({ state: "starting", port: null, error: null });
+//
+// `reason` chỉ có khi đây là lần dựng lại sau một cái chết: nó được giữ trong trường
+// `error` của trạng thái "starting" để badge nói được vì sao engine đang bận khởi động.
+function bootSidecar(reason = null) {
+  setSidecarState({ state: "starting", port: null, error: reason });
   // A sidecar that dies by itself has to say so. The renderer already handles
   // state:"error" everywhere (red badge with this message as its tooltip, and
   // updateToolbar dimming every engine-backed button) — it was simply never told.
@@ -727,11 +740,21 @@ function bootSidecar() {
     // exiting late (after a restart) must not overwrite the new one's "ready".
     if (sidecar !== handle) return;
     sidecar = null;
-    setSidecarState({
-      state: "error",
-      port: null,
-      error: `Engine đã dừng đột ngột (mã ${code}). Khởi động lại app để dùng tiếp.`,
-    });
+
+    const plan = planSidecarRestart(sidecarRestartTimes, Date.now());
+    sidecarRestartTimes = plan.times;
+    if (!plan.restart) {
+      setSidecarState({
+        state: "error",
+        port: null,
+        error: `Engine đã dừng đột ngột (mã ${code}) nhiều lần. Khởi động lại app để dùng tiếp.`,
+      });
+      return;
+    }
+    // Dựng lại ở trạng thái "starting", không phải "error": renderer chỉ mở nút engine
+    // khi state === "ready", nên trong lúc dựng lại mọi nút vẫn khoá — đúng như lần
+    // khởi động đầu, và người dùng không bấm vào một engine chưa có.
+    bootSidecar(`Engine đã dừng đột ngột (mã ${code}) — đang khởi động lại.`);
   };
   startSidecar(SIDECAR_TOKEN, onExit)
     .then((sc) => {

@@ -170,4 +170,20 @@ function stopSidecar(sidecar) {
   child.kill();
 }
 
-module.exports = { startSidecar, stopSidecar };
+/**
+ * Có nên tự dựng lại sidecar sau một cái chết, hay đã đến lúc chịu thua?
+ *
+ * Tách ra thành hàm THUẦN để có lưới: luật này chỉ sai khi vòng lặp đẻ tiến trình,
+ * và đó là thứ không ai muốn phát hiện bằng cách chạy app. `times` là các mốc của
+ * những lần dựng lại TRƯỚC đó; hàm trả về danh sách mới, không sửa đầu vào.
+ *
+ * Trần ba lần trong năm phút: đủ cho ca thật (một thao tác làm chết engine, người
+ * dùng thử lại vài lần) mà vẫn chặn được một lỗi chết-ngay-khi-khởi-động.
+ */
+function planSidecarRestart(times, now, limit = 3, windowMs = 5 * 60_000) {
+  const recent = (times || []).filter((t) => now - t < windowMs);
+  if (recent.length >= limit) return { restart: false, times: recent };
+  return { restart: true, times: [...recent, now] };
+}
+
+module.exports = { startSidecar, stopSidecar, planSidecarRestart };

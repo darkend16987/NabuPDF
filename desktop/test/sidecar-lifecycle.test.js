@@ -121,6 +121,39 @@ function withDeadline(promise, ms, what) {
   }
   check("stopSidecar tolerates a missing handle", threw, false);
 
+  // ---- luật tự dựng lại sau khi sidecar chết (BI-121) ---------------------------
+  //
+  // Hàm thuần, nên lưới này không phải khởi động tiến trình nào. Thứ nó canh là cái
+  // KHÔNG được xảy ra: một sidecar chết ngay khi khởi động kéo theo vòng lặp đẻ tiến
+  // trình vô tận. Bốn lần chết liên tiếp phải dừng ở lần thứ tư.
+  const { planSidecarRestart } = require("../src/sidecar.js");
+  let times = [];
+  const t0 = 1_000_000;
+  for (let i = 0; i < 3; i++) {
+    const p = planSidecarRestart(times, t0 + i * 1000);
+    check(`chết lần ${i + 1} thì dựng lại`, p.restart, true);
+    times = p.times;
+  }
+  check("chết lần 4 trong cùng cửa sổ thì chịu thua", planSidecarRestart(times, t0 + 3000).restart, false);
+  check("…và không ghi thêm mốc nào", planSidecarRestart(times, t0 + 3000).times.length, 3);
+
+  // Qua cửa sổ 5 phút, những lần cũ không còn tính nữa.
+  const later = t0 + 6 * 60_000;
+  const fresh = planSidecarRestart(times, later);
+  check("sau 5 phút lại được dựng lại", fresh.restart, true);
+  check("…và mốc cũ bị quên", fresh.times.length, 1);
+
+  check("không sửa mảng đầu vào", times.length, 3);
+  check("lần chết đầu tiên của phiên luôn được dựng lại", planSidecarRestart([], 0).restart, true);
+  check("tolerates a missing list", planSidecarRestart(undefined, 0).restart, true);
+
+  // Ghim nguồn: main.js phải THẬT SỰ gọi luật này trong onExit. Không có dòng này thì
+  // hàm trên vẫn xanh trong khi app vẫn bắt người dùng khởi động lại.
+  const mainSrc = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+  const onExitBody = mainSrc.slice(mainSrc.indexOf("const onExit ="), mainSrc.indexOf("startSidecar(SIDECAR_TOKEN"));
+  check("main.js hỏi luật trước khi chịu thua", onExitBody.includes("planSidecarRestart("), true);
+  check("…và dựng lại thật", onExitBody.includes("bootSidecar("), true);
+
   console.log(`\nsidecar-lifecycle: ${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })().catch((err) => {
