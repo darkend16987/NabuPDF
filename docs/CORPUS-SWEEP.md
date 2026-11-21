@@ -227,9 +227,18 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
 | `encrypted` (bỏ qua) | 12 |
 | **ta làm xấu đi** | **20** |
 
-> **Mốc hiện tại (sau khi sửa BI-121): 1.044 `ok`, 20 file không sạch, `crash` = 0.** Vòng quét
-> ~213 s (mỗi lần nén giờ là một tiến trình con). Phần dưới giữ nguyên ảnh chụp TRƯỚC khi sửa,
-> vì nó là căn cứ của bản vá.
+> **Mốc hiện tại (sau BI-121 **và** BI-122): 1.052 `ok`, 12 file không sạch, `crash` = 0,
+> `op_fail:compress` = 0.** Vòng quét ~212 s (mỗi lần nén giờ là một tiến trình con). Phần dưới
+> giữ nguyên ảnh chụp TRƯỚC khi sửa, vì nó là căn cứ của hai bản vá. Đường đi của con số:
+>
+> | | `ok` | `crash` | `op_fail:compress` | không sạch |
+> |---|---|---|---|---|
+> | trước BI-121 | 1.043 | 4 | 6 | 20 |
+> | sau BI-121 | 1.044 | **0** | 8 | 20 |
+> | sau BI-122 | **1.052** | 0 | **0** | **12** |
+>
+> (BI-121 làm `op_fail:compress` **tăng** từ 6 lên 8: hai file từng giết cả tiến trình giờ chỉ
+> làm hỏng một thao tác. Đó là tiến bộ, không phải hồi quy — và BI-122 dọn nốt cả 8.)
 
 20 file đó đã ghim vào mốc. Nặng nhất, theo thứ tự:
 
@@ -262,6 +271,16 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
 - **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và
   `pixmap may not have alpha to save as JPEG` (`issue19326`, `issue19517`, `jpx_numcomps`,
   `jpx_smaskindata`). Người dùng bấm Nén và nhận thông báo lỗi trên file mở được bình thường.
+
+  > **ĐÃ SỬA (BI-122).** Cả 8 file (6 file này + 2 file nhóm segfault) nay ra `ok`. Lõi nén coi
+  > `rewrite_images()` là việc **cố gắng**: gãy thì **mở lại tài liệu từ byte gốc** rồi lưu bằng
+  > deflate + `garbage=4` — đo được 6/6 ra PDF hợp lệ, qpdf sạch 5/6 (file thứ sáu, `clippath`,
+  > cảnh báo đúng **cảnh báo đã có sẵn ở bản gốc**). Hai file segfault đi đường khác: worker chết
+  > thì `_compress_anywhere` **thử lại một lần ở `lossless`, vẫn trong tiến trình con** — đo bằng
+  > chính lệnh worker, **10 lần mỗi file mỗi preset**: `lossless` sống **30/30**, trong khi `ebook`
+  > chết 10/10, 8/10 và 7/10 (cột `ebook` còn đổi giữa các loạt đo, cột `lossless` thì không). Người dùng được nói thật
+  > bằng `X-Images-Failed` / `images_failed`: toast ghi thêm *"Ảnh trong file này không nén lại
+  > được."* thay vì im lặng trả về một file gần như không nhỏ đi.
 - **5 × `op_fail:pagenum`** — `cannot save with zero pages` (`issue21436`, `poppler-91414-0-53`,
   `poppler-91414-0-54`), `not a dict (null)` (`issue22011`), `index out of bounds` (`xobject-image`).
 - **1 × `op_fail:split`** — `opt_demo.pdf`: `22 is not in list`. Lỗi **Python thuần** trong mã tách
