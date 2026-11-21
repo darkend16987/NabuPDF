@@ -43,6 +43,7 @@ from src.utils.config import (
     set_gemini_key,
     set_gemini_model,
 )
+from src.pdf import compress as _compress_core
 from src.pdf.util import (
     WRITE_GARBAGE,
     _MAX_PDF_B64,
@@ -807,19 +808,11 @@ class CompressResponse(BaseModel):
     error: str | None = None
 
 
-# Image downsample/recompress targets per preset (PyMuPDF rewrite_images).
-# "lossless" skips image rewriting (only deflate + garbage-collect + font subset).
-_COMPRESS_PRESETS = {
-    "screen": dict(dpi_threshold=110, dpi_target=96, quality=45),
-    "ebook": dict(dpi_threshold=170, dpi_target=150, quality=65),
-    "printer": dict(dpi_threshold=320, dpi_target=300, quality=85),
-}
-
-# Page ceiling for compression. Purpose is to bound RUNTIME (rewrite_images walks
-# every image on every page), not memory — so it is deliberately generous: a 200 MB
-# scan is routinely 600–1500 pages, and the old 500 turned "nén file lớn" into a
-# refusal for exactly the documents worth compressing.
-_COMPRESS_MAX_PAGES = 3000
+# Các hằng số và lõi nén nằm ở `src/pdf/compress.py` — một module **chỉ cần PyMuPDF**,
+# để tiến trình worker không phải nạp cả FastAPI/`api` chỉ để nén một file (BI-121).
+# Giữ nguyên tên cũ ở đây vì nhiều chỗ và nhiều lưới đang gọi theo tên này.
+_COMPRESS_PRESETS = _compress_core.PRESETS
+_COMPRESS_MAX_PAGES = _compress_core.MAX_PAGES
 
 # Size ceiling for the BINARY compress route only. The base64/JSON routes stay at
 # _MAX_PDF_B64 (~200 MB) because their peak cost is ~5x the file: base64 text in,
@@ -829,47 +822,16 @@ _MAX_PDF_BIN = 1_000_000_000  # 1 GB of actual PDF bytes
 
 
 def _compress_pdf_bytes(pdf_bytes: bytes, preset: str) -> bytes:
-    """Shrink `pdf_bytes` per `preset`; returns the ORIGINAL bytes if that is smaller.
+    """Cầu nối HTTP cho lõi nén ở `src/pdf/compress.py`.
 
-    Shared by /compress (base64 JSON) and /compress-bin (raw binary) so the two
-    routes can never drift on what "nén" actually does — they differ only in how the
-    document travels. Raises HTTPException for caller errors (bad preset, unopenable
-    PDF, too many pages); other failures propagate for the route to report.
+    Giữ nguyên hợp đồng cũ: lỗi của người gọi ra `HTTPException` 400 với đúng câu
+    chữ như trước, mọi lỗi khác để nguyên cho route báo cáo. Mọi chỗ gọi cũ — và
+    `test_pdf_ops.py` — không phải đổi gì.
     """
-    if preset != "lossless" and preset not in _COMPRESS_PRESETS:
-        raise HTTPException(status_code=400, detail="preset phải là screen|ebook|printer|lossless")
-
-    doc = _open_pdf_stream(pdf_bytes)
-
-    if doc.page_count > _COMPRESS_MAX_PAGES:
-        doc.close()
-        raise HTTPException(
-            status_code=400, detail=f"PDF quá nhiều trang (tối đa {_COMPRESS_MAX_PAGES})."
-        )
-
     try:
-        if preset != "lossless":
-            p = _COMPRESS_PRESETS[preset]
-            doc.rewrite_images(
-                dpi_threshold=p["dpi_threshold"],
-                dpi_target=p["dpi_target"],
-                quality=p["quality"],
-                lossy=True,
-                lossless=True,
-            )
-        try:
-            doc.subset_fonts()
-        except Exception as e:  # font subsetting is best-effort
-            logger.debug("subset_fonts skipped: %s", e)
-        out_bytes = doc.tobytes(
-            deflate=True, garbage=4, clean=True, deflate_images=True, deflate_fonts=True
-        )
-    finally:
-        doc.close()
-
-    # If compression somehow grew the file, hand back the original instead.
-    return pdf_bytes if len(out_bytes) >= len(pdf_bytes) else out_bytes
-
+        return _compress_core.compress_pdf_bytes(pdf_bytes, preset)
+    except _compress_core.CompressRequestError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ---------------------------------------------------------------------------
 # Running the compressor OUT OF PROCESS

@@ -53,9 +53,10 @@ def test_no_literal_garbage_3_anywhere():
 
 
 def test_compress_keeps_its_own_stronger_level():
-    src = (ROOT / "api.py").read_text(encoding="utf8")
-    body = src[src.index("def _compress_pdf_bytes"):]
-    body = body[: body.index("\nasync def ") if "\nasync def " in body else len(body)]
+    # Lõi nén đã chuyển sang src/pdf/compress.py (BI-121: tiến trình worker chỉ cần
+    # PyMuPDF, không nạp FastAPI). Ghim vẫn là ghim cũ, chỉ đổi chỗ nhìn.
+    src = (ROOT / "src" / "pdf" / "compress.py").read_text(encoding="utf8")
+    body = src[src.index("def compress_pdf_bytes"):]
     assert re.search(r"garbage\s*=\s*4\b", body), "/compress must keep garbage=4 (merging duplicate streams is its job)"
 
 
