@@ -3287,6 +3287,44 @@ _Ghi 2026-09-30 (v0.2.73)._
   (cần cách khác: tô nền lấy mẫu); nét outline lệch hộp lớp chữ > 1.5 pt ngang sẽ không bị xoá (fixture ban đầu của test tự vấp đúng điều này); sidecar **phải build lại** trước khi phát hành (`check-sidecar-fresh.js`).
 - **Vỡ khi:** sửa chữ trên trang AutoCAD / “text as geometry” mà chữ cũ còn thấy dưới chữ mới; hoặc ngược lại — sửa xong mất đường kẻ / nhãn bên cạnh / nét màu khác trong hộp; hoặc trang chữ thật đổi từng điểm ảnh sau khi sửa.
 
+### BI-120 · pdf-lib cắt cụt stream có `/Length` GIÁN TIẾP — bản vá phải nạp trước mọi đường mở PDF
+- **Căn cứ (đo 2026-11-21, lưới mới `npm run sweep:corpus` trên corpus pdf.js, 1.104 file):** 10 file bị qpdf kêu sau khi chỉ **mở rồi lưu, không sửa gì**
+  (`input stream is complete but output may still be valid`), 9 trong số đó cùng một nguyên nhân. `PDFObjectParser.parseDictOrStream` chỉ tin `/Length` khi nó là **một số**;
+  gặp `/Length 674 0 R` thì rơi vào `findEndOfStreamFallback`, dò tới `endstream` rồi coi byte ngay trước đó là **dấu xuống dòng ngăn cách**.
+  `tracemonkey.pdf` (bài báo 14 trang, file gốc **sạch** theo qpdf): ảnh object 483 dài **1013** byte, byte cuối là `0x0D`, `endstream` viết **dính liền** dữ liệu
+  (`… 72 17 33 0d | 65 6e 64 73 74 72 65 61 6d`) ⇒ pdf-lib cắt còn **1012** ⇒ luồng deflate mất byte cuối ⇒ ảnh giải nén ra **8074 byte rác** thay vì 7943, và `/Length` ghi ra cũng là 1012.
+- **Sửa:** `desktop/renderer/pdflib-stream-length.js`, **hai lượt** (object chứa độ dài thường nằm **sau** stream trong file, lúc phân tích stream nó chưa có trong context):
+  (1) `parseDictOrStream` ghi stream có `/Length` gián tiếp vào danh sách chờ kèm `bytes.offset()` — mỏ neo trỏ ngay sau từ khoá `endstream`;
+  (2) bọc `PDFParser.parseDocument`, phân tích xong thì tra độ dài thật và cắt lại từ byte gốc.
+- **Luật:**
+  1. **Ba cửa, sai một cửa là bỏ qua** (giữ nguyên hành vi pdf-lib): (a) độ dài tra được là số nguyên dương và **khác** độ dài đang có; (b) tìm lại được điểm bắt đầu — byte ở đó khớp 8 byte đầu **và** 8 byte cuối của nội dung parser đã cắt (3 ứng viên, lệch nhau 0/1/2 byte xuống dòng); (c) ngay sau `start + độ dài thật` là `endstream` (cho phép tối đa một dấu xuống dòng). ⇒ bản vá **chỉ** động vào file đang bị đọc sai.
+  2. **KHÔNG sửa luật xuống dòng trong `findEndOfStreamFallback`** — có file mà `\r` đúng là dấu ngăn cách; đổi ở đó sẽ làm hỏng chúng.
+  3. **Thứ tự nạp là một phần của bản sửa** (BI-14): vá sửa **prototype** của parser, nạp sau một file đã gọi `PDFDocument.load` là vá hụt. `index.html`: ngay sau `vendor/pdf-lib.min.js`, trước `app.js` / `managed-codec.js` / `page-vault.js` / `editor-bake.js` — bốn luật này đã ghim trong `test:scope`.
+  4. **Mỗi scope toàn cục là một bản pdf-lib riêng ⇒ mỗi nơi phải vá riêng.** `<script>` của index.html KHÔNG với tới: (a) **Web Worker** `annot-scan.js` (`importScripts("vendor/pdf-lib.min.js")` rồi `importScripts("pdflib-stream-length.js")`, đúng thứ tự); (b) **tiến trình main** — `src/signing-worker.js` gọi `applyStreamLengthFix(require("pdf-lib"))` ngay sau `require`, nơi tài liệu sẽ được **ký** trên phần byte đã hỏng. Quên một nơi là nơi đó đọc bằng parser chưa vá, **im lặng**.
+  5. Một bản duy nhất, dùng chung cho renderer / worker / main / lưới quét corpus — **đừng chép thêm bản thứ hai**.
+- **Lưới:** `npm run test:streamlen` (dựng PDF đúng ca: ca hỏng cắt lại đúng từng byte; ca có xuống dòng thật **không** bị đụng; độ dài khai báo vô lý bị **từ chối**).
+  Cộng **hai ghim nguồn** trong cùng file test: mọi `renderer/*.js` có `importScripts("vendor/pdf-lib.min.js")` phải importScripts bản vá **sau** đó; mọi `src/*.js` có `require("pdf-lib")` phải gọi `applyStreamLengthFix`. `test/annot-scan.test.js` ghim đúng hai dòng importScripts của worker, đúng thứ tự.
+  **Đã thử cho đỏ:** vô hiệu hoá bản vá ⇒ 4/11 ca đỏ, thoát 1; gỡ dòng importScripts của worker ⇒ ghim nguồn đỏ. `npm run sweep:corpus`: **1.043 → 1.052 `ok`**, 9 file hết lỗi, 0 file xấu đi.
+- **Đo diện ảnh hưởng (2026-11-22, toàn corpus 1.104 file, lưu 2 lần không vá để chứng minh đầu ra tất định rồi vá và lưu lần 3):**
+  **1.051 file ra byte Y HỆT** trước/sau bản vá, **13 file đổi byte**, 26 mã hoá + 14 file pdf-lib không mở được (bỏ qua), **0 file không tất định**.
+  Chỉ **89/1.104 (8 %)** file có `/Length` gián tiếp; `tracemonkey.pdf` có **348** stream loại đó mà bản vá chỉ chạm **1**. Mỗi stream bị chạm đều được **thêm lại** byte đã mất và khớp đúng con số chính file đó khai:
+  `bug1727053` 334→336, `issue10572` 278→279, `issue19517` 3665→3666, `issue9243` 63→64, `tracemonkey` 1012→1013 — không stream nào bị cắt ngắn đi.
+  **4 trong 13 file đó (`bug1727053`, `issue10572`, `issue19517`, `issue9243`) qpdf KHÔNG hề kêu** ⇒ lưới quét corpus báo **thiếu**: mất byte trong stream mà vẫn giải nén được thì `--check` không thấy.
+- **Probe trong app THẬT (2026-11-22, `electron . --remote-debugging-port` + CDP, 4 lần chạy, mỗi lần một `--user-data-dir` mới):**
+  | Lần | Thẻ `<script>` vá | `__nabuStreamLengthFix` | ca lỗi dựng trong trang (đúng = 32) | Worker `annot-scan` | lỗi console |
+  |---|---|---|---|---|---|
+  | 1 | có | `true` | **32** | trả lời `ok=true` | 2 lỗi nội bộ Electron (xem dưới) |
+  | 2 | có, **mở `tracemonkey.pdf` thật qua argv** | `true` | object 483: **1013**, đúng con số file khai | — | — |
+  | 3 | **gỡ ra (đối chứng)** | **`false`** | **31 — lỗi tái hiện** | trả lời `ok=true` | 0 |
+  | 4 | có, hồ sơ mới | `true` | **32** | trả lời `ok=true` | 0 |
+
+  Lần 3 là **đối chứng**: gỡ đúng một dòng thì phép đo quay về trạng thái lỗi ⇒ probe đo đúng thứ cần đo.
+  Lần 2 lưu tài liệu đang mở bằng chính `PDFLib` của trang → `qpdf --check` **sạch**, ảnh object 483 giải nén **7943 byte** (= 47×169, đúng).
+  Hai lỗi ở lần 1 (`sandboxed_renderer.bundle.js script failed to run`, `binding.startupData is null`) là **của Electron**, **không tái hiện** ở lần 4 với cùng mã ⇒ nhiễu lần chạy đầu, không phải do bản vá.
+  `typeof window.state` là `undefined` ở **cả** lần 3 lẫn lần 4 — đó là bình thường (`state` khai bằng `const` ở cấp 0 nên không gắn vào `window`); đọc bằng **tên trần** thì thấy `state.bytes` = 1.016.315 byte, 14 trang.
+- **Chưa kiểm / còn mở:** chưa bấm tay qua **giao diện** (probe gọi thẳng `PDFLib` trong trang, không đi qua nút Lưu / hộp thoại của app); 9 file còn lại trong mốc chưa sửa (5 `load_fail`, 2 `output_error`, 1 `edit_fail`, `doc_actions.pdf` `output_warn` — nguyên nhân khác).
+- **Vỡ khi:** nâng pdf-lib lên bản mới (kiểm lại tên `PDFObjectParser` / `PDFParser` / `parseDictOrStream` còn lộ ra ở bundle UMD không), hoặc thêm một file mở PDF mà nạp **trước** `pdflib-stream-length.js`.
+
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
 
 | Hàm | Định nghĩa | Ai gọi |

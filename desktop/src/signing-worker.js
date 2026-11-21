@@ -24,6 +24,9 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } = require("pdf-lib");
+// Cùng bản vá mà renderer nạp qua <script>: pdf-lib cắt cụt stream có `/Length` gián tiếp, và ở
+// đây hậu quả nặng hơn — tài liệu được KÝ trên phần byte đã hỏng. Xem renderer/pdflib-stream-length.js.
+require("../renderer/pdflib-stream-length.js").applyStreamLengthFix(require("pdf-lib"));
 const { pdflibAddPlaceholder } = require("@signpdf/placeholder-pdf-lib");
 const signpdf = require("@signpdf/signpdf").default;
 const { Signer, SUBFILTER_ADOBE_PKCS7_DETACHED } = require("@signpdf/utils");

@@ -173,7 +173,11 @@ const view = (items) =>
     console,
     importScripts: (u) => {
       imported.push(u);
-      sandbox.self.PDFLib = PDFLib; // what vendor/pdf-lib.min.js does in a worker
+      // Giả lập đúng việc mỗi file làm trong worker: thư viện đặt global, bản vá sửa prototype.
+      if (u === "vendor/pdf-lib.min.js") sandbox.self.PDFLib = PDFLib;
+      else if (u === "pdflib-stream-length.js") {
+        require("../renderer/pdflib-stream-length.js").applyStreamLengthFix(sandbox.self.PDFLib);
+      }
     },
     postMessage: (m) => posted.push(m),
     TextDecoder, Uint8Array, Map, Set, JSON, Promise,
@@ -181,7 +185,12 @@ const view = (items) =>
   sandbox.self = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox);
-  check("worker: loads pdf-lib from vendor/, relative to itself", imported, ["vendor/pdf-lib.min.js"]);
+  // Worker có scope toàn cục riêng ⇒ phải nạp CẢ bản vá pdf-lib, và phải nạp SAU thư viện
+  // (BI-120). Danh sách này ghim đúng hai dòng đó, đúng thứ tự.
+  check("worker: loads pdf-lib from vendor/, relative to itself", imported, [
+    "vendor/pdf-lib.min.js",
+    "pdflib-stream-length.js",
+  ]);
   check("worker: publishes nothing on a window", typeof sandbox.window, "undefined");
   const copy = bytes.slice();
   await sandbox.onmessage({ data: { id: 7, bytes: copy.buffer } });

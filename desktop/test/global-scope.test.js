@@ -115,6 +115,13 @@ function orderViolations(order, rules) {
 // ---- the rules (each one restates a comment in the page it applies to) -------
 
 const INDEX_RULES = [
+  // Bản vá pdf-lib phải chen giữa thư viện và MỌI file mở PDF: nó sửa prototype của parser, nên
+  // nạp sau một file đã gọi PDFDocument.load là vá hụt (renderer/pdflib-stream-length.js).
+  ["vendor/pdf-lib.min.js", "pdflib-stream-length.js", "vá global window.PDFLib ngay khi nạp"],
+  ["pdflib-stream-length.js", "app.js", "mọi đường mở PDF phải chạy trên parser đã vá"],
+  ["pdflib-stream-length.js", "managed-codec.js", "mọi đường mở PDF phải chạy trên parser đã vá"],
+  ["pdflib-stream-length.js", "page-vault.js", "mọi đường mở PDF phải chạy trên parser đã vá"],
+  ["pdflib-stream-length.js", "editor-bake.js", "mọi đường mở PDF phải chạy trên parser đã vá"],
   ["vendor/pdf-lib.min.js", "managed-codec.js", "needs window.PDFLib at load"],
   ["vendor/pdf-lib.min.js", "page-vault.js", "needs window.PDFLib at load"],
   ["raster-cap.js", "app.js", "renderPageCanvas calls window.RasterCap on every page (BI-78)"],

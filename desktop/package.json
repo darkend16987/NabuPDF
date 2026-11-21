@@ -58,6 +58,7 @@
     "test:bytes": "node test/state-bytes-writers.test.js",
     "test:sidecar": "node test/sidecar-lifecycle.test.js",
     "test:confirm": "node test/confirm-dialog.test.js",
+    "test:streamlen": "node test/pdflib-stream-length.test.js",
     "checksums": "node scripts/checksums.js",
     "gen:licenses": "node scripts/gen-third-party-licenses.js",
     "license": "node scripts/license-cli.js",

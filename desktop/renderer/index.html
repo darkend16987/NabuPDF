@@ -1705,6 +1705,9 @@
 
     <!-- pdf-lib: UMD global `PDFLib`. pdf.js: UMD global `pdfjsLib`. Both vendored offline. -->
     <script src="vendor/pdf-lib.min.js"></script>
+    <!-- Vá pdf-lib (cắt cụt stream có /Length gián tiếp) — phải nằm NGAY SAU thư viện và trước
+         mọi file mở PDF, vì nó sửa prototype của parser. Xem renderer/pdflib-stream-length.js. -->
+    <script src="pdflib-stream-length.js"></script>
     <script src="vendor/pdf.min.js"></script>
     <script src="i18n.js"></script>
     <script src="page-range.js"></script>

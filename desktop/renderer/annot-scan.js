@@ -230,7 +230,11 @@
     window.AnnotScan = api;
   } else if (typeof importScripts === "function") {
     // Worker. Paths resolve against THIS file's URL (renderer/), like pdf.js's own worker.
+    // Worker có SCOPE TOÀN CỤC RIÊNG: <script> trong index.html không với tới đây, nên bản vá
+    // pdf-lib phải được importScripts lần nữa — nếu không, luồng này đọc tài liệu bằng parser
+    // CHƯA vá và thấy khác hẳn luồng chính (BI-120). Thứ tự hai dòng này là bắt buộc.
     importScripts("vendor/pdf-lib.min.js");
+    importScripts("pdflib-stream-length.js");
     self.onmessage = async (e) => {
       const { id, bytes } = e.data || {};
       try {
