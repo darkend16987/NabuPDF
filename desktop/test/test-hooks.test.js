@@ -32,8 +32,21 @@ function fakeDialog() {
   const orig = async () => "ORIGINAL";
   return { showMessageBox: orig, showSaveDialog: orig, showOpenDialog: orig, showErrorBox: orig, orig };
 }
+// Mọi thư mục tạm của file này được ghi lại và XOÁ ở cuối (kể cả khi test đỏ): lần đầu tôi quên bước này và %TEMP% đầy
+// ~200 thư mục nabu-hooks-test-* sau vài chục lần chạy (đột biến + npm test).
+const madeDirs = [];
+function cleanup() {
+  for (const d of madeDirs) {
+    try {
+      fs.rmSync(d, { recursive: true, force: true });
+    } catch (_) {}
+  }
+}
+process.on("exit", cleanup);
 function mkdir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "nabu-hooks-test-"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "nabu-hooks-test-"));
+  madeDirs.push(d);
+  return d;
 }
 function setAnswers(dir, obj) {
   fs.writeFileSync(path.join(dir, "answers.json"), JSON.stringify(obj));
