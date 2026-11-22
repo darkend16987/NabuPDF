@@ -2876,6 +2876,10 @@ async function saveDoc() {
       toast("Đã lưu: " + res.path, "good");
       return;
     }
+    // BI-127: người dùng bấm Huỷ ở hộp "file này đã ký số" — dừng hẳn, đừng mở tiếp hộp Lưu
+    // thành. (Chọn "Lưu thành bản sao" thì main trả saved:false KHÔNG kèm canceled, và ta rơi
+    // xuống saveAsDoc() ngay dưới, đúng ý người dùng.)
+    if (res.canceled) return;
     if (res.error) toast("Lưu lỗi: " + res.error + " — chọn nơi lưu khác.", "bad");
   }
   await saveAsDoc();

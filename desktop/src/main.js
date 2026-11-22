@@ -18,6 +18,7 @@ const { initSigning } = require("./signing");
 const Tabs = require("./tabs");
 const { asWritable } = require("./ipc-bytes");
 const SafeFs = require("./safe-fs");
+const SignedScan = require("./signed-scan");
 const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
@@ -1084,24 +1085,69 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
   return readPicked(res.filePaths);
 });
 
+// BI-127 — hỏi trước khi ghi đè lên một file ĐÃ KÝ SỐ mà bản mới không giữ nguyên vùng ký.
+// Một chỗ duy nhất, ở main, ngay trước khi byte chạm đĩa: cả `dialog:save-pdf` (≥12 nơi gọi,
+// kể cả Lưu thành trúng đường dẫn của chính file đã ký) lẫn `file:write-pdf` (Ctrl+S) đều đi
+// qua đây, nên không có đường ghi tài liệu nào của renderer lọt được. Xem signed-scan.js.
+// `copyLabel*` là nút "đi chỗ khác" — chữ khác nhau vì Ctrl+S thì mở hộp Lưu thành, còn trong
+// hộp Lưu thành thì chọn lại nơi lưu. Bất kỳ lỗi nào của hộp thoại ⇒ "cancel": không bao giờ
+// biến một hộp thoại hỏng thành ghi đè.
+async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn) {
+  const en = menuLang === "en";
+  try {
+    const res = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: en ? [copyLabelEn, "Overwrite anyway", "Cancel"] : [copyLabelVi, "Vẫn ghi đè", "Huỷ"],
+      defaultId: 0, // nút an toàn là mặc định: Enter không bao giờ phá chữ ký
+      cancelId: 2,
+      noLink: true,
+      title: "Nabu PDF",
+      message: en
+        ? `This file is digitally signed (${count} signature${count > 1 ? "s" : ""}).`
+        : `File này đã được ký số (${count} chữ ký).`,
+      detail: en
+        ? `Saving your edits over it will invalidate the signature — the recipient will see a warning that the file was modified.\n\n${fp}`
+        : `Lưu bản đã chỉnh sửa đè lên sẽ làm chữ ký mất hiệu lực — người nhận sẽ thấy cảnh báo file đã bị sửa.\n\n${fp}`,
+    });
+    return ["copy", "overwrite", "cancel"][res.response] || "cancel";
+  } catch (_) {
+    return "cancel";
+  }
+}
+
 ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
-  const res = await dialog.showSaveDialog(senderWindow(e), {
-    title: "Lưu PDF",
-    defaultPath: await saveDefault("save-pdf", defaultName || "output.pdf"),
-    filters: [{ name: "PDF", extensions: ["pdf"] }],
-  });
-  if (res.canceled || !res.filePath) return { saved: false };
-  rememberDir("save-pdf", res.filePath);
-  await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
-  return { saved: true, path: res.filePath };
+  for (;;) {
+    const res = await dialog.showSaveDialog(senderWindow(e), {
+      title: "Lưu PDF",
+      defaultPath: await saveDefault("save-pdf", defaultName || "output.pdf"),
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (res.canceled || !res.filePath) return { saved: false };
+    const gate = await SignedScan.guardWrite(res.filePath, data, (n) =>
+      askSignedOverwrite(senderWindow(e), res.filePath, n, "Chọn nơi khác…", "Choose another location…")
+    );
+    if (gate.action === "cancel") return { saved: false };
+    if (gate.action === "copy") continue; // hiện lại hộp Lưu thành
+    rememberDir("save-pdf", res.filePath);
+    await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
+    return { saved: true, path: res.filePath };
+  }
 });
 
 // Silent save (no dialog) to a path the document already has — backs "Lưu"
 // (Ctrl+S) once the file has a known location. Falls back to {saved:false} on
 // any write error so the renderer can surface it / prompt Save As instead.
+// BI-127: nếu file đích đã ký số và bản mới sẽ phá chữ ký, hỏi trước. `saved:false` KÈM
+// `canceled:true` = người dùng bỏ (renderer dừng hẳn); KHÔNG kèm = người dùng muốn lưu bản
+// sao (renderer rơi xuống hộp Lưu thành, như mọi lần ghi thất bại khác).
 ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
   try {
     if (!fp) return { saved: false };
+    const gate = await SignedScan.guardWrite(fp, data, (n) =>
+      askSignedOverwrite(senderWindow(_e), fp, n, "Lưu thành bản sao…", "Save as a copy…")
+    );
+    if (gate.action === "cancel") return { saved: false, canceled: true };
+    if (gate.action === "copy") return { saved: false, signedFile: true };
     await fs.promises.writeFile(fp, asWritable(data)); // async: never block main
     // A read-only pane showing this same file is now looking at the PREVIOUS save.
     // Refreshing here — at the one place bytes actually reach the disk — is what
