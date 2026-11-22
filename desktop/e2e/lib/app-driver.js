@@ -155,6 +155,14 @@ class Page {
     if (r !== "ok") throw new Error(`click ${selector}: ${r}`);
   }
 
+  // `state.bytes` của tài liệu đang mở, dưới dạng Buffer ở Node — để kiểm bằng công cụ độc lập với app (pdf-lib, zlib, `containsText`).
+  async stateBytes() {
+    const b64 = await this.eval(
+      `(() => { let s = ""; const u = state.bytes; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(s); })()`,
+    );
+    return Buffer.from(b64, "base64");
+  }
+
   async visible() {
     return this.eval("document.visibilityState");
   }
@@ -178,6 +186,12 @@ class Page {
     // Có Ctrl thì dùng rawKeyDown (không sinh ký tự), như bàn phím thật.
     await this.cdp.send("Input.dispatchKeyEvent", { type: ctrl ? "rawKeyDown" : "keyDown", ...base });
     await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  }
+
+  // Lăn chuột THẬT tại (x, y) của cửa sổ (toạ độ client) qua `Input.dispatchMouseEvent` — chạy được handler `wheel` của trang (zoom bằng
+  // Ctrl+lăn, cuộn). `deltaY` > 0 là lăn xuống / thu nhỏ (1 nấc Chromium ≈ 100). Khác với kéo-thả, lăn chuột KHÔNG bị Chromium bỏ qua.
+  async wheel(x, y, deltaY, { ctrl = false } = {}) {
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY, modifiers: ctrl ? 2 : 0 });
   }
 
   async toast() {
@@ -271,6 +285,67 @@ class AppDriver {
     const p = new Page(cdp, t);
     this._pages.set(t.id, p);
     return p;
+  }
+
+  // ---- tab (BI-141, đợt 2) ----------------------------------------------------------------------------------
+  // THANH TAB là một renderer riêng (shell.html) — nơi người dùng bấm × / chọn tab. Trả Page của nó (có bộ nhớ đệm).
+  async shell() {
+    const t = (await this.targets("shell"))[0];
+    if (!t) throw new Error("không có thanh tab (shell.html)");
+    if (this._pages.has(t.id) && !this._pages.get(t.id).cdp.closed) return this._pages.get(t.id);
+    const cdp = await Cdp.connect(t.webSocketDebuggerUrl);
+    await cdp.send("Runtime.enable", {});
+    const p = new Page(cdp, t);
+    this._pages.set(t.id, p);
+    return p;
+  }
+
+  // Các tab đang hiện trên thanh tab, đọc từ DOM của thanh: [{ id, title, active, dirty }] theo thứ tự trái → phải.
+  async tabsList() {
+    const sh = await this.shell();
+    return sh.eval(`[...document.querySelectorAll("#tabs .tab")].map((el) => ({
+      id: Number(el.dataset.id), title: el.title, active: el.classList.contains("active"), dirty: el.classList.contains("dirty") }))`);
+  }
+
+  // Chọn tab bằng ĐÚNG handler của thanh tab (mousedown nút trái trên phần tử tab).
+  async activateTab(id) {
+    const sh = await this.shell();
+    const r = await sh.eval(`(() => { const el = document.querySelector('#tabs .tab[data-id="${Number(id)}"]');
+      if (!el) return "no-tab"; el.dispatchEvent(new MouseEvent("mousedown", { button: 0, bubbles: true })); return "ok"; })()`);
+    if (r !== "ok") throw new Error(`activateTab ${id}: ${r}`);
+  }
+
+  // Bấm × của tab (handler thật: shellBridge.close → tabs:close → guard đóng của CHÍNH tab đó). Trả ngay.
+  async closeTabUI(id) {
+    const sh = await this.shell();
+    const r = await sh.eval(`(() => { const el = document.querySelector('#tabs .tab[data-id="${Number(id)}"] .close');
+      if (!el) return "no-tab"; el.click(); return "ok"; })()`);
+    if (r !== "ok") throw new Error(`closeTabUI ${id}: ${r}`);
+  }
+
+  // Page của tab có tài liệu tên `name` (theo `state.name`; đợi tới `timeout` vì tab mới mở nạp không đồng bộ, ném nếu không thấy). CHỈ tab đang ĐƯỢC CHỌN mới vẽ được (tab ẩn: pdf.js treo —
+  // xem bẫy ở đầu file): muốn mở file vào tab nào thì `activateTab` nó trước.
+  async pageByName(name, { timeout = 30000 } = {}) {
+    const t0 = Date.now();
+    do {
+      for (const t of await this.targets("doc")) {
+        try {
+          let p;
+          if (this._pages.has(t.id) && !this._pages.get(t.id).cdp.closed) p = this._pages.get(t.id);
+          else {
+            const cdp = await Cdp.connect(t.webSocketDebuggerUrl);
+            await cdp.send("Runtime.enable", {});
+            p = new Page(cdp, t);
+            this._pages.set(t.id, p);
+          }
+          if ((await p.eval(`typeof state !== "undefined" ? state.name : null`)) === name) return p;
+        } catch (_) {
+          /* target đang nạp / vừa chết — thử lại */
+        }
+      }
+      await sleep(300);
+    } while (Date.now() - t0 < timeout);
+    throw new Error(`không thấy tab có tài liệu "${name}" sau ${timeout} ms`);
   }
 
   // Đợi renderer đầu tiên hiện ra và sidecar sẵn sàng. Ném nếu cửa sổ bị coi là ẩn (xem bẫy ở đầu file).
