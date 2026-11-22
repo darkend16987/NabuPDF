@@ -1514,6 +1514,9 @@
     showOverlay("Đang áp dụng chỉnh sửa…");
     try {
       const anyRedact = Object.values(ed.annots).some((a) => a.some((x) => x.kind === "redact"));
+      // BI-130: một redaction đã nướng vào tài liệu ⇒ phiên này KHÔNG được "Lưu nối thêm" đè lên file
+      // đã ký (ghi nối giữ mãi byte cũ — chính thứ redaction sinh ra để huỷ). Cờ chỉ tăng, không hạ.
+      if (anyRedact) state.contentRemoved = true;
       const bytes = anyRedact ? await bakeWithRedaction() : await bakeInPlace();
       // Only the annotated pages change pixels (watermark hits every page) — so we
       // can repaint just those instead of reloading the whole document.

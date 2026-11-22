@@ -269,7 +269,10 @@ contextBridge.exposeInMainWorld("desktop", {
   savePdf: (data, defaultName) =>
     ipcRenderer.invoke("dialog:save-pdf", { data, defaultName }),
   // Silent write to an existing path (Ctrl+S on an already-saved doc). { saved, path? }.
-  writePdf: (path, data) => ipcRenderer.invoke("file:write-pdf", { path, data }),
+  // BI-130: `opts.contentRemoved === false` là điều KIỆN DUY NHẤT mở đường "Lưu nối thêm" ở main
+  // (file đã ký). Thiếu opts ⇒ gửi `true` ⇒ đường nối đóng: mặc định là an toàn, không phải tiện.
+  writePdf: (path, data, opts) =>
+    ipcRenderer.invoke("file:write-pdf", { path, data, contentRemoved: !(opts && opts.contentRemoved === false) }),
   // Tạo bản theo mẫu: pick a folder once (null if cancelled), then write NEW files
   // into it by bare name. writeNewPdf never overwrites unless `overwrite` is true —
   // an existing file returns { saved: false, exists: true, path }.

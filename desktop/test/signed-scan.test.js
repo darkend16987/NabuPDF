@@ -220,9 +220,12 @@ function buildSigned(o) {
   check("main.js còn handler dialog:save-pdf", SAVE.length > 0, true);
   check("main.js còn handler file:write-pdf", WRITE.length > 0, true);
   for (const [tag, src] of [["dialog:save-pdf", SAVE], ["file:write-pdf", WRITE]]) {
-    const gateAt = src.indexOf("SignedScan.guardWrite(");
+    // BI-130: file:write-pdf đi qua SignedSave.planSignedWrite (gói cùng cổng BI-127 + đường nối); phần chạy
+    // thật của nó được test ở signed-save.test.js. dialog:save-pdf vẫn gọi thẳng guardWrite.
+    const gateCall = tag === "file:write-pdf" ? "SignedSave.planSignedWrite(" : "SignedScan.guardWrite(";
+    const gateAt = src.indexOf(gateCall);
     const writeAt = src.indexOf("fs.promises.writeFile(");
-    check(`${tag}: có gọi SignedScan.guardWrite`, gateAt >= 0, true);
+    check(`${tag}: có gọi cổng (${gateCall})`, gateAt >= 0, true);
     check(`${tag}: cổng đứng TRƯỚC lệnh ghi`, gateAt >= 0 && writeAt > gateAt, true);
     check(`${tag}: có nhánh "cancel" không ghi`, /action === "cancel"/.test(src), true);
     // Chỉ "gọi cổng trước lệnh ghi" là CHƯA ĐỦ: đột biến thử (ghi rồi mới xét câu trả lời) vẫn qua
@@ -238,10 +241,14 @@ function buildSigned(o) {
   // kia là biến "Enter" hoặc "Esc" thành ghi đè.
   const ASK = block(MAIN, "async function askSignedOverwrite");
   check("hộp hỏi: defaultId = 0 (nút an toàn)", /defaultId: 0/.test(ASK), true);
-  check("hộp hỏi: cancelId = 2 (Huỷ)", /cancelId: 2/.test(ASK), true);
-  check("hộp hỏi: bảng ánh xạ [copy, overwrite, cancel]", /\["copy", "overwrite", "cancel"\]\[res\.response\] \|\| "cancel"/.test(ASK), true);
-  check("hộp hỏi: nút đầu là 'đi chỗ khác', KHÔNG phải 'ghi đè'",
-    /buttons: en \? \[copyLabelEn, "Overwrite anyway", "Cancel"\] : \[copyLabelVi, "Vẫn ghi đè", "Huỷ"\]/.test(ASK), true);
+  // BI-130: nút có thể là 3 hoặc 4 (thêm "Lưu nối thêm"), nên ánh xạ chỉ số → hành động đi qua MỘT mảng khoá
+  // `keys` dùng cho CẢ buttons LẪN kết quả; Huỷ luôn là phần tử CUỐI. Chạy thật từng nút: signed-save.test.js §3a.
+  check("hộp hỏi: cancelId = nút CUỐI (Huỷ)", /cancelId: keys\.length - 1/.test(ASK), true);
+  check("hộp hỏi: hai bảng khoá, Huỷ cuối, KHÔNG có nút nối thì nút đầu là 'copy' (không phải 'ghi đè')",
+    /canAppend \? \["append", "copy", "overwrite", "cancel"\] : \["copy", "overwrite", "cancel"\]/.test(ASK), true);
+  check("hộp hỏi: kết quả = keys[res.response] || 'cancel' (nút lạ ⇒ huỷ)", /keys\[res\.response\] \|\| "cancel"/.test(ASK), true);
+  check("hộp hỏi: buttons sinh từ CÙNG mảng keys", /buttons: keys\.map\(/.test(ASK), true);
+  check("hộp hỏi: nhãn 'ghi đè' đúng chỗ của nó", /overwrite: en \? "Overwrite anyway" : "Vẫn ghi đè"/.test(ASK), true);
   check("hộp hỏi: lỗi hộp thoại ⇒ cancel", /catch \(_\) \{\s*return "cancel";/.test(ASK), true);
 
   // Renderer: Huỷ phải dừng hẳn, không rơi sang hộp Lưu thành.

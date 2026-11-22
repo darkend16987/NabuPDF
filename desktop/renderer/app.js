@@ -33,6 +33,10 @@ const state = {
   // Refreshed by scanVaultPages() on every renderAll, which is cheap because it only
   // parses when PageVault.looksLikeVaultFile says the file has one at all.
   vaultPages: new Set(),
+  // BI-130: đã có thao tác XOÁ NỘI DUNG THẬT trong phiên này (redaction, ẩn trang, hoặc bản khôi phục
+  // mà ta không biết đã làm gì). Chỉ tăng trong một tài liệu; loadBytes đặt lại. Khi true, "Lưu" lên một
+  // file đã ký KHÔNG được đề nghị ghi nối (giữ mãi byte cũ) — xem saveDoc / file:write-pdf.
+  contentRemoved: false,
 };
 
 // Find-in-document state. `docItems` caches each page's text runs (str + folded
@@ -477,6 +481,8 @@ async function checkRecovery() {
     // Restore into this window. Keep the original path so Ctrl+S writes back, but
     // stay dirty: the recovered content differs from whatever is on disk.
     await loadBytes(toU8(rec.bytes), rec.name, rec.srcPath || null);
+    // BI-130: ta không biết phiên bị mất đã bôi đen/ẩn trang hay chưa ⇒ coi như CÓ: không đề nghị ghi nối.
+    state.contentRemoved = true;
     await window.desktop.recovery.clear(top.docId); // consumed
     markDirty();
     toast("Đã khôi phục tài liệu chưa lưu — hãy Lưu để ghi vào file.", "good");
@@ -590,6 +596,7 @@ async function loadBytes(bytes, name, fullPath) {
   state.bytes = toU8(bytes);
   if (name) state.name = name;
   state.path = fullPath || null;
+  state.contentRemoved = false; // BI-130: tài liệu mới, chưa xoá gì trong phiên
   state.selected.clear();
   state.lastClicked = null;
   // A freshly loaded document is clean and gets its own recovery slot.
@@ -2142,6 +2149,7 @@ async function hidePagesWithPassword(indices) {
       return false;
     }
     state.bytes = await doc.save();
+    state.contentRemoved = true; // BI-130: bản rõ của trang ẩn không được nằm lại trong một revision cũ
     // NOT pushUndo(): see the note above. markDirty still has to run so the ● indicator,
     // the close guard and the (rewritten) recovery snapshot all know the file changed.
     resetHistory();
@@ -2870,10 +2878,14 @@ async function saveDoc() {
   if (!state.bytes) return;
   if (window.Editor) await window.Editor.bakePending();
   if (state.path) {
-    const res = await window.desktop.writePdf(state.path, state.bytes);
+    // BI-130: báo main phiên này đã xoá nội dung thật chưa (cờ + trang ẩn đang có). Chỉ `false` mới cho
+    // phép đề nghị "Lưu nối thêm" khi đích là file đã ký; main còn tự kiểm sidecar và cổng BI-127.
+    const res = await window.desktop.writePdf(state.path, state.bytes, {
+      contentRemoved: !!(state.contentRemoved || state.vaultPages.size),
+    });
     if (res.saved) {
       markClean();
-      toast("Đã lưu: " + res.path, "good");
+      toast(res.incremental ? "Đã lưu nối thêm (giữ vùng ký): " + res.path : "Đã lưu: " + res.path, "good");
       return;
     }
     // BI-127: người dùng bấm Huỷ ở hộp "file này đã ký số" — dừng hẳn, đừng mở tiếp hộp Lưu

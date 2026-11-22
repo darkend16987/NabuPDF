@@ -19,6 +19,7 @@ const Tabs = require("./tabs");
 const { asWritable } = require("./ipc-bytes");
 const SafeFs = require("./safe-fs");
 const SignedScan = require("./signed-scan");
+const SignedSave = require("./signed-save"); // BI-130: lưu nối thêm cho file đã ký
 const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
@@ -1092,24 +1093,48 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
 // `copyLabel*` là nút "đi chỗ khác" — chữ khác nhau vì Ctrl+S thì mở hộp Lưu thành, còn trong
 // hộp Lưu thành thì chọn lại nơi lưu. Bất kỳ lỗi nào của hộp thoại ⇒ "cancel": không bao giờ
 // biến một hộp thoại hỏng thành ghi đè.
-async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn) {
+async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn, extra = {}) {
   const en = menuLang === "en";
+  // BI-130: nút "Lưu nối thêm" chỉ có khi đường nối dùng được. Thứ tự nút KHÔNG đứng yên giữa hai
+  // dạng hộp (có/không nút nối), nên ánh xạ chỉ số → hành động đi qua MẢNG KHOÁ này, không bao giờ
+  // qua số cứng — lệch một chỉ số là "Huỷ" thành "Vẫn ghi đè".
+  const canAppend = !!extra.canAppend;
+  const keys = canAppend ? ["append", "copy", "overwrite", "cancel"] : ["copy", "overwrite", "cancel"];
+  const label = {
+    append: en ? "Save as appended revision (keep signature)" : "Lưu nối thêm (giữ chữ ký)",
+    copy: en ? copyLabelEn : copyLabelVi,
+    overwrite: en ? "Overwrite anyway" : "Vẫn ghi đè",
+    cancel: en ? "Cancel" : "Huỷ",
+  };
+  const why = extra.failed
+    ? en
+      ? `Could not keep the signature by appending (${SignedSave.reasonText(extra.failed)}).\n\n`
+      : `Không giữ được chữ ký bằng cách nối thêm (${SignedSave.reasonText(extra.failed)}).\n\n`
+    : "";
+  const appendNote = canAppend
+    ? en
+      ? "Appended revision: every old byte is kept and only your changes are added at the end, so the signed area is untouched. A PDF reader may still say the file was modified after signing, and anything you deleted (pages, redactions) stays in the file's history.\n\n"
+      : "Lưu nối thêm: giữ nguyên mọi byte cũ, chỉ thêm thay đổi của bạn vào cuối file nên vùng ký không bị đụng tới. Trình đọc PDF vẫn có thể báo file đã sửa sau khi ký, và nội dung bạn đã xoá (trang, vùng bôi đen) vẫn còn trong lịch sử file.\n\n"
+    : "";
   try {
     const res = await dialog.showMessageBox(win, {
       type: "warning",
-      buttons: en ? [copyLabelEn, "Overwrite anyway", "Cancel"] : [copyLabelVi, "Vẫn ghi đè", "Huỷ"],
-      defaultId: 0, // nút an toàn là mặc định: Enter không bao giờ phá chữ ký
-      cancelId: 2,
+      buttons: keys.map((k) => label[k]),
+      defaultId: 0, // nút đầu luôn là nút KHÔNG phá chữ ký: Enter không bao giờ phá chữ ký
+      cancelId: keys.length - 1,
       noLink: true,
       title: "Nabu PDF",
       message: en
         ? `This file is digitally signed (${count} signature${count > 1 ? "s" : ""}).`
         : `File này đã được ký số (${count} chữ ký).`,
-      detail: en
-        ? `Saving your edits over it will invalidate the signature — the recipient will see a warning that the file was modified.\n\n${fp}`
-        : `Lưu bản đã chỉnh sửa đè lên sẽ làm chữ ký mất hiệu lực — người nhận sẽ thấy cảnh báo file đã bị sửa.\n\n${fp}`,
+      detail:
+        why +
+        appendNote +
+        (en
+          ? `Overwriting it with your edited version will invalidate the signature — the recipient will see a warning that the file was modified.\n\n${fp}`
+          : `Ghi đè bằng bản đã chỉnh sửa sẽ làm chữ ký mất hiệu lực — người nhận sẽ thấy cảnh báo file đã bị sửa.\n\n${fp}`),
     });
-    return ["copy", "overwrite", "cancel"][res.response] || "cancel";
+    return keys[res.response] || "cancel";
   } catch (_) {
     return "cancel";
   }
@@ -1140,21 +1165,41 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
 // BI-127: nếu file đích đã ký số và bản mới sẽ phá chữ ký, hỏi trước. `saved:false` KÈM
 // `canceled:true` = người dùng bỏ (renderer dừng hẳn); KHÔNG kèm = người dùng muốn lưu bản
 // sao (renderer rơi xuống hộp Lưu thành, như mọi lần ghi thất bại khác).
-ipcMain.handle("file:write-pdf", async (_e, { path: fp, data }) => {
+ipcMain.handle("file:write-pdf", async (_e, { path: fp, data, contentRemoved }) => {
   try {
     if (!fp) return { saved: false };
-    const gate = await SignedScan.guardWrite(fp, data, (n) =>
-      askSignedOverwrite(senderWindow(_e), fp, n, "Lưu thành bản sao…", "Save as a copy…")
-    );
-    if (gate.action === "cancel") return { saved: false, canceled: true };
-    if (gate.action === "copy") return { saved: false, signedFile: true };
-    await fs.promises.writeFile(fp, asWritable(data)); // async: never block main
+    // BI-130: đường "Lưu nối thêm" chỉ mở khi (1) sidecar đang chạy và (2) renderer báo RÕ RÀNG rằng
+    // phiên này chưa xoá nội dung thật (bôi đen/redaction, ẩn trang — BI-74/BI-91 bắt chúng phải xoá
+    // thật, mà ghi nối giữ MÃI byte cũ). Chỉ `contentRemoved === false` mới mở; undefined/null/true
+    // đều đóng — thiếu thông tin là lý do để KHÔNG nối, không phải để nối.
+    const canAppend =
+      contentRemoved === false && sidecarState.state === "ready" && !!sidecarState.port;
+    const win = senderWindow(_e);
+    const plan = await SignedSave.planSignedWrite({
+      fp,
+      data,
+      scan: SignedScan,
+      ask: ({ count, canAppend: offer, failed }) =>
+        askSignedOverwrite(win, fp, count, "Lưu thành bản sao…", "Save as a copy…", { canAppend: offer, failed }),
+      append: canAppend
+        ? (p, d) =>
+            SignedSave.appendViaSidecar({
+              port: sidecarState.port,
+              token: sidecarState.token,
+              originalPath: p,
+              data: d,
+            })
+        : null,
+    });
+    if (plan.action === "cancel") return { saved: false, canceled: true };
+    if (plan.action === "copy") return { saved: false, signedFile: true };
+    await fs.promises.writeFile(fp, asWritable(plan.data)); // async: never block main
     // A read-only pane showing this same file is now looking at the PREVIOUS save.
     // Refreshing here — at the one place bytes actually reach the disk — is what
     // makes "the pane shows the last save" a rule instead of a hope.
     const found = Tabs.findDoc(_e && _e.sender);
     if (found) found.tw.reloadPanesForPath(fp);
-    return { saved: true, path: fp };
+    return plan.incremental ? { saved: true, path: fp, incremental: true } : { saved: true, path: fp };
   } catch (e) {
     return { saved: false, error: String((e && e.message) || e) };
   }
