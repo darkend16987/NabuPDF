@@ -159,6 +159,27 @@ class Page {
     return this.eval("document.visibilityState");
   }
 
+  // Gửi một phím tới RENDERER qua CDP (`Input.dispatchKeyEvent`): chạy được các handler `keydown` của trang (Ctrl+Z/Y, Delete…).
+  // KHÔNG chạm được phím tắt của MENU NATIVE (Ctrl+S, Ctrl+O, Ctrl+Q — chúng là accelerator của hệ điều hành, CDP không tới) —
+  // với những phím đó hãy gọi thẳng hàm (vd. `saveDoc()`), và đừng bao giờ thay bằng gửi phím thật cho cửa sổ nền trước: nó có
+  // thể rơi vào một cửa sổ khác của người dùng. Trả về khi cả keyDown và keyUp đã gửi.
+  async press(key, { ctrl = false, shift = false, alt = false } = {}) {
+    await this.eval(`(() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); return true; })()`);
+    const modifiers = (alt ? 1 : 0) | (ctrl ? 2 : 0) | (shift ? 8 : 0);
+    const named = { Delete: 46, Enter: 13, Escape: 27, Backspace: 8 };
+    const vk = key.length === 1 ? key.toUpperCase().charCodeAt(0) : named[key] || 0;
+    const base = {
+      key: shift && key.length === 1 ? key.toUpperCase() : key,
+      code: key.length === 1 ? "Key" + key.toUpperCase() : key,
+      windowsVirtualKeyCode: vk,
+      nativeVirtualKeyCode: vk,
+      modifiers,
+    };
+    // Có Ctrl thì dùng rawKeyDown (không sinh ký tự), như bàn phím thật.
+    await this.cdp.send("Input.dispatchKeyEvent", { type: ctrl ? "rawKeyDown" : "keyDown", ...base });
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  }
+
   async toast() {
     return this.eval(`(() => { const el = document.getElementById("toast");
       return { text: el ? el.textContent : "", kind: el ? el.className : "" }; })()`);
