@@ -283,6 +283,12 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   > `pagenum`/`split` chạy **trong tiến trình** sidecar nên không cắt ngang được như vậy; chúng
   > vẫn chưa có hạn giờ.
   >
+  > **`/split` ĐÃ XONG (BI-138) — và bảng trên đọc sai một ô.** Đo lại: `bomb_giant.pdf` tách
+  > trong **0,0 s**; `bug1978317.pdf` mới là file làm `/split` kẹt ở `insert_pdf` — và nó **không
+  > tách xong sau 600 s**, tức ở tách nó **treo thật** (khác nén, nơi nó chậm 76–92 s rồi xong).
+  > `/split` nay chạy trong tiến trình con có trần 10 phút. `/add-page-numbers` vẫn chạy tại chỗ:
+  > `bomb_giant.pdf` vẫn treo ở đó.
+  >
   > **VÀ NAY CÓ NÚT HỦY (BI-126).** Trần 30 phút lo cho người bấm Nén rồi bỏ đi; nút Hủy lo cho
   > người đang ngồi đó. `bomb_giant.pdf` chính là file dùng để chứng minh nó chạy — nén nó
   > không bao giờ xong, nên probe dừng được trong vài giây thì chỉ có một cách giải thích. Xem

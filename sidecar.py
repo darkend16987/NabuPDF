@@ -11,7 +11,8 @@ It has a SECOND mode, used by the server itself:
 
 and a THIRD, `sidecar.exe --incremental-worker <original.pdf> <edited.pdf> <out.pdf>`
 (BI-129: append one revision to a signed file; contract in src/pdf/incremental.py), which
-likewise does one job and exits.
+likewise does one job and exits, and a FOURTH, `sidecar.exe --split-worker <in.pdf> <out.zip> <pairs.json>` (BI-138: split one
+file into many; contract in src/pdf/split.py).
 
 The compress worker compresses one file and exits. See the block above `_COMPRESS_WORKER_FLAG` in
 api.py for why compression has to leave the server process at all; the short version
@@ -41,6 +42,11 @@ from src.pdf.compress import WORKER_FLAG as COMPRESS_WORKER_FLAG
 # nên thêm worker này không làm chậm worker nén một mili-giây nào.
 from src.pdf.incremental import WORKER_FLAG as INCREMENTAL_WORKER_FLAG
 from src.pdf.incremental import worker_main as _run_incremental_worker
+
+# Worker thứ ba (BI-138): tách một file ra nhiều file. Cùng nguyên tắc — cờ VÀ hàm chạy nằm ở module lá `src/pdf/split.py`
+# (chỉ nạp stdlib; `fitz` nạp lười trong hàm), nên không làm chậm hai worker kia.
+from src.pdf.split import WORKER_FLAG as SPLIT_WORKER_FLAG
+from src.pdf.split import worker_main as _run_split_worker
 
 
 def _err(msg: str) -> None:
@@ -102,6 +108,8 @@ def main() -> None:
         raise SystemExit(_run_compress_worker(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == INCREMENTAL_WORKER_FLAG:
         raise SystemExit(_run_incremental_worker(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == SPLIT_WORKER_FLAG:
+        raise SystemExit(_run_split_worker(sys.argv[2:]))
 
     # Nap muon: chi tien trinh SERVER moi can nhung thu nay (xem khoi import o dau file).
     import argparse

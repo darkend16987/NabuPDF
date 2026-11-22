@@ -1208,15 +1208,16 @@ def test_split_retry_reopens_the_document_from_the_original_bytes():
     import pathlib
     import re
 
-    src = pathlib.Path(api.__file__).read_text(encoding="utf8")
-    i = src.index("def _repair_orphan_field_kids")
-    j = src.index("@app.post(\"/split\"", i)
-    khoi = src[j : src.index("return ZipResponse(success=False", j)]
-    assert "_repair_orphan_field_kids" in khoi, "route /split khong con goi phep va"
+    # BI-138: khối thử lại đã chuyển NGUYÊN VĂN từ api.py sang src/pdf/split.py (`split_to_zip`)
+    # để worker dùng được mà không import api. Ghim theo nó; ý ghim không đổi.
+    src = (pathlib.Path(api.__file__).parent / "src" / "pdf" / "split.py").read_text(encoding="utf8")
+    i = src.index("def split_to_zip")
+    khoi = src[i : src.index("def _log_va", i)]
+    assert "repair_orphan_field_kids" in khoi, "split_to_zip khong con goi phep va"
     # Giữa `except ValueError` và lời gọi phép vá phải có một lần mở lại tài liệu.
-    m = re.search(r"except ValueError.*?_repair_orphan_field_kids", khoi, re.S)
+    m = re.search(r"except ValueError.*?repair_orphan_field_kids", khoi, re.S)
     assert m, "khong thay nhanh thu lai"
-    assert "_open_pdf_stream(pdf_bytes)" in m.group(0), (
+    assert "fitz.open(stream=pdf_bytes" in m.group(0), (
         "nhanh thu lai khong mo lai tai lieu tu byte goc - xem BI-124"
     )
 

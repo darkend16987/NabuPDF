@@ -47,6 +47,7 @@ from src.utils.config import (
 )
 from src.pdf import compress as _compress_core
 from src.pdf import incremental as _incremental_core
+from src.pdf import split as _split_core
 from src.pdf.util import (
     WRITE_GARBAGE,
     _MAX_PDF_B64,
@@ -1931,54 +1932,85 @@ class SplitRequest(BaseModel):
     ranges: str = ""              # range spec when mode="ranges"
 
 
-def _repair_orphan_field_kids(doc) -> list[int]:
-    """Dựng lại `/Kids` cho những trường form bị thiếu nó. Trả về xref đã vá.
+# Bí danh: lõi tách đã chuyển NGUYÊN VĂN sang `src/pdf/split.py` (BI-138) để tiến trình
+# worker dùng được mà không phải import `api`. Giữ tên cũ vì test_pdf_ops.py và các lưới
+# khác gọi `api._repair_orphan_field_kids`.
+_repair_orphan_field_kids = _split_core.repair_orphan_field_kids
 
-    VÌ SAO CẦN (BI-124). Theo chuẩn PDF, một trường form có widget con phải liệt kê
-    chúng trong `/Kids`. `opt_demo.pdf` của corpus pdf.js vi phạm: widget 22 và 23 ghi
-    `/Parent 21 0 R`, nhưng trường 21 (`veg`, nhóm radio) **không có `/Kids` nào cả** —
-    trong khi hai trường anh em của nó, 5 (`fruit`) và 9 (`shared`), thì có.
 
-    `insert_pdf` của PyMuPDF đi từ `/Fields`, theo `/Parent` lên cha, rồi tìm widget
-    trong `/Kids` của cha: `idx = parent["old_kids"].index(xref)` → `ValueError: 22 is
-    not in list`, và CẢ thao tác tách hỏng. qpdf vẫn chấm file gốc là **sạch** — đây là
-    chỗ PyMuPDF khắt khe hơn trọng tài.
+# BI-138: `/split` tách trong TIẾN TRÌNH CON, cùng khuôn với /compress (BI-121) và
+# /save-incremental-bin (BI-129).
+#
+# Trước đây route `async def` chạy `insert_pdf` thẳng trên event loop. `insert_pdf` giữ GIL
+# suốt thời gian chạy nên MỘT lần tách chậm làm đứng cả sidecar: mọi tab, `/health`, mọi
+# route. Đo 2026-11-22: `bug1978317.pdf` (1,5 MB, 1 trang) kẹt ở `insert_pdf` vượt 100 s.
+# (Bản ghi cũ trong docs/CORPUS-SWEEP.md gộp nó với `bomb_giant.pdf` — SAI về /split:
+# bomb_giant tách trong 0,0 s; nó chỉ treo ở nén và đánh số trang.)
+#
+# CHA làm phần rẻ và quyết định lỗi: mở file, đếm trang, khoảng trang, trần 1000 file — để
+# mọi câu 400 giữ nguyên. CON chỉ làm vòng `insert_pdf` nặng. Hết `SPLIT_TIMEOUT_S` thì giết.
+def _split_worker_cmd(src: str, dst: str, pairs_path: str) -> list[str]:
+    """Argv chạy lại chương trình này như một worker tách. Frozen: `sys.executable` CHÍNH LÀ
+    sidecar.exe nên cờ đi thẳng vào nó; dev: python của venv, phải nêu tên script."""
+    flag = _split_core.WORKER_FLAG
+    if getattr(sys, "frozen", False):
+        return [sys.executable, flag, src, dst, pairs_path]
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [sys.executable, os.path.join(here, "sidecar.py"), flag, src, dst, pairs_path]
 
-    Phép vá chỉ dựng lại đúng cái chuẩn đòi, từ dữ liệu đã có trong chính tài liệu:
-    widget nào trỏ `/Parent` về trường nào thì là con của trường ấy. Đo trên
-    `opt_demo.pdf`: chỉ trường 21 bị chạm (5 và 9 đã đúng nên để nguyên), sau đó
-    `insert_pdf` chạy và **giữ đủ cả 9 widget**, kể cả nhóm `veg`; qpdf chấm đầu ra là
-    sạch. So với cách rẻ hơn là `insert_pdf(..., widgets=False)`: cách đó cũng chạy,
-    nhưng ra file **không còn form** — mất trắng 9 trường.
 
-    CHỈ GỌI SAU KHI `insert_pdf` ĐÃ HỎNG. Tài liệu lành không bao giờ đi qua đây, nên
-    đường tách file bình thường không chịu thêm một phép đọc xref nào.
+def _split_via_worker_blocking(pdf_bytes: bytes, pairs: list[tuple[int, int]]) -> tuple[bytes, int]:
+    """Tách trong tiến trình con. Chạy trên worker THREAD (xem route) — an toàn vì thread này
+    không làm việc PyMuPDF nào: nó ghi file, chờ một tiến trình và đọc file, cả ba nhả GIL.
+
+    Trả `(zip_bytes, số_file)`. Ném `SplitTimeout` khi hết giờ, `RuntimeError` (kèm nguyên văn
+    stderr của worker) khi worker thất bại hay chết — sidecar VẪN SỐNG, đó là cả lý do có tiến
+    trình con — và `OSError` khi không khởi động nổi worker (route lùi về tách tại chỗ).
     """
-    con = {}
-    for x in range(1, doc.xref_length()):
-        try:
-            if doc.xref_get_key(x, "Subtype")[1] != "/Widget":
-                continue
-            kind, parent = doc.xref_get_key(x, "Parent")
-            if kind != "xref":
-                continue
-            con.setdefault(int(parent.split()[0]), []).append(x)
-        except Exception:  # xref lạ/hỏng: bỏ qua, đây là đường chữa cháy
-            continue
+    tmp = tempfile.mkdtemp(prefix="nabu-split-")
+    src = os.path.join(tmp, "in.pdf")
+    dst = os.path.join(tmp, "out.zip")
+    pairs_path = os.path.join(tmp, "pairs.json")
+    try:
+        with open(src, "wb") as f:
+            f.write(pdf_bytes)
+        with open(pairs_path, "w", encoding="utf-8") as f:
+            json.dump([[a, b] for a, b in pairs], f)
 
-    da_va = []
-    for cha, kids in con.items():
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW — nếu không, exe nháy cửa sổ console
+
+        proc = subprocess.Popen(  # noqa: S603 (argv dựng ở đây, không bao giờ từ request)
+            _split_worker_cmd(src, dst, pairs_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kwargs,
+        )
         try:
-            kind, val = doc.xref_get_key(cha, "Kids")
-            # Đã đủ con thì KHÔNG đụng vào: ta chỉ thêm thứ còn thiếu, không viết lại
-            # cấu trúc form của người ta.
-            if kind == "array" and all(f"{k} 0 R" in val for k in kids):
-                continue
-            doc.xref_set_key(cha, "Kids", "[" + " ".join(f"{k} 0 R" for k in kids) + "]")
-            da_va.append(cha)
-        except Exception:
-            continue
-    return da_va
+            _, err_bytes = proc.communicate(timeout=_split_core.SPLIT_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()  # dọn xác + đóng ống, nếu không tiến trình thành zombie
+            han = _split_core.SPLIT_TIMEOUT_S
+            thoi_gian = f"{han // 60} phút" if han >= 60 else f"{han} giây"
+            raise _split_core.SplitTimeout(
+                f"Tách quá {thoi_gian} nên đã dừng. PDF này nhiều khả năng đã hỏng "
+                "hoặc là file nén bung (decompression bomb)."
+            )
+
+        err = (err_bytes or b"").decode("utf-8", "replace").strip()
+        if proc.returncode != _split_core.EXIT_OK:
+            # Gồm cả segfault (mã lạ): sidecar vẫn sống.
+            raise RuntimeError(err or f"Tiến trình tách thoát với mã {proc.returncode}.")
+        if not os.path.exists(dst):
+            raise RuntimeError("Tiến trình tách không tạo ra file kết quả.")
+        with open(dst, "rb") as f:
+            data = f.read()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return data, len(zf.namelist())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @app.post("/split", response_model=ZipResponse)
@@ -1987,7 +2019,7 @@ async def split_pdf(req: SplitRequest):
 
     Purely additive: reads the source, writes new PDFs, never mutates the input.
     """
-    fitz = _require_fitz()
+    _require_fitz()
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
     doc = _open_pdf_stream(pdf_bytes)
 
@@ -2010,57 +2042,32 @@ async def split_pdf(req: SplitRequest):
         doc.close()
         raise HTTPException(status_code=400, detail="Quá nhiều file (tối đa 1000). Tăng số trang mỗi file.")
 
-    def _tach_vao(src, zf) -> int:
-        n_file = 0
-        for start, end in pairs:
-            part = fitz.open()
-            try:
-                part.insert_pdf(src, from_page=start, to_page=end)
-                data = part.tobytes()
-            finally:
-                part.close()
-            n_file += 1
-            label = f"{start + 1}" if start == end else f"{start + 1}-{end + 1}"
-            zf.writestr(f"{src_name}_{n_file:03d}_p{label}.pdf", data)
-        return n_file
+    # Cha đã đọc xong những gì cần (số trang, khoảng); phần nặng đi sang tiến trình con và
+    # tự mở lại từ byte gốc, nên đóng ngay thay vì giữ MuPDF mở suốt lúc chờ.
+    doc.close()
 
-    buf = io.BytesIO()
-    count = 0
-    src_name = "part"
     try:
         try:
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                count = _tach_vao(doc, zf)
-        except ValueError as e:
-            # `insert_pdf` vấp một trường form thiếu `/Kids` (BI-124). Vá rồi thử LẠI
-            # MỘT lần — và chỉ khi phép vá thật sự chạm vào cái gì, nếu không thì lỗi
-            # này là chuyện khác và cứ để nó nổi lên như cũ.
-            #
-            # MỞ LẠI TỪ BYTE GỐC, đừng dùng lại `doc`. `insert_pdf` hỏng giữa chừng để
-            # lại sổ sách nội bộ đã bị sửa dở: đo được, thử lại trên chính `doc` ra file
-            # 1.619 byte **không còn widget nào** — đúng bằng đường `widgets=False`, tức
-            # mất trắng cả form mà vẫn báo thành công. Mở lại thì ra 5.663 byte, đủ 9
-            # widget. Cùng một bài học với BI-122.
-            doc.close()
-            doc = _open_pdf_stream(pdf_bytes)
-            da_va = _repair_orphan_field_kids(doc)
-            if not da_va:
-                raise
-            logger.warning("split: va /Kids cho truong form %s roi thu lai (%s)", da_va, e)
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                count = _tach_vao(doc, zf)
+            out_zip, count = await run_in_threadpool(_split_via_worker_blocking, pdf_bytes, pairs)
+        except OSError as e:
+            # Chỉ quay về tách tại chỗ khi KHÔNG khởi động nổi tiến trình con (cùng đánh đổi
+            # với `_compress_anywhere`: mất tính năng chắc chắn tệ hơn một rủi ro hiếm). Worker
+            # CHẾT hay HẾT GIỜ thì KHÔNG đi nhánh này — làm thế là tự đứng hình đúng như cũ.
+            logger.warning("split worker unavailable (%s) — splitting in-process", e)
+            out_zip, count = _split_core.split_to_zip(pdf_bytes, pairs)
+    except _split_core.SplitTimeout as e:
+        # Hết giờ thì KHÔNG thử lại: thử lại chỉ là bắt người dùng chờ thêm một trần nữa.
+        logger.warning("Split timeout: %s", e)
+        return ZipResponse(success=False, error=str(e))
     except Exception as e:
         logger.exception("Split error")
-        doc.close()
         return ZipResponse(success=False, error=nice_pdf_error(e))
-    doc.close()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return ZipResponse(
         success=True,
         filename=f"split_{ts}.zip",
-        data_b64=base64.b64encode(buf.getvalue()).decode("ascii"),
+        data_b64=base64.b64encode(out_zip).decode("ascii"),
         count=count,
     )
 
