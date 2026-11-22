@@ -3389,7 +3389,15 @@ _Ghi 2026-09-30 (v0.2.73)._
 
   Không bấm nút Nén thật vì nút đó kết thúc bằng **hộp thoại Lưu native** mà CDP không bấm được; phần còn lại sau `.get()` chỉ là nối chuỗi, đã ghim ở `npm run test:imgfail`.
   - Hai cái vấp khi viết probe, ghi lại vì cả hai đều im lặng: (a) `sidecar` là **biến trần** ở scope toàn cục của renderer, hỏi `window.sidecar` luôn ra `undefined` (§2, BI-14); (b) `spawn(…, {shell: true})` rồi `child.kill()` chỉ giết `cmd.exe`, Electron sống tiếp và **giữ cổng debug** — lần chạy sau treo vô hạn vì nối vào một target đã chết. Spawn thẳng `electron.exe` và `taskkill /T`.
-- **Chưa kiểm / còn mở:** chưa ai nhìn tận mắt câu toast *"Ảnh trong file này không nén lại được."* hiện trên màn hình — muốn thấy thì nén một trong 8 file ở bảng trên (`clippath.pdf` chỉ 459 byte) và bấm Lưu. Còn lại trong corpus, **không** thuộc đường nén: 5 `op_fail:pagenum`, 1 `op_fail:split` (`opt_demo.pdf`, `22 is not in list` — lỗi Python của chính ta), 2 `timeout` (sidecar **không có hạn giờ nào**), 1 `open_fail`, 3 `output_warn`.
+- **Đã nhìn tận mắt câu toast (`desktop/scripts/probe-images-failed-toast.js`)** — chạy **chính `runCompress()`** trong app thật, đi hết cả nhánh `if (r.saved)`, rồi đọc `#toast`:
+
+  | file nén | `#toast`.textContent | class |
+  |---|---|---|
+  | `clippath.pdf` | *"Không giảm thêm được — đã lưu bản gốc tối ưu. **Ảnh trong file này không nén lại được.**"* | `toast warn` |
+  | `tracemonkey.pdf` | *"Đã nén: 992 KB → 822 KB (83%)"* | `toast good` |
+
+  Và file **thật sự ra đĩa** (459 B / 842.144 B, cả hai bắt đầu bằng `%PDF`), hộp thoại Lưu được gọi đúng 2 lần.
+  - **Cách vượt hộp thoại Lưu native:** thay `window.desktop.savePdf` trong renderer **không được** — contextBridge khoá object đã lộ ra, phép gán im lặng không ăn (thử rồi: gán xong so lại vẫn ra hàm cũ). Phải nối vào tiến trình **main** bằng `--inspect` và thay đúng một hàm `dialog.showSaveDialog`. Mọi mã khác — IPC, `fs.writeFile`, renderer — là mã ship thật. Còn lại trong corpus, **không** thuộc đường nén: 5 `op_fail:pagenum`, 1 `op_fail:split` (`opt_demo.pdf`, `22 is not in list` — lỗi Python của chính ta), 2 `timeout` (sidecar **không có hạn giờ nào**), 1 `open_fail`, 3 `output_warn`.
 - **Vỡ khi:** ai đó gỡ `try/except` quanh `rewrite_images`; lưu tiếp tài liệu đã sửa dở cho "nhanh"; đổi mã thoát 4 ở một bên; bỏ `X-Images-Failed` khỏi `expose_headers`; hoặc nâng PyMuPDF mà không chạy lại `tools/corpus_sweep_sidecar.py`.
 
 ## 4. Hàm nút thắt (đổi chữ ký = ảnh hưởng diện rộng)
