@@ -14,6 +14,10 @@ Plain-runner style (no pytest). ASCII-only console output (Windows cp1252).
 import asyncio
 import base64
 import io
+import json
+import sys
+import threading
+import time
 import zipfile
 
 import fitz  # PyMuPDF
@@ -381,9 +385,9 @@ def test_compress_always_runs_out_of_process():
     seen = []
     real = api._compress_anywhere
 
-    async def spy(pdf_bytes, preset):
+    async def spy(pdf_bytes, preset, job=None):
         seen.append(preset)
-        return await real(pdf_bytes, preset)
+        return await real(pdf_bytes, preset, job)
 
     api._compress_anywhere = spy
     try:
@@ -536,7 +540,7 @@ def test_compress_retries_without_images_when_the_worker_dies():
     real = api._compress_via_worker_blocking
     seen = []
 
-    def flaky(pdf_bytes, preset):
+    def flaky(pdf_bytes, preset, job=None):
         seen.append(preset)
         if preset != "lossless":
             raise RuntimeError("Tien trinh nen thoat voi ma 3221225477.")
@@ -559,7 +563,7 @@ def test_compress_does_not_retry_a_lossless_worker_death():
     real = api._compress_via_worker_blocking
     calls = []
 
-    def dying(pdf_bytes, preset):
+    def dying(pdf_bytes, preset, job=None):
         calls.append(preset)
         raise RuntimeError("Tien trinh nen thoat voi ma 3221225477.")
 
@@ -585,24 +589,28 @@ def test_worker_exit_four_is_success_not_death():
     import subprocess as _sp
 
     src = base64.b64decode(_npage_pdf(1))
-    real_run = api.subprocess.run
+    real_popen = api.subprocess.Popen
 
     class _Proc:
         returncode = api._WORKER_IMAGES_FAILED
-        stdout = b""
-        stderr = b""
 
-    def fake_run(cmd, **kw):
+        def communicate(self, timeout=None):
+            return (b"", b"")
+
+        def kill(self):
+            pass
+
+    def fake_popen(cmd, **kw):
         # argv la [..., src, dst, preset] - worker that ghi vao dst, ta cung vay.
         with open(cmd[-2], "wb") as f:
             f.write(src)
         return _Proc()
 
-    api.subprocess.run = fake_run
+    api.subprocess.Popen = fake_popen
     try:
         res = api._compress_via_worker_blocking(src, "ebook")
     finally:
-        api.subprocess.run = real_run
+        api.subprocess.Popen = real_popen
     assert res.data == src
     assert res.images_failed is True, "ma 4 phai thanh images_failed, khong phai loi"
     assert _sp is api.subprocess  # da tra lai dung module
@@ -809,27 +817,43 @@ def test_compress_kills_a_worker_that_runs_too_long():
 
     src = base64.b64decode(_npage_pdf(1))
     cu = core.COMPRESS_TIMEOUT_S
-    real_run = api.subprocess.run
+    real_popen = api.subprocess.Popen
 
-    def cham(cmd, **kw):
-        # Kiểm luôn rằng hạn giờ THẬT SỰ được truyền xuống. Thiếu dòng này thì xoá
-        # `timeout=` khỏi `subprocess.run` vẫn xanh — lưới xanh trên một bản vá đã
-        # bị gỡ (đúng cái bẫy redproof bắt được).
-        assert kw.get("timeout") == core.COMPRESS_TIMEOUT_S, (
-            f"subprocess.run khong nhan han gio: timeout={kw.get('timeout')!r}"
-        )
-        raise api.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+    hanh_vi = {}
+
+    class ChamProc:
+        """Tiến trình con giả: chờ mãi, và ghi lại là nó CÓ bị giết."""
+
+        returncode = -1
+
+        def communicate(self, timeout=None):
+            if hanh_vi.get("da_giet"):
+                return (b"", b"")
+            # Kiểm luôn rằng hạn giờ THẬT SỰ được truyền xuống. Thiếu dòng này thì
+            # xoá `timeout=` khỏi `communicate` vẫn xanh — lưới xanh trên một bản vá
+            # đã bị gỡ (đúng cái bẫy redproof bắt được lần trước).
+            assert timeout == core.COMPRESS_TIMEOUT_S, (
+                f"communicate khong nhan han gio: timeout={timeout!r}"
+            )
+            raise api.subprocess.TimeoutExpired("cmd", timeout)
+
+        def kill(self):
+            hanh_vi["da_giet"] = True
 
     core.COMPRESS_TIMEOUT_S = 1
-    api.subprocess.run = cham
+    api.subprocess.Popen = lambda *a, **kw: ChamProc()
     try:
         api._compress_via_worker_blocking(src, "ebook")
         assert False, "expected CompressTimeout"
     except core.CompressTimeout as e:
         assert "phút" in str(e), repr(str(e))
     finally:
-        api.subprocess.run = real_run
+        api.subprocess.Popen = real_popen
         core.COMPRESS_TIMEOUT_S = cu
+    # `subprocess.run` dọn xác hộ, `Popen` thì không (BI-126 đổi sang Popen để còn
+    # giết được). Quên `kill()` ở nhánh hết giờ là để lại một tiến trình nén chạy
+    # mãi mà không ai cầm handle nữa — đúng thứ BI-123 sinh ra để chặn.
+    assert hanh_vi.get("da_giet"), "het gio ma khong giet tien trinh con"
 
 
 def test_compress_does_not_retry_after_a_timeout():
@@ -846,7 +870,7 @@ def test_compress_does_not_retry_after_a_timeout():
     real = api._compress_via_worker_blocking
     goi = []
 
-    def het_gio(pdf_bytes, preset):
+    def het_gio(pdf_bytes, preset, job=None):
         goi.append(preset)
         raise core.CompressTimeout("Nén quá 30 phút nên đã dừng.")
 
@@ -859,6 +883,224 @@ def test_compress_does_not_retry_after_a_timeout():
     finally:
         api._compress_via_worker_blocking = real
     assert goi == ["ebook"], f"da thu lai sau khi het gio: {goi}"
+
+
+# --------------------------------------------------------------------------- #
+# BI-126: nút Hủy cho nén
+#
+# Hủy chỉ đúng khi nó THẮNG MỌI CUỘC ĐUA. Ba cái dưới đây là ba thời điểm khác nhau
+# mà người dùng có thể bấm, và cả ba từng có khả năng lọt:
+#   1. đang chạy                    -> giết tiến trình con
+#   2. trước khi có tiến trình con  -> giết ngay sau khi sinh
+#   3. trước cả khi route ghi sổ    -> bia mộ, lần nén ấy chết lúc chào đời
+# Cộng thêm cái bẫy lặng lẽ nhất: tiến trình bị giết thoát với mã lạ, mà mã lạ nghĩa
+# là "worker chết => thử lại ở lossless" (BI-122) — bấm Hủy xong lại nén thêm lần nữa.
+# --------------------------------------------------------------------------- #
+def _worker_ngu(giay: int):
+    """Thay lệnh worker bằng một tiến trình python chỉ ngủ — cần một việc chậm ỔN
+    ĐỊNH, mà không PDF tổng hợp nào chậm một cách ổn định."""
+    return lambda s, d, p: [sys.executable, "-c", f"import time;time.sleep({giay})"]
+
+
+def test_compress_cancel_kills_a_running_worker():
+    """Bấm Hủy giữa chừng => tiến trình con chết ngay, không chờ hết việc.
+
+    Đây là ca ĐỦ THẬT: tiến trình con thật, `/compress-cancel` thật, giết thật. Worker
+    giả ngủ 60 s; nếu Hủy không ăn thì test này treo tới timeout của lưới chứ không
+    lặng lẽ xanh.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    real_cmd = api._compress_worker_cmd
+    api._compress_worker_cmd = _worker_ngu(60)
+    ket = {}
+
+    def chay():
+        try:
+            with api._compress_job_slot("j-dang-chay") as slot:
+                api._compress_via_worker_blocking(src, "ebook", slot)
+            ket["r"] = "xong"
+        except BaseException as e:  # noqa: BLE001 — test muốn biết CHÍNH XÁC cái gì nổi lên
+            ket["r"] = e
+
+    try:
+        t0 = time.time()
+        th = threading.Thread(target=chay)
+        th.start()
+        # Chờ tới khi tiến trình con thật sự có mặt trong sổ — ngủ cứng là mầm mống
+        # test chập chờn trên máy chậm.
+        for _ in range(200):
+            with api._compress_jobs_lock:
+                j = api._compress_jobs.get("j-dang-chay")
+                if j is not None and j.proc is not None:
+                    break
+            time.sleep(0.02)
+        else:
+            assert False, "worker khong bao gio xuat hien trong so"
+
+        r = _run(api.compress_cancel(job="j-dang-chay"))
+        assert r == {"success": True, "running": True}, r
+        th.join(timeout=20)
+        dt = time.time() - t0
+    finally:
+        api._compress_worker_cmd = real_cmd
+
+    assert not th.is_alive(), "huy roi ma van con cho worker"
+    assert isinstance(ket.get("r"), core.CompressCancelled), repr(ket.get("r"))
+    assert dt < 20, f"giet xong ma van cho het 60s: {dt:.1f}s"
+    # Và sổ phải sạch: ô việc nén chỉ sống trong một request.
+    assert "j-dang-chay" not in api._compress_jobs, api._compress_jobs
+
+
+def test_cancel_that_arrives_before_the_worker_exists_still_kills_it():
+    """Cuộc đua 2: Hủy tới lúc ta còn đang ghi file tạm.
+
+    Lúc đó `job.proc` là None nên `/compress-cancel` không giết được gì. Nếu
+    `_compress_via_worker_blocking` không đọc lại cờ ngay sau `Popen` thì nó vừa sinh
+    ra một tiến trình nén mồ côi, chạy tiếp tới 30 phút sau lưng người dùng.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    real_popen = api.subprocess.Popen
+    dau_vet = {}
+
+    class Proc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return (b"", b"")
+
+        def kill(self):
+            dau_vet["da_giet"] = True
+
+    job = api._CompressJob()
+    job.cancelled = True  # Hủy đã tới TRƯỚC khi có tiến trình
+    api.subprocess.Popen = lambda *a, **kw: Proc()
+    try:
+        api._compress_via_worker_blocking(src, "ebook", job)
+        assert False, "expected CompressCancelled"
+    except core.CompressCancelled:
+        pass
+    finally:
+        api.subprocess.Popen = real_popen
+    assert dau_vet.get("da_giet"), "sinh worker ra roi bo mac no chay"
+
+
+def test_cancel_that_arrives_before_the_request_is_booked_still_wins():
+    """Cuộc đua 3: Hủy tới trước cả khi route kịp ghi sổ.
+
+    Xảy ra thật: nút Hủy hiện ra TRƯỚC khi `fetch` được gọi, và thân một PDF vài
+    trăm MB mất một lúc mới truyền xong. Không có bia mộ thì Hủy báo "không tìm thấy"
+    rồi máy nén tiếp — người dùng không có cách nào biết.
+    """
+    from src.pdf import compress as core
+
+    r = _run(api.compress_cancel(job="j-chua-co"))
+    assert r == {"success": True, "running": False}, r
+    try:
+        with api._compress_job_slot("j-chua-co"):
+            assert False, "bia mo khong an - lan nen nay da chay"
+    except core.CompressCancelled:
+        pass
+    # Bia mộ dùng xong là xoá, không tích lại.
+    assert "j-chua-co" not in api._compress_jobs, api._compress_jobs
+
+
+def test_cancel_does_not_trigger_the_lossless_retry():
+    """Bẫy lặng lẽ nhất: tiến trình bị giết thoát với mã lạ, và mã lạ = "thử lại".
+
+    `CompressCancelled` là lớp riêng đúng vì việc này — y như `CompressTimeout`
+    (BI-123). Để nó rơi vào `except RuntimeError` thì bấm Hủy xong máy chạy thêm
+    một lần nén `lossless` nữa.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    real = api._compress_via_worker_blocking
+    goi = []
+
+    def bi_huy(pdf_bytes, preset, job=None):
+        goi.append(preset)
+        raise core.CompressCancelled("Đã hủy nén.")
+
+    api._compress_via_worker_blocking = bi_huy
+    try:
+        _run(api._compress_anywhere(src, "ebook"))
+        assert False, "expected CompressCancelled"
+    except core.CompressCancelled:
+        pass
+    finally:
+        api._compress_via_worker_blocking = real
+    assert goi == ["ebook"], f"da nen them mot lan sau khi bi huy: {goi}"
+
+
+def test_both_routes_report_a_cancel_as_cancelled_not_an_error():
+    """Hủy không phải lỗi. Mỗi route nói theo cách của nó, và cả hai phải nói.
+
+    Nếu nó về tới renderer như một lỗi thường thì người dùng bấm Hủy xong nhận một
+    toast đỏ "Nén lỗi: …" cho việc chính họ vừa yêu cầu.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    real = api._compress_via_worker_blocking
+
+    def bi_huy(pdf_bytes, preset, job=None):
+        raise core.CompressCancelled("Đã hủy nén.")
+
+    api._compress_via_worker_blocking = bi_huy
+    try:
+        js = _run(api.compress(api.CompressRequest(
+            pdf_b64=base64.b64encode(src).decode(), preset="ebook", job="j1")))
+        raw = _run(api.compress_bin(_bin_request(src), preset="ebook", job="j2"))
+    finally:
+        api._compress_via_worker_blocking = real
+
+    assert js.success is False and js.cancelled is True, js
+    assert js.error, "huy van phai co cau noi cho nguoi dung"
+    assert raw.status_code == 200, raw.status_code
+    body = json.loads(bytes(raw.body))
+    assert body["success"] is False and body["cancelled"] is True, body
+
+
+def test_compress_cancel_needs_a_job_id():
+    """Hủy mà không nói hủy cái gì là lỗi của phía gọi, không phải "hủy tất"."""
+    try:
+        _run(api.compress_cancel(job=""))
+        assert False, "expected 400"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+
+
+def test_cancel_tombstones_do_not_pile_up():
+    """Sổ việc nén có trần. Bia mộ là thứ client tự đặt tên, nên nó cũng là thứ một
+    client hỏng (hoặc một vòng lặp lỗi) bơm vào mãi."""
+    cu = dict(api._compress_jobs)
+    try:
+        api._compress_jobs.clear()
+        for i in range(200):
+            _run(api.compress_cancel(job=f"rac-{i}"))
+        assert len(api._compress_jobs) <= api._MAX_COMPRESS_JOBS + 1, len(api._compress_jobs)
+    finally:
+        api._compress_jobs.clear()
+        api._compress_jobs.update(cu)
+
+
+def test_the_job_slot_is_cleaned_up_even_when_the_compression_blows_up():
+    """Ô trong sổ sống đúng một request. Rò một ô là rò luôn cái tay nắm tiến
+    trình con nằm trong nó."""
+    try:
+        with api._compress_job_slot("j-no"):
+            raise ValueError("no giua chung")
+    except ValueError:
+        pass
+    assert "j-no" not in api._compress_jobs, api._compress_jobs
+    # Không mã việc = hợp đồng cũ, không ghi sổ gì cả.
+    with api._compress_job_slot("") as slot:
+        assert slot is None
+    assert api._compress_jobs == {}, api._compress_jobs
 
 
 # --------------------------------------------------------------------------- #
@@ -1155,6 +1397,14 @@ if __name__ == "__main__":
         test_compress_has_a_ceiling_and_it_is_generous,
         test_compress_kills_a_worker_that_runs_too_long,
         test_compress_does_not_retry_after_a_timeout,
+        test_compress_cancel_kills_a_running_worker,
+        test_cancel_that_arrives_before_the_worker_exists_still_kills_it,
+        test_cancel_that_arrives_before_the_request_is_booked_still_wins,
+        test_cancel_does_not_trigger_the_lossless_retry,
+        test_both_routes_report_a_cancel_as_cancelled_not_an_error,
+        test_compress_cancel_needs_a_job_id,
+        test_cancel_tombstones_do_not_pile_up,
+        test_the_job_slot_is_cleaned_up_even_when_the_compression_blows_up,
         test_repair_only_touches_fields_that_are_actually_missing_kids,
         test_split_recovers_from_a_form_missing_kids,
         test_split_retry_reopens_the_document_from_the_original_bytes,

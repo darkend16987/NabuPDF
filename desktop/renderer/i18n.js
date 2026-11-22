@@ -555,8 +555,12 @@
     "Tài liệu {size} · ước tính khoảng {time}": "Document {size} · roughly {time}",
     "tài liệu rất lớn, máy sẽ cần nhiều RAM": "very large document, this needs a lot of RAM",
     "Đang nén PDF… (khoảng {time})": "Compressing PDF… (about {time})",
-    "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?":
-      "This document is {size} — compressing may take about {time} and use a lot of memory, and it cannot be stopped once started. Continue?",
+    "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Đang chạy vẫn bấm Hủy được. Tiếp tục?":
+      "This document is {size} — compressing may take about {time} and use a lot of memory. You can press Cancel while it runs. Continue?",
+    // Nút Hủy của lớp phủ + hai câu quanh nó (BI-126).
+    "Đang hủy…": "Cancelling…",
+    "Đã hủy nén.": "Compression cancelled.",
+    "Không gửi được lệnh hủy: ": "Could not send the cancel command: ",
 
     // --- translate dialog ---
     "Dịch PDF (AI)": "Translate PDF (AI)",

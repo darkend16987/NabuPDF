@@ -16,8 +16,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
 import re as _re
@@ -801,6 +802,9 @@ class CompressRequest(BaseModel):
     """Request body for PDF compression."""
     pdf_b64: str  # source PDF, base64 (no data URL prefix)
     preset: str = "ebook"  # screen | ebook | printer | lossless
+    # Mã việc nén, do phía gọi đặt, để còn gọi /compress-cancel mà dừng (BI-126).
+    # Để trống = không hủy được, hợp đồng cũ y nguyên.
+    job: str = ""
 
 
 class CompressResponse(BaseModel):
@@ -813,6 +817,9 @@ class CompressResponse(BaseModel):
     # trả về vẫn hợp lệ, chỉ là mới được deflate + gom rác. Lớp UI nói lại cho người
     # dùng để họ không phải đoán vì sao file ảnh nặng lại chỉ nhỏ đi vài phần trăm.
     images_failed: bool = False
+    # True = người dùng bấm Hủy (BI-126). Tách khỏi `error` có chủ ý: đây không phải
+    # sự cố, nên UI không bật toast đỏ cho việc chính họ vừa yêu cầu.
+    cancelled: bool = False
     error: str | None = None
 
 
@@ -919,6 +926,73 @@ _WORKER_BAD_REQUEST = 3
 _WORKER_IMAGES_FAILED = 4
 
 
+# --------------------------------------------------------------------------- #
+# BI-126: HỦY một lần nén đang chạy.
+#
+# Hủy được là NHỜ BI-121 chứ không phải tự nhiên có: nén đã nằm ở tiến trình con,
+# nên "dừng lại" chỉ là giết đúng tiến trình đó. Hồi còn nén tại chỗ thì không có
+# cách nào — `rewrite_images()` giữ GIL suốt thời gian chạy, không có điểm nào để
+# chen một phép kiểm tra cờ vào giữa.
+#
+# Sổ việc: renderer sinh một mã `job` và gửi kèm khi nén; `/compress-cancel` tra mã
+# đó ra tiến trình con rồi `kill()`. Mã do client đặt, nhưng mọi route đã nằm sau
+# token per-launch nên không có ai ngoài app gọi tới được.
+#
+# BA CUỘC ĐUA, và cả ba đều phải thua cái Hủy:
+#   1. Hủy tới TRƯỚC khi có `Popen` (đang ghi file tạm) → cờ `cancelled` đã bật,
+#      nên ngay sau khi sinh tiến trình ta giết luôn.
+#   2. Hủy tới TRƯỚC khi route kịp ghi sổ (thân request còn đang truyền) → để lại
+#      một "bia mộ" trong sổ; lúc route ghi sổ thì thấy và bỏ cuộc ngay, không hề
+#      động tới PDF. Thiếu bước này thì Hủy báo "không tìm thấy" mà máy vẫn nén
+#      tiếp 30 phút — im lặng và đúng kiểu khó tin nhất.
+#   3. Hủy tới GIỮA hai lần chạy (lần thử lại `lossless` của BI-122) → cờ nằm trên
+#      cùng một `_CompressJob` cho cả request, nên lần thử lại cũng thấy.
+_MAX_COMPRESS_JOBS = 32
+
+
+class _CompressJob:
+    """Một lần nén đang chạy: tiến trình con của nó + cờ đã-bị-hủy."""
+
+    __slots__ = ("proc", "cancelled")
+
+    def __init__(self):
+        self.proc = None
+        self.cancelled = False
+
+
+_compress_jobs: dict[str, _CompressJob] = {}
+# Khoá thường chứ không phải asyncio.Lock: sổ này bị đụng từ CẢ event loop
+# (/compress-cancel) lẫn worker thread (`_compress_via_worker_blocking`).
+_compress_jobs_lock = threading.Lock()
+
+
+@contextmanager
+def _compress_job_slot(job_id: str):
+    """Ghi `job_id` vào sổ trong suốt một request nén, rồi xoá.
+
+    Gọi ở ROUTE, trước `await request.body()`: thân một PDF 500 MB mất vài trăm ms
+    để truyền, và người dùng bấm Hủy trong quãng đó phải ăn (cuộc đua số 2).
+
+    Ném `CompressCancelled` ngay nếu Hủy đã tới trước — khi đó không có gì để dọn.
+    """
+    if not job_id:
+        yield None
+        return
+    with _compress_jobs_lock:
+        cu = _compress_jobs.get(job_id)
+        if cu is not None and cu.cancelled:
+            # Bia mộ: Hủy tới trước cả request. Xoá luôn, khỏi để lại rác.
+            _compress_jobs.pop(job_id, None)
+            raise _compress_core.CompressCancelled("Đã hủy nén.")
+        job = _CompressJob()
+        _compress_jobs[job_id] = job
+    try:
+        yield job
+    finally:
+        with _compress_jobs_lock:
+            _compress_jobs.pop(job_id, None)
+
+
 def _compress_worker_cmd(src: str, dst: str, preset: str) -> list[str]:
     """Argv that re-launches this program as a one-shot compressor.
 
@@ -931,7 +1005,9 @@ def _compress_worker_cmd(src: str, dst: str, preset: str) -> list[str]:
     return [sys.executable, os.path.join(here, "sidecar.py"), _COMPRESS_WORKER_FLAG, src, dst, preset]
 
 
-def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_core.CompressResult:
+def _compress_via_worker_blocking(
+    pdf_bytes: bytes, preset: str, job: "_CompressJob | None" = None
+) -> _compress_core.CompressResult:
     """Compress in a child process. Runs on a worker THREAD (see the route).
 
     The thread is safe here precisely because it does no PyMuPDF work — it writes a
@@ -939,6 +1015,9 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_co
     event loop keeps running, and MuPDF stays confined to one process at a time.
 
     Trả về `CompressResult`: byte kết quả + `images_failed` (worker thoát 4, BI-122).
+
+    `job` (BI-126) là ô trong sổ việc nén: ta gắn tiến trình con vào đó để
+    `/compress-cancel` còn giết được, và đọc cờ `cancelled` của nó.
 
     Raises HTTPException for caller errors, RuntimeError for a worker failure, and
     OSError when the worker could not be launched at all (the caller falls back).
@@ -955,23 +1034,47 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_co
             # Without this the frozen exe flashes a console window on every compress.
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
+        # `Popen` + `communicate(timeout=…)` chứ không phải `subprocess.run` (BI-126):
+        # run() không đưa lại cái tay nắm nào, mà Hủy chính là "giết đúng tiến trình
+        # này". Hạn giờ của BI-123 vẫn còn nguyên, chỉ chuyển sang `communicate` —
+        # và việc dọn xác mà run() vốn làm hộ thì nay phải tự làm.
+        proc = subprocess.Popen(  # noqa: S603 (argv is built here, never from the request)
+            _compress_worker_cmd(src, dst, preset),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kwargs,
+        )
+        if job is not None:
+            with _compress_jobs_lock:
+                job.proc = proc
+                da_huy = job.cancelled
+            # Cuộc đua số 1: Hủy tới lúc ta còn đang ghi file tạm, nên không giết được
+            # cái gì. Giờ đã có tiến trình — giết ngay, đừng để nó chạy mồ côi.
+            if da_huy:
+                proc.kill()
         try:
-            proc = subprocess.run(  # noqa: S603 (argv is built here, never from the request)
-                _compress_worker_cmd(src, dst, preset),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=_compress_core.COMPRESS_TIMEOUT_S,
-                **kwargs,
-            )
+            _, err_bytes = proc.communicate(timeout=_compress_core.COMPRESS_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            # subprocess.run đã giết tiến trình con trước khi ném. Không có bước dọn
-            # nào thêm — thư mục tạm do khối `finally` bên dưới xoá.
+            proc.kill()
+            proc.communicate()  # dọn xác + đóng ống, nếu không tiến trình thành zombie
             phut = _compress_core.COMPRESS_TIMEOUT_S // 60
             raise _compress_core.CompressTimeout(
                 f"Nén quá {phut} phút nên đã dừng. PDF này nhiều khả năng là "
                 "file nén bung (decompression bomb) hoặc đã hỏng."
             )
-        err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+        finally:
+            if job is not None:
+                with _compress_jobs_lock:
+                    job.proc = None
+
+        # Đọc cờ SAU khi tiến trình đã dừng, và trước mọi phép diễn giải mã thoát:
+        # tiến trình bị giết thoát với mã lạ, mà mã lạ nghĩa là "worker chết ⇒ thử
+        # lại ở lossless" (BI-122). Bấm Hủy xong lại nén thêm một lần nữa thì đúng
+        # là trêu người dùng.
+        if job is not None and job.cancelled:
+            raise _compress_core.CompressCancelled("Đã hủy nén.")
+
+        err = (err_bytes or b"").decode("utf-8", "replace").strip()
 
         if proc.returncode == _WORKER_BAD_REQUEST:
             raise HTTPException(status_code=400, detail=err or "Không nén được PDF.")
@@ -987,7 +1090,9 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_co
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> _compress_core.CompressResult:
+async def _compress_anywhere(
+    pdf_bytes: bytes, preset: str, job: "_CompressJob | None" = None
+) -> _compress_core.CompressResult:
     """Nén trong TIẾN TRÌNH CON — đường duy nhất của cả hai route (BI-121).
 
     Chạy trên worker thread vì `_compress_via_worker_blocking` chỉ ghi file, chờ một
@@ -1018,20 +1123,64 @@ async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> _compress_core.Co
     lại (chẳng còn gì để bỏ bớt), lỗi nổi lên như cũ.
     """
     try:
-        return await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
-    except _compress_core.CompressTimeout:
+        return await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset, job)
+    except (_compress_core.CompressTimeout, _compress_core.CompressCancelled):
         # Hết giờ thì KHÔNG thử lại: `bomb_giant.pdf` vượt hạn ở cả `ebook` lẫn
         # `lossless`, nên lần thử lại chỉ là bắt người dùng chờ thêm 30 phút nữa.
+        # Bị HỦY thì càng không (BI-126) — người dùng vừa bảo dừng.
         raise
     except OSError as e:
         logger.warning("compress worker unavailable (%s) — compressing in-process", e)
+        # KHÔNG hủy được nhánh này: nén tại chỗ giữ GIL suốt, không có điểm nào chen
+        # phép kiểm tra cờ vào. Hiếm (chỉ khi không sinh nổi tiến trình con) và vẫn
+        # có trần giờ của BI-123 ở trên, nên chấp nhận — nhưng đừng quên nó có đó.
         return _compress_pdf_bytes_ex(pdf_bytes, preset)
     except RuntimeError as e:
         if preset == "lossless":
             raise
         logger.warning("compress worker died (%s) — retrying without image rewriting", e)
-        res = await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, "lossless")
+        res = await run_in_threadpool(
+            _compress_via_worker_blocking, pdf_bytes, "lossless", job
+        )
         return _compress_core.CompressResult(res.data, True)
+
+
+@app.post("/compress-cancel")
+async def compress_cancel(job: str = ""):
+    """Dừng một lần nén đang chạy (BI-126) — giết đúng tiến trình con của nó.
+
+    Luôn trả 200. "Không tìm thấy việc nào" KHÔNG phải lỗi: Hủy có thể tới sau khi
+    việc vừa xong, hoặc trước khi route nén kịp ghi sổ. Trường hợp sau để lại một
+    **bia mộ** trong sổ, nên lần nén ấy vừa ghi sổ là thấy và bỏ cuộc ngay — nghĩa
+    là người dùng bấm Hủy thì bao giờ cũng được hủy, không có khe nào lọt.
+
+    Lá cờ thắng cả mã thoát: tiến trình bị giết thoát với mã lạ, mà mã lạ vốn nghĩa
+    là "worker chết ⇒ thử lại ở lossless" (BI-122) — xem `_compress_via_worker_blocking`.
+    """
+    if not job:
+        raise HTTPException(status_code=400, detail="Thiếu mã việc nén.")
+    with _compress_jobs_lock:
+        j = _compress_jobs.get(job)
+        dang_chay = j is not None
+        if j is None:
+            # Bia mộ. Sổ có trần để một client hỏng không bơm đầy bộ nhớ; chỉ dọn
+            # những ô ĐÃ bị hủy, vì ô đang chạy là thứ /compress-cancel cần tra.
+            j = _CompressJob()
+            _compress_jobs[job] = j
+            if len(_compress_jobs) > _MAX_COMPRESS_JOBS:
+                for k, v in list(_compress_jobs.items()):
+                    if v is not j and v.cancelled:
+                        _compress_jobs.pop(k, None)
+        j.cancelled = True
+        proc = j.proc
+    # `kill()` ngoài khoá: nó là syscall, không việc gì phải chặn /compress-cancel
+    # của một tab khác trong lúc chờ.
+    if proc is not None:
+        try:
+            proc.kill()
+        except OSError:
+            pass  # vừa tự thoát xong — cờ `cancelled` vẫn là thứ quyết định
+    return {"success": True, "running": dang_chay}
 
 
 @app.post("/compress", response_model=CompressResponse)
@@ -1058,9 +1207,12 @@ async def compress(req: CompressRequest):
         raise HTTPException(status_code=400, detail="pdf_b64 không hợp lệ")
 
     try:
-        out_bytes, images_failed = await _compress_anywhere(pdf_bytes, req.preset)
+        with _compress_job_slot(req.job) as job:
+            out_bytes, images_failed = await _compress_anywhere(pdf_bytes, req.preset, job)
     except HTTPException:
         raise
+    except _compress_core.CompressCancelled as e:
+        return CompressResponse(success=False, cancelled=True, error=str(e))
     except Exception as e:
         logger.exception("Compress error")
         return CompressResponse(success=False, error=nice_pdf_error(e))
@@ -1077,7 +1229,7 @@ async def compress(req: CompressRequest):
 
 
 @app.post("/compress-bin")
-async def compress_bin(request: Request, preset: str = "ebook"):
+async def compress_bin(request: Request, preset: str = "ebook", job: str = ""):
     """Same compression, carried as RAW BYTES in both directions.
 
     WHY THIS EXISTS. /compress is base64-in-JSON, so a 200 MB document costs
@@ -1097,19 +1249,31 @@ async def compress_bin(request: Request, preset: str = "ebook"):
     except ImportError:
         raise HTTPException(status_code=503, detail="PyMuPDF (fitz) chưa cài — không nén được.")
 
-    pdf_bytes = await request.body()
-    if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="Không nhận được nội dung PDF.")
-    if len(pdf_bytes) > _MAX_PDF_BIN:
-        raise HTTPException(
-            status_code=400, detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB)."
-        )
-
-    original_size = len(pdf_bytes)
     try:
-        out_bytes, images_failed = await _compress_anywhere(pdf_bytes, preset)
+        # Ghi sổ TRƯỚC `request.body()`, không phải sau (BI-126, cuộc đua số 2):
+        # thân một PDF vài trăm MB mất vài trăm ms để truyền qua loopback, và nút
+        # Hủy đã hiện ra từ trước khi `fetch` được gọi. Bấm trong quãng ấy phải ăn.
+        with _compress_job_slot(job) as slot:
+            pdf_bytes = await request.body()
+            if not pdf_bytes:
+                raise HTTPException(status_code=400, detail="Không nhận được nội dung PDF.")
+            if len(pdf_bytes) > _MAX_PDF_BIN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB).",
+                )
+
+            original_size = len(pdf_bytes)
+            out_bytes, images_failed = await _compress_anywhere(pdf_bytes, preset, slot)
     except HTTPException:
         raise
+    except _compress_core.CompressCancelled as e:
+        # Hợp đồng của route này là "JSON = thất bại", nên hủy cũng đi đường JSON —
+        # nhưng có cờ `cancelled` để renderer phân biệt với một lỗi thật.
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "cancelled": True, "error": str(e)},
+        )
     except Exception as e:
         logger.exception("Compress error")
         return JSONResponse(status_code=200, content={"success": False, "error": nice_pdf_error(e)})

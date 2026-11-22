@@ -481,7 +481,12 @@ for (const key of [
   "Tài liệu {size} · ước tính khoảng {time}",
   "tài liệu rất lớn, máy sẽ cần nhiều RAM",
   "Đang nén PDF… (khoảng {time})",
-  "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?",
+  "Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Đang chạy vẫn bấm Hủy được. Tiếp tục?",
+  // Ba câu của nút Hủy (BI-126) — cùng lý do: dựng trong JS nên i18n quét markup
+  // không thấy, thiếu khoá thì bản tiếng Anh lặng lẽ hiện tiếng Việt.
+  "Đang hủy…",
+  "Đã hủy nén.",
+  "Không gửi được lệnh hủy: ",
 ]) {
   check(`i18n has ${JSON.stringify(key)}`, i18nSrc.includes('"' + key + '"'), true);
 }

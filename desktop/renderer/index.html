@@ -1645,7 +1645,11 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
-    <div class="overlay" id="overlay" hidden><div class="spinner"></div><span id="overlay-msg"></span></div>
+    <!-- Lớp phủ "đang xử lý". Nút Hủy ẩn mặc định và chỉ hiện khi người gọi
+         showOverlay() đưa vào một hàm hủy (BI-126) — lớp phủ này dùng chung cho ~49
+         thao tác, phần lớn không dừng giữa chừng được, nên một nút Hủy bấm vào không
+         làm gì còn tệ hơn là không có nút. -->
+    <div class="overlay" id="overlay" hidden><div class="spinner"></div><span id="overlay-msg"></span><button id="overlay-cancel" class="ghost" type="button" hidden>Hủy</button></div>
 
     <!-- Generic confirm dialog. Replaces the native window.confirm(), which in
          Electron blocks the renderer thread AND blurs the window (a dismissed

@@ -63,6 +63,15 @@ function sidecarFetch(path, opts = {}) {
   return fetch(sidecar.base + path, { ...opts, headers });
 }
 
+// Mã nhận dạng một việc dài đang chạy ở sidecar, để còn gọi lại mà hủy (BI-126).
+// `file://` dưới sandbox LÀ secure context nên randomUUID có thật (đo ở page-vault.js);
+// nhánh dự phòng chỉ để mã này không bao giờ là chỗ làm hỏng một thao tác.
+function newJobId() {
+  const c = window.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return "job-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+}
+
 // ---- small UI helpers ----------------------------------------------------
 
 let toastTimer;
@@ -92,12 +101,40 @@ function toast(msg, kind = "", action = null) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (t.hidden = true), action ? 9000 : 3600);
 }
-function showOverlay(msg) {
-  $("overlay-msg").textContent = msg || "Đang xử lý…";
+// Lớp phủ "đang xử lý". `onCancel` là TÙY CHỌN và mặc định không có (BI-126):
+// ~49 chỗ gọi showOverlay, phần lớn là việc chạy trong renderer không dừng giữa
+// chừng được, nên nút Hủy chỉ hiện cho thao tác nào thật sự hủy được. Một nút bấm
+// vào không làm gì còn tệ hơn là không có nút.
+//
+// Handler dựng lại mỗi lần gọi, và gỡ hẳn ở hideOverlay: một lớp phủ dùng chung mà
+// còn giữ handler của thao tác trước thì cái bấm kế tiếp đi hủy nhầm việc khác —
+// đúng kiểu lỗi mà #confirm-modal đã vấp một lần (xem uiConfirm).
+function showOverlay(msg, onCancel) {
+  setOverlayMsg(msg);
+  const btn = $("overlay-cancel");
+  btn.onclick = null;
+  btn.disabled = false;
+  btn.hidden = typeof onCancel !== "function";
+  if (!btn.hidden) {
+    btn.onclick = () => {
+      // Khoá ngay: cái bấm thứ hai không có việc gì để làm, và nó phải NHÌN THẤY
+      // là mình đã được ghi nhận.
+      btn.disabled = true;
+      onCancel();
+    };
+  }
   $("overlay").hidden = false;
+}
+// Đổi riêng dòng chữ, giữ nguyên nút. Dùng khi đã bấm Hủy: showOverlay(msg) lúc đó
+// sẽ bật lại nút vừa khoá.
+function setOverlayMsg(msg) {
+  $("overlay-msg").textContent = msg || "Đang xử lý…";
 }
 function hideOverlay() {
   $("overlay").hidden = true;
+  const btn = $("overlay-cancel");
+  btn.hidden = true;
+  btn.onclick = null;
 }
 // Non-blocking confirm dialog — the drop-in replacement for window.confirm().
 // The native confirm() blocks Electron's renderer thread for as long as it is
@@ -4099,9 +4136,9 @@ async function runCompress() {
   $("cmp-modal").hidden = true;
   const preset = $("cmp-preset").value || "ebook";
   // One last confirmation for the documents that will actually hurt. The sidecar no
-  // longer freezes on these (compression runs in a child process), but the job still
-  // takes minutes and still costs roughly 4× the file in RAM across three processes,
-  // and there is no way to cancel it once started. Better asked than discovered.
+  // longer freezes on these (compression runs in a child process) and the job can now
+  // be stopped (BI-126), but it still takes minutes and still costs roughly 4× the
+  // file in RAM across three processes. Better asked than discovered.
   //
   // Asked BEFORE bakePending(), deliberately: baking writes pending annotations into
   // the document, so doing it first would leave the user with a modified, dirtied file
@@ -4109,7 +4146,7 @@ async function runCompress() {
   const before = (state.bytes && state.bytes.length) || 0;
   if (before >= COMPRESS_WARN_BYTES) {
     const ok = await uiConfirm(
-      t("Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Trong lúc chạy không dừng lại được. Tiếp tục?", {
+      t("Tài liệu {size} — nén có thể mất khoảng {time} và dùng nhiều bộ nhớ. Đang chạy vẫn bấm Hủy được. Tiếp tục?", {
         size: fmtBytes(before),
         time: fmtDuration(compressEta(before, preset)),
       }),
@@ -4121,7 +4158,37 @@ async function runCompress() {
   // Re-read the size: baking annotations rewrites state.bytes, so the number taken
   // before it is not the one being sent.
   const size = (state.bytes && state.bytes.length) || 0;
-  showOverlay(t("Đang nén PDF… (khoảng {time})", { time: fmtDuration(compressEta(size, preset)) }));
+  // Mã việc nén (BI-126). Sinh ở ĐÂY, trước cả showOverlay, vì nút Hủy phải cầm sẵn
+  // mã trước khi `fetch` được gọi — người dùng bấm được ngay lúc thân request còn
+  // đang truyền, và sidecar có chỗ nhận cái bấm đó (xem `_compress_job_slot`).
+  const job = newJobId();
+  let dangHuy = false;
+  showOverlay(
+    t("Đang nén PDF… (khoảng {time})", { time: fmtDuration(compressEta(size, preset)) }),
+    async () => {
+      if (dangHuy) return;
+      dangHuy = true;
+      setOverlayMsg(t("Đang hủy…"));
+      try {
+        // Không abort fetch ở phía này: sidecar mới là bên biết lần nén đã dừng
+        // hẳn chưa, và nó trả lời ngay sau khi giết tiến trình con. Abort chỉ làm
+        // renderer thôi nhìn, còn máy thì vẫn nén tiếp — đúng lời nói dối mà nút
+        // Hủy này sinh ra để không mắc.
+        const r = await sidecarFetch("/compress-cancel?job=" + encodeURIComponent(job), {
+          method: "POST",
+        });
+        if (!r.ok) throw new Error(r.statusText || "không rõ");
+      } catch (e) {
+        // Hủy không tới được sidecar ⇒ lần nén VẪN đang chạy. Nói thật và mở lại
+        // nút, đừng đóng lớp phủ giả vờ là xong.
+        dangHuy = false;
+        const btn = $("overlay-cancel");
+        if (btn) btn.disabled = false;
+        setOverlayMsg(t("Đang nén PDF… (khoảng {time})", { time: fmtDuration(compressEta(size, preset)) }));
+        toast(t("Không gửi được lệnh hủy: ") + e.message, "bad");
+      }
+    },
+  );
   try {
     // /compress-bin, NOT /compress: the JSON route carries the document as base64
     // both ways, which is what capped "nén" at ~200 MB — the exact size range users
@@ -4129,20 +4196,26 @@ async function runCompress() {
     // body IS the compressed PDF, so no base64 string is built on either side (BI-24
     // in spirit: never hold the payload as one JS string). A Blob keeps the bytes in
     // Blink's blob store rather than the JS heap.
-    const res = await sidecarFetch("/compress-bin?preset=" + encodeURIComponent(preset), {
-      method: "POST",
-      headers: { "Content-Type": "application/pdf" },
-      body: new Blob([state.bytes], { type: "application/pdf" }),
-    });
+    const res = await sidecarFetch(
+      "/compress-bin?preset=" + encodeURIComponent(preset) + "&job=" + encodeURIComponent(job),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: new Blob([state.bytes], { type: "application/pdf" }),
+      },
+    );
     // Contract: application/pdf = success (body is the PDF); JSON = failure.
     const ct = res.headers.get("content-type") || "";
     if (!res.ok || ct.includes("json")) {
       let msg = res.statusText || "không rõ";
+      let cancelled = false;
       try {
         const data = await res.json();
         msg = data.error || data.detail || msg;
+        cancelled = data.cancelled === true;
       } catch (_) {}
-      toast("Nén lỗi: " + msg, "bad");
+      // Hủy KHÔNG phải lỗi (BI-126): toast thường, không đỏ, không "Nén lỗi:".
+      toast(cancelled ? t("Đã hủy nén.") : "Nén lỗi: " + msg, cancelled ? "" : "bad");
       return;
     }
     const buf = await res.arrayBuffer();

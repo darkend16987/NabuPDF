@@ -60,6 +60,7 @@
     "test:confirm": "node test/confirm-dialog.test.js",
     "test:streamlen": "node test/pdflib-stream-length.test.js",
     "test:imgfail": "node test/compress-images-failed.test.js",
+    "test:cancel": "node test/compress-cancel.test.js",
     "sweep:corpus": "node scripts/corpus-sweep.js",
     "checksums": "node scripts/checksums.js",
     "gen:licenses": "node scripts/gen-third-party-licenses.js",

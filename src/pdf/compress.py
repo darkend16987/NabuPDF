@@ -63,6 +63,19 @@ class CompressTimeout(RuntimeError):
     """
 
 
+class CompressCancelled(RuntimeError):
+    """Người dùng bấm **Hủy**; tiến trình con đã bị giết (BI-126).
+
+    Lớp riêng vì CÙNG MỘT LÝ DO với `CompressTimeout`, và đây là chỗ nguy hiểm hơn
+    cả: `RuntimeError` trần nghĩa là "worker chết ⇒ thử lại ở `lossless`" (BI-122).
+    Để lọt vào nhánh đó thì bấm Hủy xong máy lại **chạy tiếp một lần nén nữa** —
+    đúng thứ người dùng vừa bảo đừng làm.
+
+    Và nó KHÔNG phải lỗi: lớp trên trả về `cancelled` chứ không phải `error`, để
+    renderer không bật toast đỏ cho một việc người dùng tự chọn.
+    """
+
+
 # Cờ dòng lệnh mà sidecar.py nhận ra để chạy ở chế độ "nén một file rồi thoát".
 # Nằm ở ĐÂY chứ không ở api.py vì sidecar.py phải đọc được nó TRƯỚC khi import api —
 # đó là cả mục đích của việc tách module này ra (BI-121).
