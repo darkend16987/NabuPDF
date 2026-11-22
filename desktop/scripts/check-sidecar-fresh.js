@@ -30,8 +30,12 @@ const path = require("path");
 // binary that could not have changed. (`*` crosses `/` in a pathspec, but an exclude
 // pattern with no leading directory is anchored at the repo root, so only the root-level
 // test files are skipped.)
+// `tools/` (lưới quét corpus, trọng tài chữ ký, script tải model) cũng KHÔNG phải đầu vào: không file nào trong bundle
+// import `tools.*` (đã grep; sidecar.spec chỉ nhắc tên một script trong chú thích). Không loại ra thì mỗi lần thêm/sửa một
+// công cụ đo lại đòi dựng lại sidecar ~30 phút — và đã từng ép ta bỏ nguyên một lỗi công cụ (BI-129: --exe đường tương đối).
+// Nếu SAU NÀY có mã trong bundle import từ tools/, phải bỏ dòng loại trừ này.
 const SIDECAR_INPUTS =
-  '"*.py" sidecar.spec "models/vietocr/*.yml" ":(exclude)test_*.py" ":(exclude)run_tests.py"';
+  '"*.py" sidecar.spec "models/vietocr/*.yml" ":(exclude)test_*.py" ":(exclude)run_tests.py" ":(exclude)tools/*"';
 
 if (process.env.SKIP_SIDECAR_CHECK === "1") {
   console.log("[sidecar-check] skipped (SKIP_SIDECAR_CHECK=1)");
