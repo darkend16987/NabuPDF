@@ -23,6 +23,11 @@ const SignedSave = require("./signed-save"); // BI-130: lưu nối thêm cho fil
 const AtomicWrite = require("./atomic-write"); // BI-136: ghi tạm + fsync + đổi tên, không bao giờ cắt cụt file đích
 const ShellCombine = require("./shell-combine");
 
+// BI-141: móc kiểm thử cho bộ khung e2e (desktop/e2e) — trả lời hộp thoại native từ một file kịch bản. CHỈ nạp khi có
+// biến môi trường NABU_TEST_HOOKS; không có thì dòng này không làm gì. Vá đúng đối tượng `dialog` dùng chung, nên phủ
+// cả `updater.js`. Đọc src/test-hooks.js (luật an toàn) trước khi đụng vào.
+if (process.env.NABU_TEST_HOOKS) require("./test-hooks").install({ dialog });
+
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
 // WebContentsView per doc — see src/tabs.js). Every tab is a full, independent
 // renderer with its own single-doc state, but all tabs across all windows share
