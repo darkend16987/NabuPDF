@@ -12,7 +12,8 @@ It has a SECOND mode, used by the server itself:
 and a THIRD, `sidecar.exe --incremental-worker <original.pdf> <edited.pdf> <out.pdf>`
 (BI-129: append one revision to a signed file; contract in src/pdf/incremental.py), which
 likewise does one job and exits, and a FOURTH, `sidecar.exe --split-worker <in.pdf> <out.zip> <pairs.json>` (BI-138: split one
-file into many; contract in src/pdf/split.py).
+file into many; contract in src/pdf/split.py) and a FIFTH, `sidecar.exe --pagenum-worker <in.pdf> <out.pdf> <plan.json>` (BI-140:
+stamp page numbers; contract in src/pdf/pagenum.py).
 
 The compress worker compresses one file and exits. See the block above `_COMPRESS_WORKER_FLAG` in
 api.py for why compression has to leave the server process at all; the short version
@@ -47,6 +48,11 @@ from src.pdf.incremental import worker_main as _run_incremental_worker
 # (chỉ nạp stdlib; `fitz` nạp lười trong hàm), nên không làm chậm hai worker kia.
 from src.pdf.split import WORKER_FLAG as SPLIT_WORKER_FLAG
 from src.pdf.split import worker_main as _run_split_worker
+
+# Worker thứ tư (BI-140): đánh số trang. Cùng nguyên tắc — cờ VÀ hàm chạy nằm ở module lá `src/pdf/pagenum.py` (chỉ nạp
+# json/sys; `fitz` nạp lười trong hàm).
+from src.pdf.pagenum import WORKER_FLAG as PAGENUM_WORKER_FLAG
+from src.pdf.pagenum import worker_main as _run_pagenum_worker
 
 
 def _err(msg: str) -> None:
@@ -110,6 +116,8 @@ def main() -> None:
         raise SystemExit(_run_incremental_worker(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == SPLIT_WORKER_FLAG:
         raise SystemExit(_run_split_worker(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == PAGENUM_WORKER_FLAG:
+        raise SystemExit(_run_pagenum_worker(sys.argv[2:]))
 
     # Nap muon: chi tien trinh SERVER moi can nhung thu nay (xem khoi import o dau file).
     import argparse

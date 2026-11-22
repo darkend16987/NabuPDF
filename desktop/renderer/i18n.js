@@ -561,6 +561,7 @@
     "Đang hủy…": "Cancelling…",
     "Đã hủy nén.": "Compression cancelled.",
     "Đã hủy tách.": "Split cancelled.",
+    "Đã hủy đánh số.": "Page numbering cancelled.",
     "Không gửi được lệnh hủy: ": "Could not send the cancel command: ",
 
     // --- translate dialog ---

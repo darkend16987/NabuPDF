@@ -47,6 +47,7 @@ from src.utils.config import (
 )
 from src.pdf import compress as _compress_core
 from src.pdf import incremental as _incremental_core
+from src.pdf import pagenum as _pagenum_core
 from src.pdf import split as _split_core
 from src.pdf.util import (
     WRITE_GARBAGE,
@@ -1675,6 +1676,9 @@ class PdfBytesResponse(BaseModel):
     filename: str = ""
     data_b64: str = ""
     pages: int = 0
+    # True = người dùng bấm Hủy (BI-140, chỉ /add-page-numbers dùng). Tách khỏi `error` có chủ ý: đây không phải
+    # sự cố, nên UI không bật toast đỏ. Mặc định False: các route khác dùng chung model này không đổi một chữ.
+    cancelled: bool = False
     error: str | None = None
 
 
@@ -1784,6 +1788,100 @@ class PageNumberRequest(BaseModel):
     font_size: float = 11.0
     color: str = "#000000"
     margin: float = 28.0             # points from the page edge
+    # Mã việc, do phía gọi đặt, để còn gọi /compress-cancel mà dừng (BI-140). Dùng CHUNG sổ việc và route hủy với
+    # nén (BI-126) và tách (BI-139). Để trống = không hủy được, hợp đồng cũ y nguyên.
+    job: str = ""
+
+
+# BI-140: `/add-page-numbers` đánh số trong TIẾN TRÌNH CON, cùng khuôn với /split (BI-138/139), /compress
+# (BI-121/123/126) và /save-incremental-bin (BI-129).
+#
+# Trước đây route `async def` chạy `insert_text` thẳng trên event loop; PyMuPDF giữ GIL nên MỘT lần chậm làm đứng cả
+# sidecar. Đo 2026-11-22: `bomb_giant.pdf` (123 KB, 1 trang) treo ngay trong `insert_text` của trang đầu và không xong
+# sau 60 s. CHA làm phần rẻ và quyết định mọi câu 400 (position/fmt, mở file, số trang) rồi dựng sẵn `plan` thuần dữ
+# liệu — nhãn từng trang, màu RGB, mức garbage — để CON không phải import `src.pdf.util` (fastapi). CON chỉ làm vòng
+# `insert_text` + `tobytes`.
+def _pagenum_worker_cmd(src: str, dst: str, plan_path: str) -> list[str]:
+    """Argv chạy lại chương trình này như một worker đánh số. Frozen: `sys.executable` CHÍNH LÀ sidecar.exe nên cờ đi
+    thẳng vào nó; dev: python của venv, phải nêu tên script."""
+    flag = _pagenum_core.WORKER_FLAG
+    if getattr(sys, "frozen", False):
+        return [sys.executable, flag, src, dst, plan_path]
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [sys.executable, os.path.join(here, "sidecar.py"), flag, src, dst, plan_path]
+
+
+def _pagenum_via_worker_blocking(
+    pdf_bytes: bytes, plan: dict, n_pages: int, job: "_CompressJob | None" = None
+) -> tuple[bytes, int]:
+    """Đánh số trong tiến trình con. Chạy trên worker THREAD (xem route) — an toàn vì thread này không làm việc PyMuPDF
+    nào: nó ghi file, chờ một tiến trình và đọc file, cả ba nhả GIL.
+
+    Trả `(pdf_bytes, số_trang)` (đánh số không đổi số trang nên là `n_pages` cha đã biết). Ném `PageNumberTimeout`
+    khi hết giờ, `CompressCancelled` khi người dùng bấm Hủy, `RuntimeError` (kèm nguyên văn stderr của worker) khi
+    worker thất bại hay chết — sidecar VẪN SỐNG — và `OSError` khi không khởi động nổi worker (route lùi về đánh số tại
+    chỗ).
+
+    `job` là ô trong sổ việc dùng chung với nén (BI-126) và tách (BI-139); cùng BA CUỘC ĐUA, xem `_CompressJob`.
+    """
+    tmp = tempfile.mkdtemp(prefix="nabu-pagenum-")
+    src = os.path.join(tmp, "in.pdf")
+    dst = os.path.join(tmp, "out.pdf")
+    plan_path = os.path.join(tmp, "plan.json")
+    try:
+        with open(src, "wb") as f:
+            f.write(pdf_bytes)
+        with open(plan_path, "w", encoding="utf-8") as f:
+            json.dump(plan, f)
+
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW — nếu không, exe nháy cửa sổ console
+
+        proc = subprocess.Popen(  # noqa: S603 (argv dựng ở đây, không bao giờ từ request)
+            _pagenum_worker_cmd(src, dst, plan_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **kwargs,
+        )
+        if job is not None:
+            with _compress_jobs_lock:
+                job.proc = proc
+                da_huy = job.cancelled
+            # Cuộc đua số 1: Hủy tới lúc ta còn đang ghi file tạm nên chưa có gì để giết. Giờ đã có tiến trình.
+            if da_huy:
+                proc.kill()
+        try:
+            _, err_bytes = proc.communicate(timeout=_pagenum_core.PAGENUM_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()  # dọn xác + đóng ống, nếu không tiến trình thành zombie
+            han = _pagenum_core.PAGENUM_TIMEOUT_S
+            thoi_gian = f"{han // 60} phút" if han >= 60 else f"{han} giây"
+            raise _pagenum_core.PageNumberTimeout(
+                f"Đánh số trang quá {thoi_gian} nên đã dừng. PDF này nhiều khả năng đã hỏng "
+                "hoặc là file nén bung (decompression bomb)."
+            )
+        finally:
+            if job is not None:
+                with _compress_jobs_lock:
+                    job.proc = None
+
+        # Đọc cờ SAU khi tiến trình đã dừng và TRƯỚC mọi phép diễn giải mã thoát: tiến trình bị giết thoát với mã lạ,
+        # mà mã lạ vốn nghĩa là "worker chết ⇒ báo lỗi". Cờ thắng cả khi worker kịp đánh số xong.
+        if job is not None and job.cancelled:
+            raise _compress_core.CompressCancelled("Đã hủy đánh số.")
+
+        err = (err_bytes or b"").decode("utf-8", "replace").strip()
+        if proc.returncode != _pagenum_core.EXIT_OK:
+            # Gồm cả segfault (mã lạ): sidecar vẫn sống.
+            raise RuntimeError(err or f"Tiến trình đánh số thoát với mã {proc.returncode}.")
+        if not os.path.exists(dst):
+            raise RuntimeError("Tiến trình đánh số không tạo ra file kết quả.")
+        with open(dst, "rb") as f:
+            return f.read(), n_pages
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 @app.post("/add-page-numbers", response_model=PdfBytesResponse)
@@ -1795,7 +1893,7 @@ async def add_page_numbers(req: PageNumberRequest):
     in scans) — no manual rotation math needed. Modifies the document in place;
     the caller applies the result to the open doc with an undo step.
     """
-    fitz = _require_fitz()
+    _require_fitz()
     valid_pos = {
         "top-left", "top-center", "top-right",
         "bottom-left", "bottom-center", "bottom-right",
@@ -1823,44 +1921,58 @@ async def add_page_numbers(req: PageNumberRequest):
         skip = max(0, int(req.skip_first))
         col = _hex_rgb01(req.color)
         vpos, hpos = req.position.split("-")
-        font = fitz.Font("helv")  # Base-14, ASCII labels — nothing to embed
 
         n_pages = doc.page_count
         numbered = max(0, n_pages - skip)
         highest = start + numbered - 1  # value shown as "N" in x/N formats
-        stamped = 0
-        for pno in range(n_pages):
-            if pno < skip:
-                continue
-            page = doc[pno]
-            num = start + (pno - skip)
-            text = _fmt_page_label(req.fmt, num, highest)
-            tw = font.text_length(text, fontsize=fs)
-            # Place in the *displayed* rect (rotation-aware), then map the baseline
-            # point back to unrotated page space and rotate the glyphs by the page's
-            # rotation so they read upright after the viewer re-applies it. This keeps
-            # numbers at the right visible corner on /Rotate scans (90/180/270).
-            disp = page.rect  # displayed dimensions, origin top-left, y grows down
-            if hpos == "left":
-                dx = disp.x0 + margin
-            elif hpos == "right":
-                dx = disp.x1 - margin - tw
-            else:
-                dx = disp.x0 + (disp.width - tw) / 2
-            dy = disp.y0 + margin + fs if vpos == "top" else disp.y1 - margin
-            pt = fitz.Point(dx, dy) * page.derotation_matrix
-            page.insert_text(pt, text, fontsize=fs, fontname="helv", color=col, rotate=page.rotation)
-            stamped += 1
-
-        out_bytes = doc.tobytes(deflate=True, garbage=WRITE_GARBAGE)
-        pages = doc.page_count
+        labels = [_fmt_page_label(req.fmt, start + i, highest) for i in range(numbered)]
+        # Mọi thứ phụ thuộc `util` (nhãn, màu, mức garbage) được dựng Ở ĐÂY và gửi xuống như dữ liệu thuần: worker
+        # không import util (nó kéo fastapi). `WRITE_GARBAGE` phải đi theo plan chứ không hard-code ở worker — BI-23
+        # ghim mức này và test_write_garbage.py đọc nó từ util.
+        plan = {
+            "skip": skip,
+            "labels": labels,
+            "fs": fs,
+            "margin": margin,
+            "col": list(col),
+            "vpos": vpos,
+            "hpos": hpos,
+            "garbage": WRITE_GARBAGE,
+        }
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Add-page-numbers error")
         return PdfBytesResponse(success=False, error=nice_pdf_error(e))
     finally:
+        # Cha đã đọc xong những gì cần; phần nặng đi sang tiến trình con và tự mở lại từ byte gốc.
         doc.close()
+
+    try:
+        # Ô sổ việc nằm ngoài cả nhánh tại chỗ: Hủy tới TRƯỚC khi ta kịp vào đây thì `_compress_job_slot` thấy "bia mộ"
+        # và ném `CompressCancelled` ngay — không động tới PDF.
+        with _compress_job_slot(req.job) as job:
+            try:
+                out_bytes, pages = await run_in_threadpool(
+                    _pagenum_via_worker_blocking, pdf_bytes, plan, n_pages, job
+                )
+            except OSError as e:
+                # Chỉ quay về đánh số tại chỗ khi KHÔNG khởi động nổi tiến trình con (cùng đánh đổi với
+                # `_compress_anywhere` và /split: mất tính năng chắc chắn tệ hơn một rủi ro hiếm). Worker CHẾT hay HẾT
+                # GIỜ thì KHÔNG đi nhánh này. KHÔNG hủy được nhánh này (giữ GIL suốt) — hiếm, và không tệ hơn trước.
+                logger.warning("page-number worker unavailable (%s) — stamping in-process", e)
+                out_bytes, pages = _pagenum_core.stamp_page_numbers(pdf_bytes, plan)
+    except _pagenum_core.PageNumberTimeout as e:
+        # Hết giờ thì KHÔNG thử lại: thử lại chỉ là bắt người dùng chờ thêm một trần nữa.
+        logger.warning("Page-number timeout: %s", e)
+        return PdfBytesResponse(success=False, error=str(e))
+    except _compress_core.CompressCancelled:
+        # Hủy KHÔNG phải lỗi (BI-140): `cancelled` để renderer phân biệt, không bật toast đỏ. Câu cố định ở đây chứ
+        # không `str(e)`: bia mộ của sổ việc mang chữ "nén".
+        return PdfBytesResponse(success=False, cancelled=True, error="Đã hủy đánh số.")
+    except Exception as e:
+        logger.exception("Add-page-numbers error")
+        return PdfBytesResponse(success=False, error=nice_pdf_error(e))
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return PdfBytesResponse(

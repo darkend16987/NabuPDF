@@ -4767,16 +4767,42 @@ async function runPageNumbers() {
   const skip_first = Math.max(0, parseInt($("pgnum-skip").value, 10) || 0);
   const font_size = Math.min(72, Math.max(6, parseFloat($("pgnum-size").value) || 11));
   const color = $("pgnum-color").value || "#000000";
-  showOverlay("Đang đánh số trang…");
+  // Mã việc (BI-140) — cùng khuôn runSplit (BI-139) và runCompress (BI-126). Sinh ở ĐÂY, trước showOverlay, vì nút
+  // Hủy phải cầm sẵn mã trước khi `fetch` được gọi; đi chung sổ việc và route `/compress-cancel`.
+  const job = newJobId();
+  let dangHuy = false;
+  showOverlay("Đang đánh số trang…", async () => {
+    if (dangHuy) return;
+    dangHuy = true;
+    setOverlayMsg(t("Đang hủy…"));
+    try {
+      // Không abort fetch ở phía này: sidecar mới là bên biết việc đã dừng hẳn chưa, và nó trả lời ngay sau khi giết
+      // tiến trình con. Abort chỉ làm renderer thôi nhìn, còn máy thì vẫn chạy tiếp.
+      const r = await sidecarFetch("/compress-cancel?job=" + encodeURIComponent(job), {
+        method: "POST",
+      });
+      if (!r.ok) throw new Error(r.statusText || "không rõ");
+    } catch (e) {
+      // Hủy không tới được sidecar ⇒ việc VẪN đang chạy. Nói thật và mở lại nút, đừng đóng lớp phủ giả vờ là xong.
+      dangHuy = false;
+      const btn = $("overlay-cancel");
+      if (btn) btn.disabled = false;
+      setOverlayMsg("Đang đánh số trang…");
+      toast(t("Không gửi được lệnh hủy: ") + e.message, "bad");
+    }
+  });
   try {
     const res = await sidecarFetch("/add-page-numbers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: pdfJsonBody(state.bytes, { fmt, position, start_at, skip_first, font_size, color }),
+      body: pdfJsonBody(state.bytes, { fmt, position, start_at, skip_first, font_size, color, job }),
     });
     const data = await res.json();
     if (!data.success) {
-      toast("Đánh số lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      // Hủy KHÔNG phải lỗi (BI-140): toast thường, không đỏ, không "Đánh số lỗi:". Và vì return TRƯỚC pushUndo()/
+      // state.bytes bên dưới nên tài liệu đang mở không bị đụng tới.
+      if (data.cancelled === true) toast(t("Đã hủy đánh số."));
+      else toast("Đánh số lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
     // Apply to the open document so it shows immediately; one undo step, then save.

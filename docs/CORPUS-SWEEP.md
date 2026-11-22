@@ -286,8 +286,10 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   > **`/split` ĐÃ XONG (BI-138) — và bảng trên đọc sai một ô.** Đo lại: `bomb_giant.pdf` tách
   > trong **0,0 s**; `bug1978317.pdf` mới là file làm `/split` kẹt ở `insert_pdf` — và nó **không
   > tách xong sau 600 s**, tức ở tách nó **treo thật** (khác nén, nơi nó chậm 76–92 s rồi xong).
-  > `/split` nay chạy trong tiến trình con có trần 10 phút. `/add-page-numbers` vẫn chạy tại chỗ:
-  > `bomb_giant.pdf` vẫn treo ở đó.
+  > `/split` nay chạy trong tiến trình con có trần 10 phút. **Và `/add-page-numbers` cũng vậy
+  > (BI-140):** `bomb_giant.pdf` treo ngay trong `insert_text` của trang đầu (đo > 60 s); nay có
+  > tiến trình con, trần 10 phút và nút Hủy. Chỉ còn các thao tác chạy tại chỗ khác (`/edit-text`,
+  > `/translate`, …) chưa có hạn giờ — lưới quét chưa phủ chúng.
   >
   > **VÀ NAY CÓ NÚT HỦY (BI-126).** Trần 30 phút lo cho người bấm Nén rồi bỏ đi; nút Hủy lo cho
   > người đang ngồi đó. `bomb_giant.pdf` chính là file dùng để chứng minh nó chạy — nén nó
