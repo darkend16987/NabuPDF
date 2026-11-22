@@ -9,7 +9,11 @@ It has a SECOND mode, used by the server itself:
 
     sidecar.exe --compress-worker <in.pdf> <out.pdf> <preset>
 
-which compresses one file and exits. See the block above `_COMPRESS_WORKER_FLAG` in
+and a THIRD, `sidecar.exe --incremental-worker <original.pdf> <edited.pdf> <out.pdf>`
+(BI-129: append one revision to a signed file; contract in src/pdf/incremental.py), which
+likewise does one job and exits.
+
+The compress worker compresses one file and exits. See the block above `_COMPRESS_WORKER_FLAG` in
 api.py for why compression has to leave the server process at all; the short version
 is that PyMuPDF's `rewrite_images` holds the GIL for its whole run, so a thread frees
 nothing and only a separate process keeps the sidecar answering. Re-launching THIS
@@ -31,6 +35,12 @@ import sys
 # o day se de hai noi lech nhau - co ngung duoc nhan ra va cha chi thay "exited with
 # code 2".
 from src.pdf.compress import WORKER_FLAG as COMPRESS_WORKER_FLAG
+
+# Worker thứ hai (BI-129): ghi nối một revision lên file đã ký. Cùng nguyên tắc: cờ VÀ hàm chạy nằm ở module lá
+# `src/pdf/incremental.py` (chỉ nạp collections/logging/os/shutil/tempfile — `fitz` nạp lười, `import api` không có),
+# nên thêm worker này không làm chậm worker nén một mili-giây nào.
+from src.pdf.incremental import WORKER_FLAG as INCREMENTAL_WORKER_FLAG
+from src.pdf.incremental import worker_main as _run_incremental_worker
 
 
 def _err(msg: str) -> None:
@@ -90,6 +100,8 @@ def main() -> None:
     # argparse would exit(2) on it before this branch ever ran.
     if len(sys.argv) > 1 and sys.argv[1] == COMPRESS_WORKER_FLAG:
         raise SystemExit(_run_compress_worker(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == INCREMENTAL_WORKER_FLAG:
+        raise SystemExit(_run_incremental_worker(sys.argv[2:]))
 
     # Nap muon: chi tien trinh SERVER moi can nhung thu nay (xem khoi import o dau file).
     import argparse

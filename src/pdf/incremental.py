@@ -128,6 +128,13 @@ def _is_signature(doc, x: int) -> bool:
     return _read(lambda i: doc.xref_get_key(i, "FT"), x, ("null", "null"))[1] == "/Sig"
 
 
+def _may_be_container(text: str) -> bool:
+    """Tiền lọc rẻ: văn bản từ điển có thể là của một kho (`/Type /ObjStm` hoặc `/Type /XRef`) không? KHÔNG phải
+    phép quyết định — chỉ để khỏi gọi `_type_of` cho hàng trăm nghìn object chắc chắn không phải kho. Nơi gọi vẫn xác
+    nhận bằng `_type_of`, nên một chuỗi `ObjStm` nằm trong dữ liệu của object thường chỉ tốn thêm một lệnh gọi."""
+    return "ObjStm" in text or "XRef" in text
+
+
 def _live_object(doc, x: int):
     """Văn bản object `x`, hoặc None nếu ô đó trống / là `null` (đã giải phóng)."""
     text = _read(lambda i: doc.xref_object(i, compressed=False), x, None)
@@ -217,11 +224,15 @@ def plan_changes(original, edited):
 
     n_orig, n_edit = original.xref_length(), edited.xref_length()
     changed, added, reused = [], [], []
+    # CHI PHÍ THEO SỐ OBJECT, KHÔNG THEO BYTE (đo 2026-11-22): file 256 MB nhiều stream lớn mất 2,0 s, nhưng file
+    # 9 MB với 100.000 object nhỏ mất 15 s (~153 µs/object, khoảng 15–20 lệnh gọi MuPDF mỗi object). Nên vòng lặp
+    # này tránh gọi MuPDF thừa: loại sớm object y hệt bằng MỘT phép so văn bản, và chỉ hỏi `/Type` khi văn bản có
+    # chữ `ObjStm`/`XRef` (tiền lọc rẻ — nếu có thì vẫn xác nhận bằng `_type_of`, nên không đổi ngữ nghĩa).
     for x in range(1, n_edit):
         edited_text = _live_object(edited, x)
         if edited_text is None:
             continue  # ô trống phía đã sửa (kể cả object cũ bị bỏ): để mồ côi, không xoá
-        if _type_of(edited, x) in _CONTAINERS:
+        if _may_be_container(edited_text) and _type_of(edited, x) in _CONTAINERS:
             continue  # bẫy số 2: kho của pdf-lib — object con được lấy riêng
 
         if x >= n_orig:
@@ -229,14 +240,17 @@ def plan_changes(original, edited):
             continue
 
         # x < n_orig: cùng một vật ở hai file.
-        if _type_of(original, x) in _CONTAINERS:
+        original_text = _live_object(original, x)
+        if original_text is not None and _may_be_container(original_text) and _type_of(original, x) in _CONTAINERS:
             raise IncrementalRefused(
                 "container_collision", f"object {x} là kho {_type_of(original, x)} ở file gốc nhưng là object thường ở bản đã sửa"
             )
-        if _live_object(original, x) is None:
+        if original_text is None:
             added.append(x)  # ô trống ở gốc, sống ở bản đã sửa: object mới ở một số cũ
             reused.append(x)
             continue
+        if original_text == edited_text and _stream_raw(original, x) == _stream_raw(edited, x):
+            continue  # đường tắt: y hệt từng chữ (kể cả object chữ ký chưa đổi) — không còn gì phải hỏi
         if _is_signature(original, x):
             if not _same_signature_object(original, edited, x):
                 raise IncrementalRefused("signature_object_changed", f"object {x} (chữ ký) khác giữa gốc và bản đã sửa")
@@ -399,3 +413,91 @@ def append_revision_bytes(original: bytes, edited: bytes) -> bytes:
         append_revision(o, e, out)
         with open(out, "rb") as f:
             return f.read()
+
+
+# --------------------------------------------------------------------------- #
+# tiến trình con (BI-129)
+# --------------------------------------------------------------------------- #
+# Mọi lần ghi nối đều chạy trong MỘT TIẾN TRÌNH CON — cùng lý do với nén (BI-121): PyMuPDF là thư viện C, một file
+# méo có thể làm nó SEGFAULT (không bắt được bằng try/except) và giết cả sidecar đang phục vụ mọi tab. Worker là
+# CHÍNH chương trình sidecar chạy lại với cờ này (xem sidecar.py), nên không có file thực thi thứ hai nào để build.
+#
+# Mọi thứ hợp đồng giữa cha và con nằm Ở ĐÂY — một nguồn duy nhất, vì sidecar.py phải đọc được cờ TRƯỚC khi import
+# api, và vì một bản sao thứ hai ở nơi khác sẽ để hai nơi lệch nhau mà chỉ thấy "worker exited with code 2".
+WORKER_FLAG = "--incremental-worker"
+
+EXIT_OK = 0        # `out` là PDF đã nối (hoặc bản sao nguyên văn nếu hai file giống hệt); `out`.meta.json có số liệu
+EXIT_INTERNAL = 1  # lỗi lạ; stderr mang chi tiết cho log. Segfault cũng rơi vào đây (mã thoát lạ), từ phía cha
+EXIT_REFUSED = 5   # từ chối CÓ CHỦ ĐÍCH; stderr là "lý_do<TAB>chi_tiết". KHÔNG phải lỗi — người gọi lùi về đường cũ
+
+# Hạn giờ cho MỘT lần ghi nối, tính ở tiến trình CHA. Như BI-123, nó chặn "mãi mãi" chứ không bắt lỗi chậm, nên được
+# suy từ số đo chứ không từ cảm giác. Đo 2026-11-22 (tiến trình sạch, đúng lệnh worker):
+#
+#     file 256 MB, 1.500 trang, stream lớn         2,0 s      (~8 ms/MB — theo BYTE)
+#     file 9 MB, 100.000 object nhỏ                2,7 s      (~27 µs/object — theo SỐ OBJECT)
+#     file 28 MB, 300.000 object nhỏ               8,1 s
+#     RAM đỉnh của worker                          65–70 MB   (gần như không đổi theo cỡ file: PyMuPDF mở từ
+#                                                             đường dẫn và ta so từng stream một)
+#
+# Hai chiều chi phí khác nhau (byte và số object), nên KHÔNG suy được hạn giờ từ dung lượng — y như nén, nơi một
+# file 123 KB không bao giờ xong. Trần 1 GB của route (~8 s theo byte) và ca 300.000 object (8 s) đều cách xa 120 s
+# cỡ 15 lần: máy chậm gấp ba, ổ đĩa bị quét virus, vẫn không chạm. Chạm tới là một file bệnh lý — và quá hạn không
+# mất dữ liệu: người gọi lùi về đường lưu cũ, vốn chỉ chậm hơn vài giây.
+INCREMENTAL_TIMEOUT_S = 120
+
+# Lý do từ chối do tầng worker/route đặt ra (lõi có `REASONS` riêng). Cũng là `IncrementalRefused.reason`.
+WORKER_REASONS = (
+    "timeout",             # worker vượt INCREMENTAL_TIMEOUT_S và đã bị giết
+    "worker_unavailable",  # không khởi động nổi tiến trình con (thiếu script, hết chỗ temp, chính sách máy)
+    "worker_failed",       # worker chết / thoát mã lạ (segfault…) — sidecar vẫn sống, đó là cả mục đích
+    "original_missing",    # file gốc không còn ở đường dẫn đó (bị xoá/đổi tên giữa chừng)
+)
+
+
+def meta_path(out_path: str) -> str:
+    return out_path + ".meta.json"
+
+
+def _err(msg: str) -> None:
+    """Ghi `msg` ra stderr bằng UTF-8, bất kể mã trang của tiến trình con (xem `sidecar._err`: thông điệp tiếng Việt
+    đi qua mã trang cp1252 của console Windows sẽ thành mojibake ở phía cha vốn đọc UTF-8)."""
+    import sys
+
+    data = msg.encode("utf-8", "replace")
+    buf = getattr(sys.stderr, "buffer", None)
+    if buf is not None:
+        buf.write(data)
+        buf.flush()
+    else:
+        sys.stderr.write(msg)
+        sys.stderr.flush()
+
+
+def worker_main(argv: list[str]) -> int:
+    """`--incremental-worker <gốc.pdf> <đã_sửa.pdf> <ra.pdf>` — nối một revision rồi thoát.
+
+    Mã thoát là hợp đồng với `api._incremental_via_worker_blocking` (xem `EXIT_*`). stdout cố ý để TRỐNG để không gì
+    lẫn được với dữ liệu; số liệu đi qua file `<ra>.meta.json`, ghi SAU khi `<ra>` đã được `os.replace` xong — nên
+    cha thấy meta là chắc chắn `<ra>` đã trọn vẹn.
+    """
+    if len(argv) != 3:
+        _err("Thiếu tham số cho --incremental-worker (cần: gốc, đã_sửa, ra)")
+        return EXIT_INTERNAL
+    original, edited, out = argv
+    try:
+        res = append_revision(original, edited, out)
+    except IncrementalRefused as e:
+        # Tab và xuống dòng bị gạt đi: "\t" là dấu phân cách của dòng này, "\n" làm cha cắt nhầm.
+        detail = " ".join((e.detail or "").split())
+        _err(f"{e.reason}\t{detail}")
+        return EXIT_REFUSED
+    except Exception as e:  # noqa: BLE001 — cha biến nó thành một lần từ chối `worker_failed`, không phải 500
+        _err(f"{type(e).__name__}: {e}")
+        return EXIT_INTERNAL
+    import json
+
+    with open(meta_path(out), "w", encoding="utf-8") as f:
+        json.dump(
+            {"changed": res.changed, "added": res.added, "reused": res.reused, "unchanged": res.unchanged_input}, f
+        )
+    return EXIT_OK

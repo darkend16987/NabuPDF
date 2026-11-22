@@ -83,7 +83,11 @@ def mk(text=None, keys=None, stream=None, typ=None, error=None):
     if typ:
         keys["Type"] = ("name", typ)
     if text is None:
-        text = "<<" + "".join(f" /{k} {v[1]}" for k, v in sorted(keys.items())) + " >>"
+        # Giong cach MuPDF in that: chuoi co dau ngoac, nen so 5 va chuoi (5) cho hai van ban KHAC nhau. Ban dau ham nay
+        # chi in `v[1]` — hai van ban trung nhau, va duong tat "van ban y het" che mat su khac biet ve KIEU.
+        text = "<<" + "".join(
+            f" /{k} " + (f"({v[1]})" if v[0] == "string" else v[1]) for k, v in sorted(keys.items())
+        ) + " >>"
     return {"text": text, "keys": keys, "stream": stream}
 
 

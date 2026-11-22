@@ -9,6 +9,7 @@ and returns extracted Vietnamese text.
 import base64
 import hashlib
 import io
+import json  # BI-129: đọc meta của worker ghi nối. (Trước đó `json` chỉ được nạp CỤC BỘ trong một hàm.)
 import logging
 import math
 import os
@@ -45,6 +46,7 @@ from src.utils.config import (
     set_gemini_model,
 )
 from src.pdf import compress as _compress_core
+from src.pdf import incremental as _incremental_core
 from src.pdf.util import (
     WRITE_GARBAGE,
     _MAX_PDF_B64,
@@ -202,6 +204,8 @@ app.add_middleware(
     expose_headers=[
         "X-Original-Size", "X-Compressed-Size", "X-Filename", "X-Pages-Changed",
         "X-Images-Failed",
+        # /save-incremental-bin (BI-129). Thiếu tên nào ở đây thì renderer đọc ra null mà không báo lỗi.
+        "X-Result-Size", "X-Changed", "X-Added", "X-Reused", "X-Unchanged",
     ],
 )
 
@@ -1290,6 +1294,151 @@ async def compress_bin(request: Request, preset: str = "ebook", job: str = ""):
             # này không". Nhớ giữ tên trong expose_headers của CORS, nếu không
             # renderer đọc ra null mà không báo lỗi ở đâu cả.
             **({"X-Images-Failed": "1"} if images_failed else {}),
+        },
+    )
+
+
+# ---- BI-129: ghi NỐI một revision lên file đã ký ---------------------------
+#
+# Lõi nằm ở `src/pdf/incremental.py` (BI-128). Ở đây là phần BỌC: tiến trình con, hạn giờ, và dạng trả lời.
+#
+# AI ĐỌC FILE GỐC, AI GHI. Renderer không giữ byte của file gốc (giữ thêm một bản 400 MB là đúng cái bẫy
+# `large-pdf-decode-oom`), nhưng file gốc VỐN ĐANG NẰM TRÊN ĐĨA — chính là file sắp bị ghi đè. Nên route nhận
+# `original_path` và sidecar tự đọc nó (chỉ đọc), còn byte đã sửa đi ở thân request như `/compress-bin`. Sidecar KHÔNG
+# BAO GIỜ ghi vào file của người dùng: nó trả byte đã nối về, và đường ghi vẫn là `file:write-pdf` ở main — nơi cổng
+# BI-127 (`signed-scan.js`) kiểm LẠI rằng kết quả giữ nguyên vùng ký trước khi chạm đĩa. Nghĩa là cổng ấy là lớp kiểm
+# ĐỘC LẬP: dù sidecar nói dối hay file gốc bị đổi giữa lúc ta làm, ghi đè sai vẫn bị bắt.
+#
+# `original_path` là đường dẫn do renderer đặt, nên bị siết: tuyệt đối, đuôi `.pdf`, là file thường. Route chỉ trả về
+# thứ mà lõi đã chứng minh là PDF hợp lệ nối với byte của chính người gọi — một file không phải PDF bị `not_pdf` từ chối
+# và không byte nào của nó đi ra. Mọi route đã nằm sau token per-launch nên chỉ renderer của app gọi tới được.
+#
+# MỘT DẠNG TRẢ LỜI CHO MỌI THẤT BẠI. Từ chối của lõi, hết giờ, worker chết, không khởi động được, file gốc biến mất — với
+# người gọi chúng đều nghĩa là "đừng ghi nối, lùi về đường lưu cũ + cảnh báo", nên chung một nhánh:
+# `{"success": false, "refused": true, "reason": …, "detail": …}` (HTTP 200, như `cancelled` của /compress-bin: hợp đồng
+# của route là "JSON = không có PDF"). Yêu cầu SAI (thiếu đường dẫn, thân rỗng) mới là 400 — đó là lỗi của người gọi.
+#
+# KHÔNG CÓ NHÁNH "CHẠY TẠI CHỖ" khi không khởi động nổi tiến trình con — khác `_compress_anywhere`, nơi mất tính năng nén
+# tệ hơn một rủi ro segfault hiếm. Ở đây mất ghi nối chỉ có nghĩa là lùi về đường cũ; còn segfault tại chỗ giết sidecar.
+# Fail-closed: không chắc ⇒ không làm.
+
+
+def _incremental_worker_cmd(original: str, edited: str, out: str) -> list[str]:
+    """Argv chạy lại chương trình này như một worker ghi nối. Frozen: `sys.executable` CHÍNH LÀ sidecar.exe nên cờ đi
+    thẳng vào nó; dev: `sys.executable` là python của venv và phải nêu tên script. Cùng quy tắc `_compress_worker_cmd`."""
+    flag = _incremental_core.WORKER_FLAG
+    if getattr(sys, "frozen", False):
+        return [sys.executable, flag, original, edited, out]
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [sys.executable, os.path.join(here, "sidecar.py"), flag, original, edited, out]
+
+
+def _incremental_via_worker_blocking(original_path: str, edited_bytes: bytes):
+    """Ghi nối trong tiến trình con. Chạy trên worker THREAD (xem route) — an toàn vì thread này không làm việc PyMuPDF
+    nào: nó ghi một file, chờ một tiến trình và đọc một file, cả ba đều nhả GIL.
+
+    Trả `(byte_đã_nối, meta)`. Ném `IncrementalRefused` cho MỌI trường hợp không có kết quả đáng tin — với `reason` luôn
+    thuộc `REASONS` ∪ `WORKER_REASONS` (một lý do lạ từ stderr của worker bị ép về `worker_failed`, để từ vựng mà renderer
+    nhìn thấy luôn đóng kín)."""
+    Refused = _incremental_core.IncrementalRefused
+    tmp = tempfile.mkdtemp(prefix="nabu-incr-")
+    edited = os.path.join(tmp, "edited.pdf")
+    out = os.path.join(tmp, "out.pdf")
+    try:
+        with open(edited, "wb") as f:
+            f.write(edited_bytes)
+
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW — nếu không, exe nháy cửa sổ console mỗi lần lưu
+        try:
+            proc = subprocess.Popen(  # noqa: S603 (argv dựng ở đây; đường dẫn đã được route kiểm, không bao giờ là cờ)
+                _incremental_worker_cmd(original_path, edited, out),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                **kwargs,
+            )
+        except OSError as e:
+            raise Refused("worker_unavailable", str(e)) from e
+
+        try:
+            _, err_bytes = proc.communicate(timeout=_incremental_core.INCREMENTAL_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()  # dọn xác + đóng ống, nếu không tiến trình thành zombie
+            raise Refused(
+                "timeout", f"Ghi nối quá {_incremental_core.INCREMENTAL_TIMEOUT_S} giây nên đã dừng."
+            )
+
+        err = (err_bytes or b"").decode("utf-8", "replace").strip()
+        if proc.returncode == _incremental_core.EXIT_REFUSED:
+            reason, _, detail = err.partition("\t")
+            if reason not in _incremental_core.REASONS:
+                reason, detail = "worker_failed", err
+            raise Refused(reason, detail)
+        if proc.returncode != _incremental_core.EXIT_OK:
+            # Gồm cả segfault (mã lạ): sidecar VẪN SỐNG — đó là toàn bộ lý do có tiến trình con.
+            raise Refused("worker_failed", err or f"Tiến trình ghi nối thoát với mã {proc.returncode}.")
+        if not os.path.exists(out):
+            raise Refused("worker_failed", "Tiến trình ghi nối không tạo ra file kết quả.")
+
+        meta = {}
+        try:
+            with open(_incremental_core.meta_path(out), encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            pass  # số liệu chỉ để hiển thị; thiếu nó không làm kết quả kém đáng tin đi
+        with open(out, "rb") as f:
+            return f.read(), meta
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@app.post("/save-incremental-bin")
+async def save_incremental_bin(request: Request, original_path: str = ""):
+    """Nối MỘT revision lên file gốc (đang nằm trên đĩa ở `original_path`) bằng bản đã sửa ở thân request.
+
+    Thành công: thân trả lời LÀ PDF đã nối (`application/pdf`), số liệu ở header (`X-Changed`, `X-Added`, `X-Reused`,
+    `X-Original-Size`, `X-Result-Size`, và `X-Unchanged: 1` khi hai file giống hệt — khi đó thân là bản sao nguyên văn
+    của file gốc). Mọi thất bại có chủ đích: JSON `{success:false, refused:true, reason, detail}` — xem khối chú thích ở trên.
+    """
+    if not original_path or not os.path.isabs(original_path) or not original_path.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="original_path phải là đường dẫn tuyệt đối tới một file .pdf.")
+    original_path = os.path.abspath(original_path)
+
+    edited = await request.body()
+    if not edited:
+        raise HTTPException(status_code=400, detail="Không nhận được nội dung PDF.")
+    if len(edited) > _MAX_PDF_BIN:
+        raise HTTPException(status_code=400, detail=f"PDF quá lớn (tối đa ~{_MAX_PDF_BIN // 1_000_000}MB).")
+
+    def refused(reason: str, detail: str = ""):
+        return JSONResponse(
+            status_code=200, content={"success": False, "refused": True, "reason": reason, "detail": detail}
+        )
+
+    if not os.path.isfile(original_path):
+        return refused("original_missing", "File gốc không còn ở đường dẫn đã cho.")
+
+    try:
+        merged, meta = await run_in_threadpool(_incremental_via_worker_blocking, original_path, edited)
+    except _incremental_core.IncrementalRefused as e:
+        return refused(e.reason, e.detail)
+    except Exception as e:  # noqa: BLE001 — không bao giờ 500: người gọi chỉ cần biết "lùi về đường cũ"
+        logger.exception("Incremental save error")
+        return refused("worker_failed", nice_pdf_error(e))
+
+    return Response(
+        content=merged,
+        media_type="application/pdf",
+        headers={
+            "X-Original-Size": str(os.path.getsize(original_path)),
+            "X-Result-Size": str(len(merged)),
+            "X-Changed": str(meta.get("changed", 0)),
+            "X-Added": str(meta.get("added", 0)),
+            "X-Reused": str(meta.get("reused", 0)),
+            # Chỉ gửi khi ĐÚNG là giống hệt, để renderer chỉ cần hỏi "có header này không" (như X-Images-Failed).
+            **({"X-Unchanged": "1"} if meta.get("unchanged") else {}),
         },
     )
 

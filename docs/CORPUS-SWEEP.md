@@ -371,8 +371,11 @@ lưới đỏ — đúng như mong muốn, vì nó có thể chỉ là may.
 
 `.venv\Scripts\python tools/corpus_sweep_incremental.py` (`--only <chuỗi>`, `--jobs N`, `--report file.json`).
 Cùng khuôn: mỗi file một tiến trình, qpdf chấm, luôn chấm bản **gốc** trước. Khác ở chỗ "bản đã sửa" là thứ pdf-lib
-vừa dựng lại (`tools/pdflib_rotate.js` — **phải** giữ bản vá BI-120 như app thật), rồi `append_revision(gốc, đã sửa)`.
+vừa dựng lại (`tools/pdflib_rotate.js` — **phải** giữ bản vá BI-120 như app thật), rồi chạy **tiến trình con thật**
+`sidecar.py --incremental-worker gốc đã_sửa ra` (BI-129 — không gọi lõi tại chỗ, để cả hợp đồng mã thoát/stderr/meta được quét).
+`--exe <sidecar.exe>` chạy cùng lưới trên **bản đóng gói** (argv của bản frozen khác bản dev).
 Xếp thành: `ok` · `unchanged` · `refused:<lý do>` (fail-closed, có chủ đích) · `broken_input` · `pdflib_fail` ·
 **lỗi thật** = `output_worse` / `prefix_changed` / `crash` / `timeout` / `error:*` (thoát 1).
-Mốc hiện tại **958 ok / 0 lỗi thật** trên 1.104 file (~73 s); chưa có file baseline vì lõi chưa có route (chốt 3).
+Mốc: `tools/corpus-baseline-incremental.json` (`--update-baseline`); khác mốc = hồi quy, kể cả `ok → refused:*` và đổi lý do từ chối.
+Mốc hiện tại **958 ok / 0 lỗi thật** trên 1.104 file (~86 s qua worker dev).
 Chi tiết, các lần từ chối và những bẫy của chính phép đo: `docs/REGRESSION-GUARD.md` BI-128.

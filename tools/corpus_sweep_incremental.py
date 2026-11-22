@@ -5,7 +5,9 @@
     .venv\\Scripts\\python tools/corpus_sweep_incremental.py --jobs 8
 
 Mỗi file đi đúng đường mà app thật sẽ đi sau chốt 4: pdf-lib mở file gốc, xoay trang 1, lưu
-(= "bản đã sửa", `tools/pdflib_rotate.js`) → `append_revision(gốc, đã sửa)` → qpdf chấm kết quả.
+(= "bản đã sửa", `tools/pdflib_rotate.js`) → **tiến trình con thật** `sidecar.py --incremental-worker gốc đã_sửa ra`
+(BI-129; KHÔNG gọi lõi tại chỗ, để hợp đồng mã thoát/stderr/meta cũng được quét) → qpdf chấm kết quả.
+`--exe <sidecar.exe>` chạy cùng lưới trên BẢN ĐÓNG GÓI (argv của bản frozen khác bản dev).
 
 Mỗi file một TIẾN TRÌNH riêng (chính script này với `--one`), cùng lý do với hai lưới kia: PyMuPDF
 là thư viện C, file méo có thể làm nó chết cả tiến trình; cha giết được và quy đúng tội cho đúng file.
@@ -23,8 +25,9 @@ Mỗi file được xếp vào MỘT từ:
   error:<tên>      lõi ném ngoại lệ KHÔNG phải IncrementalRefused  ← lỗi thật
   crash / timeout  tiến trình con chết / treo                      ← lỗi thật
 
-CHƯA có mốc (baseline) và chưa so hồi quy: lõi mới có hàm, chưa có route (chốt 3). Khi có route sẽ
-thêm mốc như hai lưới kia; hiện tại script in bảng và thoát 1 nếu có dòng "lỗi thật".
+MỐC: `tools/corpus-baseline-incremental.json` (có commit). `--update-baseline` ghi lại các file KHÔNG sạch; file
+nào ra kết quả KHÁC mốc là hồi quy (thoát 1) — kể cả `ok → refused:*` (mất khả năng ghi nối) lẫn đổi lý do từ chối. File
+tốt lên so với mốc (`refused:* → ok`) được báo và gợi ý cập nhật mốc. Ngoài ra thoát 1 nếu có dòng "lỗi thật".
 """
 
 from __future__ import annotations
@@ -49,6 +52,16 @@ ONE_TIMEOUT_S = 180
 ROTATE_TIMEOUT_S = 90
 
 REAL_FAILS = ("output_worse", "prefix_changed", "crash", "timeout")
+BASELINE = ROOT / "tools" / "corpus-baseline-incremental.json"
+
+
+def corpus_commit(corpus: Path):
+    """Commit của repo corpus (để biết số có so thẳng được với mốc không). None nếu không phải repo git."""
+    try:
+        r = subprocess.run(["git", "-C", str(corpus), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def qpdf_level(qpdf: str, path: Path) -> int:
@@ -63,7 +76,15 @@ def qpdf_level(qpdf: str, path: Path) -> int:
 # --------------------------------------------------------------------------- #
 # tiến trình con: MỘT file
 # --------------------------------------------------------------------------- #
-def run_one(pdf: Path, qpdf: str) -> dict:
+def worker_cmd(exe: str, original: Path, edited: Path, out: Path) -> list[str]:
+    from src.pdf import incremental as inc
+
+    if exe:  # bản đóng gói: sidecar.exe CHÍNH LÀ worker, cờ đi thẳng vào nó
+        return [exe, inc.WORKER_FLAG, str(original), str(edited), str(out)]
+    return [sys.executable, str(ROOT / "sidecar.py"), inc.WORKER_FLAG, str(original), str(edited), str(out)]
+
+
+def run_one(pdf: Path, qpdf: str, exe: str = "") -> dict:
     from src.pdf import incremental as inc
 
     out: dict = {"file": pdf.name, "size": pdf.stat().st_size}
@@ -91,19 +112,35 @@ def run_one(pdf: Path, qpdf: str) -> dict:
             return out
 
         result = td / "result.pdf"
+        kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
+        t0 = time.perf_counter()
         try:
-            res = inc.append_revision(str(pdf), str(edited), str(result))
-        except inc.IncrementalRefused as e:
-            out["outcome"] = f"refused:{e.reason}"
-            out["detail"] = e.detail[:120]
+            w = subprocess.run(
+                worker_cmd(exe, pdf, edited, result), capture_output=True,
+                timeout=inc.INCREMENTAL_TIMEOUT_S + 30, **kw,
+            )
+        except subprocess.TimeoutExpired:
+            out["outcome"] = "timeout"  # cha còn có hạn giờ riêng: worker mà treo qua cả hạn của route là lỗi thật
             return out
-        except Exception as e:  # noqa: BLE001 — chính là thứ lưới này đi tìm
-            out["outcome"] = f"error:{type(e).__name__}"
-            out["detail"] = str(e)[:120]
+        out["worker_s"] = round(time.perf_counter() - t0, 2)
+        err = (w.stderr or b"").decode("utf-8", "replace").strip()
+        if w.returncode == inc.EXIT_REFUSED:
+            reason, _, detail = err.partition("	")
+            out["outcome"] = f"refused:{reason}"
+            out["detail"] = detail[:120]
+            return out
+        if w.returncode != inc.EXIT_OK:
+            out["outcome"] = f"error:worker_exit_{w.returncode}"  # gồm cả segfault: lỗi thật của lõi/PyMuPDF
+            out["detail"] = err[:120]
+            return out
+        try:
+            meta = json.loads(Path(inc.meta_path(str(result))).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            out["outcome"] = "error:no_meta"
             return out
 
-        out.update(changed=res.changed, added=res.added, reused=res.reused)
-        if res.unchanged_input:
+        out.update(changed=meta["changed"], added=meta["added"], reused=meta["reused"])
+        if meta["unchanged"]:
             out["outcome"] = "unchanged"
             return out
 
@@ -124,10 +161,10 @@ def run_one(pdf: Path, qpdf: str) -> dict:
 # --------------------------------------------------------------------------- #
 # tiến trình cha
 # --------------------------------------------------------------------------- #
-def spawn(pdf: Path, qpdf: str) -> dict:
+def spawn(pdf: Path, qpdf: str, exe: str = "") -> dict:
     try:
         p = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--one", str(pdf), "--qpdf", qpdf],
+            [sys.executable, str(Path(__file__).resolve()), "--one", str(pdf), "--qpdf", qpdf, "--exe", exe],
             capture_output=True, text=True, timeout=ONE_TIMEOUT_S, cwd=str(ROOT),
         )
     except subprocess.TimeoutExpired:
@@ -147,10 +184,17 @@ def main() -> int:
     ap.add_argument("--only", default="", help="chỉ file có tên chứa chuỗi này")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--report", default="", help="ghi báo cáo JSON đầy đủ ra file này")
+    ap.add_argument("--exe", default="", help="chạy worker bằng sidecar.exe ĐÃ ĐÓNG GÓI thay vì sidecar.py")
+    ap.add_argument("--update-baseline", action="store_true", help="ghi lại mốc từ lần quét này")
     args = ap.parse_args()
 
+    # Console Windows mặc định là cp1252: in tiếng Việt thẳng sẽ làm CHẾT chính lưới này ở dòng đầu tiên (đã vấp ở
+    # `corpus_sweep_sidecar.py`, xem docs/CORPUS-SWEEP.md). `replace` = chữ có dấu thành `?`, không bao giờ ném.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     if args.one:
-        print(json.dumps(run_one(Path(args.one), args.qpdf), ensure_ascii=True))
+        print(json.dumps(run_one(Path(args.one), args.qpdf, args.exe), ensure_ascii=True))
         return 0
 
     if not Path(args.qpdf).is_file():
@@ -163,10 +207,14 @@ def main() -> int:
         print("Khong co file nao.", file=sys.stderr)
         return 2
 
-    print(f"corpus : {args.corpus}  ({len(files)} file, {args.jobs} luong)\nqpdf   : {args.qpdf}", flush=True)
+    if args.exe and not Path(args.exe).is_file():
+        print(f"Khong thay --exe: {args.exe}", file=sys.stderr)
+        return 2
+    print(f"corpus : {args.corpus}  ({len(files)} file, {args.jobs} luong)\nqpdf   : {args.qpdf}"
+          f"\nworker : {args.exe or 'sidecar.py (dev)'}", flush=True)
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        results = list(ex.map(lambda p: spawn(p, args.qpdf), files))
+        results = list(ex.map(lambda p: spawn(p, args.qpdf, args.exe), files))
     dt = time.time() - t0
 
     by = collections.defaultdict(list)
@@ -192,9 +240,54 @@ def main() -> int:
             print(f"\n--- {title}: {len(rows)} ---")
             for r in rows[:40]:
                 print(f"  {r['file']:42s} {r['outcome']:34s} {r.get('detail','')}")
+    timed = sorted((r for r in results if "worker_s" in r), key=lambda r: -r["worker_s"])
+    if timed:
+        print("\nWorker chậm nhất: " + " · ".join(f"{r['file']} {r['worker_s']}s" for r in timed[:4]))
     if args.report:
         Path(args.report).write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
-    return 1 if bad else 0
+
+    # ---- mốc ----------------------------------------------------------------------------------------------
+    known = {r["file"]: r["outcome"] for r in results if r["outcome"] not in ("ok", "unchanged")}
+    if args.update_baseline:
+        if args.only or args.limit:
+            print("\nKhong ghi moc tu mot lan quet MOT PHAN (--only/--limit): se xoa het cac file con lai khoi moc.")
+            return 2
+        BASELINE.write_text(
+            json.dumps(
+                {
+                    "note": "Moc cua luoi quet ghi noi (tools/corpus_sweep_incremental.py, BI-128/129). 'known' chi liet ke "
+                            "file KHONG ok/unchanged; file ra ket qua KHAC moc la hoi quy.",
+                    "corpus": {"dir": args.corpus, "files": len(files), "commit": corpus_commit(Path(args.corpus))},
+                    "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "summary": {k: len(v) for k, v in sorted(by.items())},
+                    "known": dict(sorted(known.items())),
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\nDa ghi moc: {BASELINE} ({len(known)} file khong ok)")
+        return 1 if bad else 0
+
+    if not BASELINE.is_file():
+        print("\nChua co moc. Tao bang:  .venv\\Scripts\\python tools/corpus_sweep_incremental.py --update-baseline")
+        return 1 if bad else 0
+    base = json.loads(BASELINE.read_text(encoding="utf-8"))
+    seen = {r["file"] for r in results}
+    worse = [f"{f}: {base['known'].get(f, 'ok')} -> {v}" for f, v in sorted(known.items()) if base["known"].get(f) != v]
+    better = [f"{f}: {v} -> ok" for f, v in sorted(base["known"].items()) if f in seen and f not in known]
+    if better:
+        print(f"\n--- tot hon moc ({len(better)}) ---")
+        for line in better[:15]:
+            print("  " + line)
+        print("  Cap nhat moc:  .venv\\Scripts\\python tools/corpus_sweep_incremental.py --update-baseline")
+    if worse:
+        print(f"\n*** HOI QUY so voi moc ({len(worse)}) ***")
+        for line in worse[:25]:
+            print("  " + line)
+    if not worse and not bad:
+        print("\nKhong co file nao xau di so voi moc.")
+    return 1 if (worse or bad) else 0
 
 
 if __name__ == "__main__":
