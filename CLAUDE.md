@@ -35,6 +35,7 @@ pdf.js) rồi để **qpdf** chấm. App có hai nửa ghi file nên có hai lư
 ```bash
 cd desktop && npm run sweep:corpus              # nửa renderer (pdf-lib)
 .venv\Scripts\python tools/corpus_sweep_sidecar.py   # nửa sidecar (PyMuPDF)
+.venv\Scripts\python tools/corpus_sweep_incremental.py   # lõi ghi nối src/pdf/incremental.py (BI-128): kỳ vọng 958 ok / 0 lỗi thật
 ```
 
 Chúng bắt đúng loại lỗi hai bộ test trên không thấy: lưu ra file hỏng, mất trang, mất góc xoay,
