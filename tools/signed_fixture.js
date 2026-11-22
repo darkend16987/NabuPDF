@@ -20,7 +20,7 @@ const ROOT = path.join(__dirname, "..");
 const DESK = path.join(ROOT, "desktop");
 // Ký: thư viện trong node_modules (như signing-worker.js, chạy ở main). Sửa: bản vendor của renderer (như app.js).
 const nm = (p) => require(path.join(DESK, "node_modules", p));
-const { PDFDocument: SignDoc, StandardFonts: SignFonts } = nm("pdf-lib");
+const { PDFDocument: SignDoc, StandardFonts: SignFonts, degrees: signDegrees } = nm("pdf-lib");
 const { pdflibAddPlaceholder } = nm("@signpdf/placeholder-pdf-lib");
 const signpdf = nm("@signpdf/signpdf").default;
 const { Signer, SUBFILTER_ADOBE_PKCS7_DETACHED } = nm("@signpdf/utils");
@@ -76,6 +76,8 @@ async function baseDoc() {
     p.drawText(`Hop dong - trang ${i}`, { x: 60, y: 780, size: 20, font });
     p.drawText("Noi dung mat: SECRET-" + i, { x: 60, y: 740, size: 12, font });
   }
+  // Tuỳ chọn cho test chữ ký NHÌN THẤY (BI-133): NABU_FIXTURE_ROTATE_PAGE=<chỉ số> xoay trang đó 90° TRƯỚC khi ký.
+  if (process.env.NABU_FIXTURE_ROTATE_PAGE) doc.getPage(Number(process.env.NABU_FIXTURE_ROTATE_PAGE)).setRotation(signDegrees(90));
   const form = doc.getForm();
   const tf = form.createTextField("ho_ten");
   tf.addToPage(doc.getPage(0), { x: 60, y: 650, width: 220, height: 22 });

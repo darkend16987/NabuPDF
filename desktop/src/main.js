@@ -947,7 +947,10 @@ if (!app.requestSingleInstanceLock()) {
       return { base: tw.base, contents: Tabs.activeContents() };
     });
     initLicense();
-    initSigning({ confirmSignOverSigned: (e, count) => askSignOverSigned(senderWindow(e), count) });
+    initSigning({
+      confirmSignOverSigned: (e, count, extra) => askSignOverSigned(senderWindow(e), count, extra),
+      getSidecar: () => sidecarState, // BI-133: ký nối thêm cần lõi ghi nối ở sidecar
+    });
 
     app.on("activate", () => {
       if (Tabs.count() === 0) Tabs.createTabbedWindow();
@@ -1140,29 +1143,45 @@ async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn, extr
   }
 }
 
-// BI-132 — hỏi trước khi KÝ lên tài liệu đã có chữ ký (xem signing.js · declineIfSigned). Nút đầu và Esc đều là HUỶ:
-// Enter không bao giờ là "phá chữ ký cũ". Ánh xạ nút → hành động đi qua mảng khoá, như askSignedOverwrite.
-async function askSignOverSigned(win, count) {
+// BI-132/133 — hỏi trước khi KÝ lên tài liệu đã có chữ ký (xem signing.js · routeSigning). Nút đầu LUÔN là nút KHÔNG phá chữ ký
+// cũ (Ký nối thêm khi có, nếu không thì Huỷ); Esc luôn là Huỷ. Ánh xạ nút → hành động đi qua mảng khoá, như askSignedOverwrite.
+// extra = { canAppend, failed }: canAppend ⇒ thêm nút "Ký nối thêm"; failed = mã lý do khi lần nối vừa thất bại (hộp hiện lại, hai nút).
+async function askSignOverSigned(win, count, extra = {}) {
   const en = menuLang === "en";
-  const keys = ["cancel", "sign"];
+  const canAppend = !!extra.canAppend;
+  const keys = canAppend ? ["append", "sign", "cancel"] : ["cancel", "sign"];
   const label = {
+    append: en ? "Add signature (keep earlier ones)" : "Ký nối thêm (giữ chữ ký trước)",
     cancel: en ? "Cancel" : "Huỷ",
     sign: en ? "Sign anyway (drops earlier signatures)" : "Vẫn ký (mất chữ ký trước)",
   };
+  const why = extra.failed
+    ? en
+      ? `Could not add the signature without disturbing the earlier ones (${SignedSave.reasonText(extra.failed)}).\n\n`
+      : `Không ký nối thêm được (${SignedSave.reasonText(extra.failed)}).\n\n`
+    : "";
+  const appendNote = canAppend
+    ? en
+      ? "Add signature: your signature is appended at the end of the file and the earlier signatures stay valid. A PDF reader will show them as \"changed after signing — signatures added\", which is normal for a document signed by several people.\n\n"
+      : "Ký nối thêm: chữ ký của bạn được nối vào cuối file và các chữ ký trước vẫn còn hiệu lực. Trình đọc PDF sẽ ghi chú chúng là \"có thay đổi sau khi ký (thêm chữ ký)\" — bình thường với tài liệu nhiều người ký.\n\n"
+    : "";
   try {
     const res = await dialog.showMessageBox(win, {
       type: "warning",
       buttons: keys.map((k) => label[k]),
       defaultId: 0,
-      cancelId: 0,
+      cancelId: keys.indexOf("cancel"), // KHÔNG phải keys.length - 1: ở hộp hai nút Huỷ là nút ĐẦU
       noLink: true,
       title: "Nabu PDF",
       message: en
         ? `This document already has ${count} digital signature${count > 1 ? "s" : ""}.`
         : `Tài liệu này đã có ${count} chữ ký số.`,
-      detail: en
-        ? "Signing here rebuilds the whole file, so the existing signatures will no longer verify — the earlier signers' work is lost. To add a signature and keep the others, sign with a tool that supports multiple signatures (e.g. Acrobat or Foxit), or cancel."
-        : "Ký ở đây sẽ dựng lại cả file nên các chữ ký đang có không còn xác minh được — công sức của những người ký trước bị mất. Muốn thêm chữ ký mà giữ chữ ký cũ, hãy ký bằng công cụ hỗ trợ ký nhiều lần (như Acrobat hoặc Foxit), hoặc huỷ.",
+      detail:
+        why +
+        appendNote +
+        (en
+          ? "Signing the usual way rebuilds the whole file, so the existing signatures will no longer verify — the earlier signers' work is lost. To add a signature and keep the others, sign with a tool that supports multiple signatures (e.g. Acrobat or Foxit), or cancel."
+          : "Ký theo cách thông thường sẽ dựng lại cả file nên các chữ ký đang có không còn xác minh được — công sức của những người ký trước bị mất. Muốn thêm chữ ký mà giữ chữ ký cũ, hãy ký bằng công cụ hỗ trợ ký nhiều lần (như Acrobat hoặc Foxit), hoặc huỷ."),
     });
     return keys[res.response] || "cancel";
   } catch (_) {

@@ -30,6 +30,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const SignedScan = require("./signed-scan");
+const SignAppend = require("./sign-append"); // BI-133
 const { app, ipcMain, utilityProcess } = require("electron");
 
 // --- helper process ----------------------------------------------------------
@@ -129,24 +130,42 @@ function signInWorker(payload) {
 
 // --- IPC ---------------------------------------------------------------------
 
-// BI-132 — KÝ lên một tài liệu đã có chữ ký. Đường ký hiện tại (applySignature) mở file bằng pdf-lib rồi lưu lại TOÀN BỘ,
-// nên các chữ ký trước mất hiệu lực — đã đo: sau lần ký thứ hai, vùng đầu lẫn vùng đuôi của chữ ký 1 đều đổi byte, chỉ còn
-// MỘT chữ ký hợp lệ (docs/REGRESSION-GUARD.md BI-131). Với hợp đồng nhiều bên ký đó là phá ngầm. Cổng này hỏi TRƯỚC khi
-// chạy worker/hiện hộp PIN, trên đúng các byte sắp được ký.
-//   · `deps.confirmSignOverSigned(event, count)` do main.js tiêm (có hộp thoại thật); trả "sign" | bất kỳ gì khác.
-//   · Chỉ "sign" mới đi tiếp; mọi thứ khác (huỷ, hộp thoại hỏng, giá trị lạ) ⇒ KHÔNG ký. Ngược với cổng lưu BI-127 ở một điểm:
-//     ở đó từ chối là chặn người dùng lưu, ở đây từ chối chỉ là không tạo thêm một file ký — rẻ và đảo ngược được.
-//   · Không có `deps.confirmSignOverSigned` (test) hoặc không quét được ⇒ đi tiếp như trước.
-async function declineIfSigned(e, payload, deps) {
-  if (!deps || typeof deps.confirmSignOverSigned !== "function") return null;
+// BI-132/133 — KÝ lên một tài liệu đã có chữ ký. Đường ký cổ điển (applySignature) mở file bằng pdf-lib rồi lưu lại TOÀN BỘ nên
+// các chữ ký trước mất hiệu lực — đã đo (docs/REGRESSION-GUARD.md BI-131). Cổng này chạy TRƯỚC worker/hộp PIN, trên đúng các
+// byte sắp ký, và chọn một trong ba đường:
+//   · không còn chữ ký / không có cổng được tiêm  → "classic" (hành vi cũ nguyên vẹn);
+//   · người dùng chọn "append"  → KÝ NỐI THÊM (applyAppendSignature, sign-append.js): giữ nguyên chữ ký trước. Chỉ được đề nghị khi
+//     sidecar đang chạy (lõi ghi nối nằm ở đó). Lỗi ghi nối xảy ra TRƯỚC PIN nên an toàn để HỎI LẠI (hộp hai nút, kèm lý do);
+//     lỗi ở/sau bước ký (huỷ PIN, không có chứng thư, TSA…) báo thẳng — không lùi về "Vẫn ký" (sẽ hỏi PIN lần nữa);
+//   · người dùng chọn "sign"   → "classic" (Vẫn ký — chấp nhận mất chữ ký trước);
+//   · mọi thứ khác (huỷ, hộp thoại hỏng, giá trị lạ) → DECLINED, KHÔNG ký.
+// `deps` do main.js tiêm: confirmSignOverSigned(event, count, {canAppend, failed}) (hộp thoại thật) và getSidecar().
+const DECLINED = { ok: false, reason: "declined", error: "Đã huỷ ký — tài liệu đã có chữ ký." };
+
+async function routeSigning(e, payload, deps) {
+  if (!deps || typeof deps.confirmSignOverSigned !== "function") return { route: "classic" };
   const found = SignedScan.findSignaturesInBuffer(payload && payload.bytes);
-  if (!found.count) return null;
-  let answer = null;
-  try {
-    answer = await deps.confirmSignOverSigned(e, found.count);
-  } catch (_) {}
-  if (answer === "sign") return null;
-  return { ok: false, reason: "declined", error: "Đã huỷ ký — tài liệu đã có chữ ký." };
+  if (!found.count) return { route: "classic" };
+  const sc = typeof deps.getSidecar === "function" ? deps.getSidecar() : null;
+  let canAppend = !!(sc && sc.state === "ready" && sc.port);
+  let failed = null;
+  for (let round = 0; round < 2; round++) {
+    let answer = null;
+    try {
+      answer = await deps.confirmSignOverSigned(e, found.count, { canAppend, failed });
+    } catch (_) {}
+    if (answer === "sign") return { route: "classic" };
+    if (answer === "append" && canAppend) {
+      const res = await signInWorker({ ...payload, mode: "append", sidecar: { port: sc.port, token: sc.token } });
+      if (res && res.ok) return { done: res };
+      if (res && SignAppend.SIGN_STAGE_REASONS.includes(res.reason)) return { done: res };
+      canAppend = false; // một lần thử thôi — hỏi lại với hai nút, kèm lý do
+      failed = (res && res.reason) || "worker_failed";
+      continue;
+    }
+    return { done: DECLINED };
+  }
+  return { done: DECLINED };
 }
 
 function initSigning(deps = {}) {
@@ -159,8 +178,8 @@ function initSigning(deps = {}) {
   });
   ipcMain.handle("sign:apply", async (_e, payload) => {
     try {
-      const declined = await declineIfSigned(_e, payload, deps);
-      if (declined) return declined;
+      const routed = await routeSigning(_e, payload, deps);
+      if (routed.done) return routed.done;
       return await signInWorker(payload || {});
     } catch (e) {
       return { ok: false, reason: "other", error: e.message || String(e) };

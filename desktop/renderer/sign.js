@@ -339,7 +339,8 @@
       const save = await window.desktop.savePdf(res.bytes, suggested);
       hideOverlay();
       if (save.saved) {
-        toast("Đã ký & lưu: " + save.path, "good");
+        // BI-133: ký NỐI THÊM giữ nguyên chữ ký trước — nói rõ, và không nhắc "mất hiệu lực" như đường cũ
+        toast(res.appended ? "Đã ký nối thêm (giữ chữ ký trước) & lưu: " + save.path : "Đã ký & lưu: " + save.path, "good");
         setTimeout(
           () => toast("Lưu ý: đừng chỉnh sửa rồi lưu đè file đã ký — chữ ký sẽ mất hiệu lực.", "warn"),
           1000

@@ -41,6 +41,12 @@ const REASON_VI = {
   original_missing: "file gốc không còn ở chỗ cũ",
   sidecar_unavailable: "bộ xử lý nền chưa sẵn sàng",
   bad_response: "bộ xử lý nền trả về kết quả không hợp lệ",
+  // BI-133 — ký nối thêm (sign-append.js)
+  not_signed: "tài liệu không có chữ ký để nối tiếp",
+  docmdp_locked: "tài liệu được chứng nhận (DocMDP) không cho thêm chữ ký",
+  prepare_failed: "không dựng được chỗ giữ chữ ký mới",
+  placeholder_missing: "không tìm thấy chỗ giữ chữ ký trong kết quả",
+  rotated: "trang xoay chưa hỗ trợ chữ ký nhìn thấy",
 };
 
 function reasonText(reason) {

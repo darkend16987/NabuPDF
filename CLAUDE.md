@@ -37,6 +37,7 @@ cd desktop && npm run sweep:corpus              # nửa renderer (pdf-lib)
 .venv\Scripts\python tools/corpus_sweep_sidecar.py   # nửa sidecar (PyMuPDF)
 .venv\Scripts\python tools/corpus_sweep_incremental.py   # lõi ghi nối src/pdf/incremental.py (BI-128): kỳ vọng 958 ok / 0 lỗi thật
 .venv\Scripts\python tools/signed_e2e.py             # ghi nối trên file ký THẬT, OpenSSL chấm chữ ký (BI-131); thêm --exe <tuyệt đối> cho bản đóng gói
+node tools/sign_append_e2e.js                        # KÝ NỐI THÊM nhiều người ký qua HTTP thật tới sidecar, OpenSSL chấm (BI-133); thêm --exe <tuyệt đối> cho bản đóng gói
 ```
 
 Chúng bắt đúng loại lỗi hai bộ test trên không thấy: lưu ra file hỏng, mất trang, mất góc xoay,

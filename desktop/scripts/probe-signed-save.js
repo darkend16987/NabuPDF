@@ -279,7 +279,7 @@ function verify(file) {
     // ---- S7/S8 (BI-132): KÝ lên tài liệu đã có chữ ký ---------------------------------------------------
     // Gọi thẳng IPC `signing.apply` (đúng thứ doSign gọi) với một thumbprint GIẢ: hộp cảnh báo nằm TRƯỚC worker/hộp PIN,
     // nên ca "Huỷ" không bao giờ chạm tới token; ca không-ký thì lọt qua cổng và bị worker từ chối vì không có chứng thư.
-    console.log("\nS7  ký lên tài liệu CÒN chữ ký (byte nguyên từ đĩa) ⇒ hộp cảnh báo; Huỷ ⇒ không ký");
+    console.log("\nS7  ký lên tài liệu CÒN chữ ký (byte nguyên từ đĩa) ⇒ hộp 3 nút; Huỷ ⇒ không ký");
     resetDisk();
     await evalIn(
       cdp,
@@ -293,16 +293,17 @@ function verify(file) {
          return true;
        })()`
     );
-    await setAnswers([0]); // Huỷ
+    await setAnswers([2]); // Huỷ (nút cuối)
     let sres = await evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: {} })`);
     d = await dlg();
-    expect(d.length === 1 && d[0].buttons.length === 2, `hộp 2 nút: ${JSON.stringify(d[0] && d[0].buttons)}`);
-    expect(d[0] && d[0].defaultId === 0 && d[0].cancelId === 0 && /^Huỷ$/.test(d[0].buttons[0]), "nút đầu = Huỷ, mặc định và Esc đều là nó");
-    expect(d[0] && /1 chữ ký/.test(d[0].message) && /Acrobat hoặc Foxit/.test(d[0].detail), "nêu số chữ ký + lối ra");
+    expect(d.length === 1 && d[0].buttons.length === 3, `hộp 3 nút (sidecar sẵn sàng ⇒ có nút nối): ${JSON.stringify(d[0] && d[0].buttons)}`);
+    expect(d[0] && /^Ký nối thêm/.test(d[0].buttons[0]) && /^Vẫn ký/.test(d[0].buttons[1]) && /^Huỷ$/.test(d[0].buttons[2]), "thứ tự: Ký nối thêm, Vẫn ký, Huỷ");
+    expect(d[0] && d[0].defaultId === 0 && d[0].cancelId === 2, "mặc định = Ký nối thêm (không phá chữ ký), Esc = Huỷ (cuối)");
+    expect(d[0] && /1 chữ ký/.test(d[0].message) && /có thay đổi sau khi ký/.test(d[0].detail), "nêu số chữ ký + nói thật về cách trình đọc hiển thị");
     expect(sres.ok === false && sres.reason === "declined", `Huỷ ⇒ {ok:false, reason:'declined'}: ${JSON.stringify(sres)}`);
 
     console.log("\nS7b  cùng tài liệu, chọn 'Vẫn ký' ⇒ lọt qua cổng (worker tự từ chối vì thumbprint giả)");
-    await setAnswers([1]);
+    await setAnswers([1]); // Vẫn ký
     sres = await Promise.race([
       evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: {} })`),
       sleep(90000).then(() => ({ reason: "TREO>90s" })),
@@ -310,6 +311,29 @@ function verify(file) {
     d = await dlg();
     expect(d.length === 1, "đã hỏi đúng 1 lần");
     expect(sres.reason !== "declined" && sres.reason !== "TREO>90s", `đã vượt cổng, worker trả: ${JSON.stringify(sres).slice(0, 120)}`);
+
+    console.log("\nS7c  chọn 'Ký nối thêm' ⇒ pdf-lib dựng chỗ giữ chữ ký → sidecar THẬT (HTTP) ghi nối → dừng ở TOKEN (thumbprint giả)");
+    await setAnswers([0]); // Ký nối thêm
+    sres = await Promise.race([
+      evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: { name: "N", reason: "r" } })`),
+      sleep(120000).then(() => ({ reason: "TREO>120s" })),
+    ]);
+    d = await dlg();
+    expect(d.length === 1, `chỉ hỏi 1 lần (không hỏi lại) — nối đã thành công TRƯỚC token: ${d.length}`);
+    expect(sres.reason === "no_cert", `kết quả dừng ở token (no_cert) tức là toàn bộ phần ghi nối đã chạy xong: ${JSON.stringify(sres).slice(0, 140)}`);
+
+    console.log("\nS7d  nối bị từ chối TRƯỚC PIN (file đích có revision cuối hỏng) ⇒ hỏi LẠI bằng hộp 2 nút kèm lý do");
+    const brokenTail = Buffer.concat([ORIGINAL, Buffer.from("\nxref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 /Prev 999999 >>\nstartxref\n12\n%%EOF\n")]);
+    await setAnswers([0, 1]); // Ký nối thêm → (bị từ chối, hộp lại 2 nút) Vẫn ký
+    sres = await Promise.race([
+      evalIn(cdp, `(async () => { const bin = atob(${JSON.stringify(brokenTail.toString("base64"))}); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return await window.desktop.signing.apply({ bytes: u8, thumbprint: "FAKE", meta: {} }); })()`),
+      sleep(120000).then(() => ({ reason: "TREO>120s" })),
+    ]);
+    d = await dlg();
+    console.log("    hộp:", d.length, d[1] ? JSON.stringify(d[1].buttons) + " | " + (d[1].detail || "").split("\n")[0] : "");
+    expect(d.length === 2, `hộp hiện 2 lần (${d.length})`);
+    expect(d[1] && d[1].buttons.length === 2 && /Không ký nối thêm được/.test(d[1].detail || ""), "lần 2: 2 nút + lý do");
+    expect(sres.reason === "no_cert", `chọn 'Vẫn ký' ở lần 2 ⇒ đường cổ điển, tới token: ${JSON.stringify(sres).slice(0, 120)}`);
 
     console.log("\nS8  tài liệu đã bị pdf-lib dựng lại (chữ ký cũ đã mất khi sửa) ⇒ KHÔNG hỏi");
     resetDisk();

@@ -23,7 +23,9 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream } = require("pdf-lib");
+const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream, PDFString, PDFInvalidObject } = require("pdf-lib");
+const SignAppend = require("./sign-append"); // BI-133
+const { appendViaSidecar } = require("./signed-save"); // BI-133: gọi route /save-incremental-bin
 // Cùng bản vá mà renderer nạp qua <script>: pdf-lib cắt cụt stream có `/Length` gián tiếp, và ở
 // đây hậu quả nặng hơn — tài liệu được KÝ trên phần byte đã hỏng. Xem renderer/pdflib-stream-length.js.
 require("../renderer/pdflib-stream-length.js").applyStreamLengthFix(require("pdf-lib"));
@@ -195,14 +197,72 @@ async function applySignature(payload) {
   }
 }
 
+// BI-133 — KÝ NỐI THÊM: thêm một chữ ký vào tài liệu ĐÃ CÓ chữ ký mà giữ nguyên chữ ký trước (xem sign-append.js).
+// Khác applySignature ở chỗ không lưu lại cả file qua pdf-lib: pdf-lib chỉ dựng "bản đã thêm chỗ giữ chữ ký", lõi ghi nối của
+// sidecar biến nó thành MỘT revision nối vào cuối file gốc, rồi ta điền ByteRange + chữ ký vào revision đó. Mọi lỗi ghi nối xảy ra
+// TRƯỚC khi hỏi PIN (token chỉ được gọi ở bước ký cuối). `deps` (signer, append) chỉ để test thay thế.
+async function applyAppendSignature(payload, deps = {}) {
+  const { bytes, thumbprint, tsaUrl, meta = {}, appearance, sidecar } = payload || {};
+  if (!bytes || !thumbprint) return { ok: false, reason: "other", error: "Thiếu dữ liệu ký." };
+
+  const hasAppearance = !!(appearance && appearance.imagePng);
+  const hooks = {};
+  if (hasAppearance) {
+    hooks.beforePlaceholder = async (_doc, page) => {
+      if (page.getRotation().angle % 360 !== 0) {
+        const err = new Error("Trang xoay chưa hỗ trợ chữ ký nhìn thấy. Dùng chữ ký vô hình.");
+        err.reason = "rotated";
+        throw err;
+      }
+    };
+    hooks.afterWidget = async (doc, widget) => {
+      const r = appearance.rect;
+      const w = Math.abs(r[2] - r[0]);
+      const h = Math.abs(r[3] - r[1]);
+      const img = await doc.embedPng(appearance.imagePng);
+      widget.set(PDFName.of("AP"), doc.context.obj({ N: buildImageAP(doc, img.ref, w, h) }));
+    };
+  }
+  const prepare = SignAppend.makePrepare(
+    { PDFDocument, PDFName, PDFArray, PDFDict, PDFString, PDFInvalidObject, pdflibAddPlaceholder, subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED },
+    hooks
+  );
+  const append =
+    deps.append ||
+    (async (originalPath, edited) => {
+      if (!sidecar || !sidecar.port) return { ok: false, reason: "sidecar_unavailable" };
+      return appendViaSidecar({ port: sidecar.port, token: sidecar.token, originalPath, data: edited });
+    });
+  const signer = deps.signer || new HelperSigner(thumbprint, tsaUrl);
+
+  const r = await SignAppend.appendSign({
+    bytes,
+    meta: {
+      name: meta.name,
+      reason: meta.reason,
+      location: meta.location,
+      contactInfo: meta.contactInfo,
+      signatureLength: SIGNATURE_LENGTH,
+      pageIndex: hasAppearance ? appearance.pageIndex : 0,
+      widgetRect: hasAppearance ? appearance.rect : [0, 0, 0, 0],
+    },
+    prepare,
+    append,
+    signer,
+  });
+  if (!r.ok) return { ok: false, reason: r.reason, error: r.error || r.detail || "" };
+  return { ok: true, bytes: r.bytes, appended: true };
+}
+
 // --- utilityProcess message loop ---------------------------------------------
 
-process.parentPort.on("message", async (e) => {
+if (process.parentPort) process.parentPort.on("message", async (e) => {
   const msg = (e && e.data) || {};
   HELPER_EXE = msg.helperExe || null;
   let result;
   try {
-    result = await applySignature(msg.payload || {});
+    const payload = msg.payload || {};
+    result = payload.mode === "append" ? await applyAppendSignature(payload) : await applySignature(payload);
   } catch (err) {
     result = { ok: false, reason: "other", error: (err && err.message) || String(err) };
   }
@@ -212,3 +272,5 @@ process.parentPort.on("message", async (e) => {
     // Parent gone — nothing to do; the process will be killed.
   }
 });
+
+module.exports = { applySignature, applyAppendSignature }; // cho test; utilityProcess không dùng
