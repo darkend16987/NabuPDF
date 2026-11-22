@@ -29,6 +29,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const SignedScan = require("./signed-scan");
 const { app, ipcMain, utilityProcess } = require("electron");
 
 // --- helper process ----------------------------------------------------------
@@ -128,7 +129,27 @@ function signInWorker(payload) {
 
 // --- IPC ---------------------------------------------------------------------
 
-function initSigning() {
+// BI-132 — KÝ lên một tài liệu đã có chữ ký. Đường ký hiện tại (applySignature) mở file bằng pdf-lib rồi lưu lại TOÀN BỘ,
+// nên các chữ ký trước mất hiệu lực — đã đo: sau lần ký thứ hai, vùng đầu lẫn vùng đuôi của chữ ký 1 đều đổi byte, chỉ còn
+// MỘT chữ ký hợp lệ (docs/REGRESSION-GUARD.md BI-131). Với hợp đồng nhiều bên ký đó là phá ngầm. Cổng này hỏi TRƯỚC khi
+// chạy worker/hiện hộp PIN, trên đúng các byte sắp được ký.
+//   · `deps.confirmSignOverSigned(event, count)` do main.js tiêm (có hộp thoại thật); trả "sign" | bất kỳ gì khác.
+//   · Chỉ "sign" mới đi tiếp; mọi thứ khác (huỷ, hộp thoại hỏng, giá trị lạ) ⇒ KHÔNG ký. Ngược với cổng lưu BI-127 ở một điểm:
+//     ở đó từ chối là chặn người dùng lưu, ở đây từ chối chỉ là không tạo thêm một file ký — rẻ và đảo ngược được.
+//   · Không có `deps.confirmSignOverSigned` (test) hoặc không quét được ⇒ đi tiếp như trước.
+async function declineIfSigned(e, payload, deps) {
+  if (!deps || typeof deps.confirmSignOverSigned !== "function") return null;
+  const found = SignedScan.findSignaturesInBuffer(payload && payload.bytes);
+  if (!found.count) return null;
+  let answer = null;
+  try {
+    answer = await deps.confirmSignOverSigned(e, found.count);
+  } catch (_) {}
+  if (answer === "sign") return null;
+  return { ok: false, reason: "declined", error: "Đã huỷ ký — tài liệu đã có chữ ký." };
+}
+
+function initSigning(deps = {}) {
   ipcMain.handle("sign:list-certs", async () => {
     try {
       return await listCerts();
@@ -138,6 +159,8 @@ function initSigning() {
   });
   ipcMain.handle("sign:apply", async (_e, payload) => {
     try {
+      const declined = await declineIfSigned(_e, payload, deps);
+      if (declined) return declined;
       return await signInWorker(payload || {});
     } catch (e) {
       return { ok: false, reason: "other", error: e.message || String(e) };

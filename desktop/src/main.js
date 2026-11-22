@@ -947,7 +947,7 @@ if (!app.requestSingleInstanceLock()) {
       return { base: tw.base, contents: Tabs.activeContents() };
     });
     initLicense();
-    initSigning();
+    initSigning({ confirmSignOverSigned: (e, count) => askSignOverSigned(senderWindow(e), count) });
 
     app.on("activate", () => {
       if (Tabs.count() === 0) Tabs.createTabbedWindow();
@@ -1133,6 +1133,36 @@ async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn, extr
         (en
           ? `Overwriting it with your edited version will invalidate the signature — the recipient will see a warning that the file was modified.\n\n${fp}`
           : `Ghi đè bằng bản đã chỉnh sửa sẽ làm chữ ký mất hiệu lực — người nhận sẽ thấy cảnh báo file đã bị sửa.\n\n${fp}`),
+    });
+    return keys[res.response] || "cancel";
+  } catch (_) {
+    return "cancel";
+  }
+}
+
+// BI-132 — hỏi trước khi KÝ lên tài liệu đã có chữ ký (xem signing.js · declineIfSigned). Nút đầu và Esc đều là HUỶ:
+// Enter không bao giờ là "phá chữ ký cũ". Ánh xạ nút → hành động đi qua mảng khoá, như askSignedOverwrite.
+async function askSignOverSigned(win, count) {
+  const en = menuLang === "en";
+  const keys = ["cancel", "sign"];
+  const label = {
+    cancel: en ? "Cancel" : "Huỷ",
+    sign: en ? "Sign anyway (drops earlier signatures)" : "Vẫn ký (mất chữ ký trước)",
+  };
+  try {
+    const res = await dialog.showMessageBox(win, {
+      type: "warning",
+      buttons: keys.map((k) => label[k]),
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      title: "Nabu PDF",
+      message: en
+        ? `This document already has ${count} digital signature${count > 1 ? "s" : ""}.`
+        : `Tài liệu này đã có ${count} chữ ký số.`,
+      detail: en
+        ? "Signing here rebuilds the whole file, so the existing signatures will no longer verify — the earlier signers' work is lost. To add a signature and keep the others, sign with a tool that supports multiple signatures (e.g. Acrobat or Foxit), or cancel."
+        : "Ký ở đây sẽ dựng lại cả file nên các chữ ký đang có không còn xác minh được — công sức của những người ký trước bị mất. Muốn thêm chữ ký mà giữ chữ ký cũ, hãy ký bằng công cụ hỗ trợ ký nhiều lần (như Acrobat hoặc Foxit), hoặc huỷ.",
     });
     return keys[res.response] || "cancel";
   } catch (_) {

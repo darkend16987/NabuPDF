@@ -106,6 +106,50 @@ async function findIntactSignatures(fp, opts) {
   }
 }
 
+/**
+ * BI-132 — cùng câu hỏi như `findIntactSignatures` nhưng cho các byte ĐANG NẰM TRONG BỘ NHỚ (tài liệu sắp được KÝ),
+ * không phải file trên đĩa: "những byte này còn mang chữ ký nguyên vị trí không?". Trả `{ size, count, end }`.
+ *
+ * Vì sao có hai bản thay vì một: file đích của lệnh Lưu có thể vài trăm MB nên bản file đọc theo khúc; còn byte
+ * sắp ký đã nằm sẵn trong bộ nhớ (IPC đã chuyển nó tới main), nên quét thẳng bằng `Buffer.indexOf` (native, vài chục ms
+ * cho 400 MB) và KHÔNG đọc lại đĩa. Hai bản dùng CÙNG luật nhận một `/ByteRange` (xem chú thích ở trên); test
+ * `signing-warn.test.js` ghim rằng chúng cho cùng đáp án trên cùng một file, để khỏi trôi lệch dần.
+ *
+ * Không ném lỗi: đầu vào lạ (null, chuỗi…) ⇒ `count: 0`. Đây là lời nhắc, không phải cổng chặn (xem FAIL-OPEN ở đầu file).
+ */
+function findSignaturesInBuffer(data) {
+  const empty = { size: 0, count: 0, end: 0 };
+  try {
+    if (data == null) return empty;
+    const buf = asBuffer(data);
+    const size = buf.length;
+    let count = 0;
+    let end = 0;
+    for (let i = buf.indexOf(NEEDLE); i !== -1; i = buf.indexOf(NEEDLE, i + 1)) {
+      const m = BYTERANGE.exec(buf.toString("latin1", i, Math.min(size, i + PROBE)));
+      if (!m) continue;
+      const [a, l1, c, l2] = m.slice(1).map(Number);
+      if (![a, l1, c, l2].every(Number.isSafeInteger)) continue;
+      if (a !== 0 || l1 <= 0 || c - l1 < 4 || c + l2 > size || c >= size) continue;
+      if (c - l1 > MAX_GAP) continue;
+      const gap = buf.subarray(l1 - 1, c + 1); // byte l1-1 … byte c, gồm cả hai đầu
+      if (gap.length !== c - l1 + 2) continue;
+      const inner =
+        gap[1] === 0x3c && gap[gap.length - 2] === 0x3e
+          ? gap.subarray(2, gap.length - 2)
+          : gap[0] === 0x3c && gap[gap.length - 1] === 0x3e
+            ? gap.subarray(1, gap.length - 1)
+            : null;
+      if (!inner || !HEX_ONLY.test(inner.toString("latin1"))) continue;
+      count++;
+      if (c + l2 > end) end = c + l2;
+    }
+    return { size, count, end };
+  } catch (_) {
+    return empty;
+  }
+}
+
 // `data` đến từ IPC thường là Uint8Array; bọc thành Buffer KHÔNG sao chép (cùng lý do với
 // ipc-bytes.js: tránh cấp phát thêm một bản 400 MB).
 function asBuffer(data) {
@@ -168,4 +212,4 @@ async function guardWrite(fp, data, ask, opts) {
   return { action: "cancel", guard: g };
 }
 
-module.exports = { findIntactSignatures, checkOverwrite, guardWrite, startsWithFilePrefix };
+module.exports = { findIntactSignatures, findSignaturesInBuffer, checkOverwrite, guardWrite, startsWithFilePrefix };

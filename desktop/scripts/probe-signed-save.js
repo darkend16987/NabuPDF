@@ -275,6 +275,53 @@ function verify(file) {
     expect(d.length === 2, `hộp hiện 2 lần (${d.length})`);
     expect(d[1] && d[1].buttons.length === 3 && /Không giữ được chữ ký bằng cách nối thêm/.test(d[1].detail || ""), "lần hai: 3 nút + lý do");
     expect(fs.readFileSync(DOC).equals(damaged), "Huỷ ⇒ đĩa không bị ghi gì");
+
+    // ---- S7/S8 (BI-132): KÝ lên tài liệu đã có chữ ký ---------------------------------------------------
+    // Gọi thẳng IPC `signing.apply` (đúng thứ doSign gọi) với một thumbprint GIẢ: hộp cảnh báo nằm TRƯỚC worker/hộp PIN,
+    // nên ca "Huỷ" không bao giờ chạm tới token; ca không-ký thì lọt qua cổng và bị worker từ chối vì không có chứng thư.
+    console.log("\nS7  ký lên tài liệu CÒN chữ ký (byte nguyên từ đĩa) ⇒ hộp cảnh báo; Huỷ ⇒ không ký");
+    resetDisk();
+    await evalIn(
+      cdp,
+      `(async () => {
+         const bin = atob(${JSON.stringify(b64)});
+         const u8 = new Uint8Array(bin.length);
+         for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+         state.dirty = false;
+         const ok = await loadBytes(u8, "hop-dong.pdf", ${JSON.stringify(DOC)});
+         if (ok === false) throw new Error("loadBytes bi tu choi");
+         return true;
+       })()`
+    );
+    await setAnswers([0]); // Huỷ
+    let sres = await evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: {} })`);
+    d = await dlg();
+    expect(d.length === 1 && d[0].buttons.length === 2, `hộp 2 nút: ${JSON.stringify(d[0] && d[0].buttons)}`);
+    expect(d[0] && d[0].defaultId === 0 && d[0].cancelId === 0 && /^Huỷ$/.test(d[0].buttons[0]), "nút đầu = Huỷ, mặc định và Esc đều là nó");
+    expect(d[0] && /1 chữ ký/.test(d[0].message) && /Acrobat hoặc Foxit/.test(d[0].detail), "nêu số chữ ký + lối ra");
+    expect(sres.ok === false && sres.reason === "declined", `Huỷ ⇒ {ok:false, reason:'declined'}: ${JSON.stringify(sres)}`);
+
+    console.log("\nS7b  cùng tài liệu, chọn 'Vẫn ký' ⇒ lọt qua cổng (worker tự từ chối vì thumbprint giả)");
+    await setAnswers([1]);
+    sres = await Promise.race([
+      evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: {} })`),
+      sleep(90000).then(() => ({ reason: "TREO>90s" })),
+    ]);
+    d = await dlg();
+    expect(d.length === 1, "đã hỏi đúng 1 lần");
+    expect(sres.reason !== "declined" && sres.reason !== "TREO>90s", `đã vượt cổng, worker trả: ${JSON.stringify(sres).slice(0, 120)}`);
+
+    console.log("\nS8  tài liệu đã bị pdf-lib dựng lại (chữ ký cũ đã mất khi sửa) ⇒ KHÔNG hỏi");
+    resetDisk();
+    await openAndRotate();
+    await setAnswers([0]);
+    sres = await Promise.race([
+      evalIn(cdp, `window.desktop.signing.apply({ bytes: state.bytes, thumbprint: "FAKE", meta: {} })`),
+      sleep(90000).then(() => ({ reason: "TREO>90s" })),
+    ]);
+    d = await dlg();
+    expect(d.length === 0, `không hộp nào (${d.length})`);
+    expect(sres.reason !== "declined" && sres.reason !== "TREO>90s", `đi thẳng tới worker: ${JSON.stringify(sres).slice(0, 120)}`);
   } catch (e) {
     failures.push("probe loi: " + e.message);
   } finally {

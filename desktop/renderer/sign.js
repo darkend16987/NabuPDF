@@ -287,6 +287,7 @@
   function explainError(res) {
     switch (res.reason) {
       case "cancelled": return "Đã huỷ ký (không nhập PIN hoặc không truy cập được khoá trên token).";
+      case "declined": return res.error || "Đã huỷ ký — tài liệu đã có chữ ký."; // BI-132: người dùng chọn Huỷ ở hộp "đã có chữ ký"
       case "no_cert": return "Không tìm thấy chứng thư đã chọn — token còn cắm không?";
       case "tsa": return "Lấy dấu thời gian (TSA) thất bại: " + (res.error || "") + " — kiểm tra URL hoặc để trống ô TSA.";
       case "rotated": return res.error || "Trang xoay chưa hỗ trợ chữ ký nhìn thấy.";
@@ -327,7 +328,8 @@
         meta: { name: cfg.name, reason: cfg.reason, location: cfg.location, contactInfo: cfg.email || "" },
         appearance,
       });
-      if (!res.ok) { hideOverlay(); toast(explainError(res), "bad"); return; }
+      // BI-132: tự tay huỷ ở hộp "đã có chữ ký" KHÔNG phải lỗi — toast thường, không đỏ (như "Đã hủy nén", BI-126).
+      if (!res.ok) { hideOverlay(); toast(explainError(res), res.reason === "declined" ? "" : "bad"); return; }
 
       // Keep the busy overlay up through the write — signing offloads to a
       // utilityProcess now, so the window stays responsive and the spinner

@@ -63,6 +63,7 @@
     "test:cancel": "node test/compress-cancel.test.js",
     "test:signedscan": "node test/signed-scan.test.js",
     "test:signedsave": "node test/signed-save.test.js",
+    "test:signingwarn": "node test/signing-warn.test.js",
     "sweep:corpus": "node scripts/corpus-sweep.js",
     "checksums": "node scripts/checksums.js",
     "gen:licenses": "node scripts/gen-third-party-licenses.js",
