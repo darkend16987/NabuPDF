@@ -279,9 +279,14 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   tác. Chỉ `bomb_giant.pdf` mới là treo vô hạn.
 
   > **ĐÃ SỬA MỘT NỬA (BI-123).** `/compress` nay có trần **30 phút** (`COMPRESS_TIMEOUT_S`) —
-  > hết giờ thì giết tiến trình con và báo lỗi, thay vì để lớp phủ quay mãi không có nút Hủy.
+  > hết giờ thì giết tiến trình con và báo lỗi, thay vì để lớp phủ quay mãi.
   > `pagenum`/`split` chạy **trong tiến trình** sidecar nên không cắt ngang được như vậy; chúng
   > vẫn chưa có hạn giờ.
+  >
+  > **VÀ NAY CÓ NÚT HỦY (BI-126).** Trần 30 phút lo cho người bấm Nén rồi bỏ đi; nút Hủy lo cho
+  > người đang ngồi đó. `bomb_giant.pdf` chính là file dùng để chứng minh nó chạy — nén nó
+  > không bao giờ xong, nên probe dừng được trong vài giây thì chỉ có một cách giải thích. Xem
+  > `desktop/scripts/probe-compress-cancel.js`.
 - **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và
   `pixmap may not have alpha to save as JPEG` (`issue19326`, `issue19517`, `jpx_numcomps`,
   `jpx_smaskindata`). Người dùng bấm Nén và nhận thông báo lỗi trên file mở được bình thường.
