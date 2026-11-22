@@ -495,6 +495,8 @@ if (typeof document !== "undefined") {
         });
         if (!ok) return { skipped: true };
         r = await window.desktop.writeNewPdf(bv.dir, name, bytes, true);
+        // BI-135: file đích đã ký số và người dùng chọn không ghi đè (hộp ở main) ⇒ bỏ qua, KHÔNG phải lỗi.
+        if (r && r.skipped) return { skipped: true };
       }
       if (!r || !r.saved) throw new Error((r && r.error) || tr("không ghi được file"));
       return { path: r.path };

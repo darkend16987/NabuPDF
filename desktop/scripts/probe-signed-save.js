@@ -346,6 +346,34 @@ function verify(file) {
     d = await dlg();
     expect(d.length === 0, `không hộp nào (${d.length})`);
     expect(sres.reason !== "declined" && sres.reason !== "TREO>90s", `đi thẳng tới worker: ${JSON.stringify(sres).slice(0, 120)}`);
+
+    // ---- S9 (BI-135): "Tạo bản theo mẫu" ghi vào một thư mục — file đích CÓ SẴN và đã ký ---------------------
+    console.log("\nS9  writeNewPdf(overwrite:true) lên file ĐÃ KÝ ⇒ hộp hỏi; bỏ qua/huỷ ⇒ file nguyên; đồng ý ⇒ ghi");
+    const target = path.join(work, "s9-da-ky.pdf");
+    const writeNew = (ow) =>
+      evalIn(cdp, `window.desktop.writeNewPdf(${JSON.stringify(work)}, "s9-da-ky.pdf", new Uint8Array([37, 80, 68, 70, 10, 37, 37, 69, 79, 70, 10]), ${ow})`);
+    const intact = () => fs.existsSync(target) && Buffer.compare(fs.readFileSync(target), ORIGINAL) === 0;
+    fs.writeFileSync(target, ORIGINAL);
+    await setAnswers([]);
+    let w = await writeNew(false);
+    d = await dlg();
+    expect(w && w.saved === false && w.exists === true && d.length === 0 && intact(), `overwrite:false ⇒ exists, không hỏi, file nguyên: ${JSON.stringify(w)}`);
+    await setAnswers([0]);
+    w = await writeNew(true);
+    d = await dlg();
+    expect(w && w.saved === false && w.skipped === true && intact(), `bấm "Bỏ qua file này" ⇒ skipped, file nguyên: ${JSON.stringify(w)}`);
+    expect(d.length === 1 && d[0].buttons[0] === "Bỏ qua file này" && d[0].defaultId === 0 && d[0].cancelId === 2 && d[0].detail.includes("s9-da-ky.pdf"), `hộp: ${JSON.stringify(d[0] && d[0].buttons)}, mặc định ${d[0] && d[0].defaultId}`);
+    await setAnswers([]);
+    w = await writeNew(true);
+    expect(w && w.saved === false && w.skipped === true && intact(), `đóng hộp (Esc) ⇒ không ghi: ${JSON.stringify(w)}`);
+    await setAnswers([1]);
+    w = await writeNew(true);
+    expect(w && w.saved === true && !intact() && fs.readFileSync(target).length === 11, `bấm "Vẫn ghi đè" ⇒ ghi: ${JSON.stringify(w)}`);
+    fs.rmSync(target, { force: true });
+    await setAnswers([]);
+    w = await writeNew(true);
+    d = await dlg();
+    expect(w && w.saved === true && d.length === 0, `file chưa có + overwrite:true ⇒ ghi thẳng, không hỏi: ${JSON.stringify(w)}`);
   } catch (e) {
     failures.push("probe loi: " + e.message);
   } finally {

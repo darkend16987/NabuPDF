@@ -1287,7 +1287,11 @@ ipcMain.handle("dialog:choose-dir", async (e, { defaultPath } = {}) => {
   return res.filePaths[0];
 });
 
-ipcMain.handle("file:write-new-pdf", async (_e, { dir, name, data, overwrite = false } = {}) => {
+// BI-135: `overwrite:true` đè lên file CÓ SẴN — nếu file đó đã ký số thì phải qua cùng cổng BI-127 như
+// `dialog:save-pdf` / `file:write-pdf` (trước đây đường này chỉ có một câu "Ghi đè?" chung ở renderer, không
+// biết file đích đã ký). `overwrite:false` dùng cờ "wx" nên không bao giờ đè ⇒ không cần cổng.
+// Người dùng chọn "bỏ qua"/"huỷ" ⇒ KHÔNG ghi, trả { saved:false, skipped:true } (renderer coi là bỏ qua file này).
+ipcMain.handle("file:write-new-pdf", async (e, { dir, name, data, overwrite = false } = {}) => {
   if (typeof dir !== "string" || !dir || !path.isAbsolute(dir)) {
     return { saved: false, error: "Thư mục không hợp lệ" };
   }
@@ -1298,6 +1302,12 @@ ipcMain.handle("file:write-new-pdf", async (_e, { dir, name, data, overwrite = f
     return { saved: false, error: "Tên file không hợp lệ" };
   }
   const fp = path.join(dir, name);
+  if (overwrite) {
+    const gate = await SignedScan.guardWrite(fp, data, (n) =>
+      askSignedOverwrite(senderWindow(e), fp, n, "Bỏ qua file này", "Skip this file")
+    );
+    if (gate.action === "cancel" || gate.action === "copy") return { saved: false, skipped: true, path: fp };
+  }
   try {
     await fs.promises.writeFile(fp, asWritable(data), { flag: overwrite ? "w" : "wx" });
   } catch (err) {
@@ -1306,7 +1316,7 @@ ipcMain.handle("file:write-new-pdf", async (_e, { dir, name, data, overwrite = f
   }
   // Same rule as file:write-pdf: a read-only pane showing this path must not keep
   // showing the bytes it had before the write.
-  const found = Tabs.findDoc(_e && _e.sender);
+  const found = Tabs.findDoc(e && e.sender);
   if (found) found.tw.reloadPanesForPath(fp);
   return { saved: true, path: fp };
 });
