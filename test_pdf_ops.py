@@ -780,6 +780,277 @@ def test_find_occurrences_case_fold_cannot_shift_offsets():
     assert got and all(hay[s:e] == "hop" for s, e in got), got
 
 
+# --------------------------------------------------------------------------- #
+# BI-123: tiến trình nén phải có TRẦN thời gian
+# --------------------------------------------------------------------------- #
+def test_compress_has_a_ceiling_and_it_is_generous():
+    """Trần tồn tại, và đủ rộng để không giết một lần nén thật.
+
+    Số dưới đây không phải gu thẩm mỹ: trần công việc hợp lệ là MAX_PAGES = 3000
+    trang × ~0,377 s/trang ≈ 19 phút (số đo ở khối worker trong api.py). Hạ trần
+    xuống dưới mức đó là bắt đầu giết những lần nén đúng đắn.
+    """
+    from src.pdf import compress as core
+
+    assert core.COMPRESS_TIMEOUT_S >= 20 * 60, (
+        f"tran {core.COMPRESS_TIMEOUT_S}s < 19 phut cua mot lan nen 3000 trang hop le"
+    )
+    assert core.COMPRESS_TIMEOUT_S <= 2 * 60 * 60, "tran rong den the thi khong con la tran"
+    assert issubclass(core.CompressTimeout, RuntimeError)
+
+
+def test_compress_kills_a_worker_that_runs_too_long():
+    """Hết giờ => giết tiến trình con và báo bằng tiếng Việt, không treo mãi.
+
+    Đo được: `bomb_giant.pdf` (123 KB, 1 trang) vượt 100 s ở cả `ebook` lẫn
+    `lossless`. Hôm nay người dùng bấm Nén rồi chỉ còn cách tắt app.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    cu = core.COMPRESS_TIMEOUT_S
+    real_run = api.subprocess.run
+
+    def cham(cmd, **kw):
+        # Kiểm luôn rằng hạn giờ THẬT SỰ được truyền xuống. Thiếu dòng này thì xoá
+        # `timeout=` khỏi `subprocess.run` vẫn xanh — lưới xanh trên một bản vá đã
+        # bị gỡ (đúng cái bẫy redproof bắt được).
+        assert kw.get("timeout") == core.COMPRESS_TIMEOUT_S, (
+            f"subprocess.run khong nhan han gio: timeout={kw.get('timeout')!r}"
+        )
+        raise api.subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+
+    core.COMPRESS_TIMEOUT_S = 1
+    api.subprocess.run = cham
+    try:
+        api._compress_via_worker_blocking(src, "ebook")
+        assert False, "expected CompressTimeout"
+    except core.CompressTimeout as e:
+        assert "phút" in str(e), repr(str(e))
+    finally:
+        api.subprocess.run = real_run
+        core.COMPRESS_TIMEOUT_S = cu
+
+
+def test_compress_does_not_retry_after_a_timeout():
+    """Hết giờ thì KHÔNG thử lại ở `lossless`.
+
+    `CompressTimeout` là lớp riêng chính vì việc này: nó là con của RuntimeError,
+    mà RuntimeError là tín hiệu "worker chết -> thử lại không nén ảnh" (BI-122).
+    Đo được `bomb_giant.pdf` vượt hạn ở CẢ hai preset, nên thử lại chỉ là bắt người
+    dùng chờ thêm một trần nữa.
+    """
+    from src.pdf import compress as core
+
+    src = base64.b64decode(_npage_pdf(1))
+    real = api._compress_via_worker_blocking
+    goi = []
+
+    def het_gio(pdf_bytes, preset):
+        goi.append(preset)
+        raise core.CompressTimeout("Nén quá 30 phút nên đã dừng.")
+
+    api._compress_via_worker_blocking = het_gio
+    try:
+        _run(api._compress_anywhere(src, "ebook"))
+        assert False, "expected CompressTimeout"
+    except core.CompressTimeout:
+        pass
+    finally:
+        api._compress_via_worker_blocking = real
+    assert goi == ["ebook"], f"da thu lai sau khi het gio: {goi}"
+
+
+# --------------------------------------------------------------------------- #
+# BI-124: trường form thiếu /Kids
+# --------------------------------------------------------------------------- #
+def _form_with_orphan_parent():
+    """PDF một trang: nhóm radio mà trường cha KHÔNG có /Kids — đúng kiểu hỏng của
+    `opt_demo.pdf` trong corpus pdf.js (widget ghi /Parent, cha thì không nhận con).
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=200, height=200)
+    page.insert_text((20, 20), "form")
+    cha = doc.get_new_xref()
+    doc.update_object(cha, "<</FT/Btn/Ff 49152/T(nhom)/V/0/Opt[(A)(B)]>>")
+    con = []
+    for i in range(2):
+        w = doc.get_new_xref()
+        doc.update_object(
+            w,
+            f"<</Type/Annot/Subtype/Widget/Parent {cha} 0 R"
+            f"/Rect[20 {60 + 30 * i} 40 {80 + 30 * i}]/AS/Off>>",
+        )
+        con.append(w)
+    doc.xref_set_key(page.xref, "Annots", "[" + " ".join(f"{c} 0 R" for c in con) + "]")
+    doc.xref_set_key(
+        doc.pdf_catalog(), "AcroForm",
+        "<</Fields[" + " ".join(f"{c} 0 R" for c in con) + "]>>",
+    )
+    out = doc.tobytes()
+    doc.close()
+    return out, cha, con
+
+
+def test_repair_only_touches_fields_that_are_actually_missing_kids():
+    """Phép vá chỉ thêm thứ còn thiếu, KHÔNG viết lại form của người ta.
+
+    Đây là nửa nguy hiểm: một hàm sửa cấu trúc form mà đụng cả trường lành thì nó
+    tự trở thành nguồn lỗi mới.
+    """
+    src, cha, con = _form_with_orphan_parent()
+    doc = fitz.open(stream=src, filetype="pdf")
+    try:
+        assert doc.xref_get_key(cha, "Kids")[0] == "null", "control: cha phai dang thieu /Kids"
+        da_va = api._repair_orphan_field_kids(doc)
+        assert da_va == [cha], f"va nham truong: {da_va}"
+        kind, val = doc.xref_get_key(cha, "Kids")
+        assert kind == "array" and all(f"{c} 0 R" in val for c in con), val
+        # Chạy lại lần nữa: giờ không còn gì thiếu nên KHÔNG được chạm vào ai.
+        assert api._repair_orphan_field_kids(doc) == [], "va lai mot tai lieu da lanh"
+    finally:
+        doc.close()
+
+
+def test_split_recovers_from_a_form_missing_kids():
+    """`insert_pdf` gãy vì form hỏng => vá rồi tách lại, KHÔNG bỏ cuộc."""
+    src, cha, con = _form_with_orphan_parent()
+    # control: chưa vá thì PyMuPDF thật sự gãy — nếu không, test này vô nghĩa.
+    doc = fitz.open(stream=src, filetype="pdf")
+    try:
+        part = fitz.open()
+        try:
+            part.insert_pdf(doc, from_page=0, to_page=0)
+            assert False, "control that bai: insert_pdf khong he gay tren file nay"
+        except ValueError:
+            pass
+        finally:
+            part.close()
+    finally:
+        doc.close()
+
+    r = _run(api.split_pdf(api.SplitRequest(
+        pdf_b64=base64.b64encode(src).decode(), mode="every", size=1)))
+    assert r.success, r.error
+    z = zipfile.ZipFile(io.BytesIO(base64.b64decode(r.data_b64)))
+    names = [n for n in z.namelist() if n.lower().endswith(".pdf")]
+    assert len(names) == 1, names
+    out = fitz.open(stream=z.read(names[0]), filetype="pdf")
+    try:
+        assert out.page_count == 1
+        # Và form phải CÒN. Đường rẻ tiền `insert_pdf(widgets=False)` cũng chạy được
+        # nhưng ra file không còn trường nào — đo trên opt_demo.pdf: 1.619 byte / 0
+        # widget, so với 5.663 byte / 9 widget khi vá đúng.
+        assert len(list(out[0].widgets())) == 2, "tach xong mat trang form"
+    finally:
+        out.close()
+
+
+# --------------------------------------------------------------------------- #
+# BI-125: câu lỗi của thư viện không phải câu cho người dùng
+# --------------------------------------------------------------------------- #
+def test_split_retry_reopens_the_document_from_the_original_bytes():
+    """Thử lại phải MỞ LẠI tài liệu, không dùng tiếp bản `insert_pdf` đã làm dở.
+
+    VÌ SAO LÀ GHIM NGUỒN. Đo trên `opt_demo.pdf` (corpus pdf.js): thử lại trên chính
+    `doc` cũ ra file 1.619 byte **không còn widget nào** — mất trắng cả form mà vẫn
+    báo thành công; mở lại từ byte gốc ra 5.663 byte, đủ 9 widget. Nhưng tài liệu
+    dựng tay trong file này KHÔNG tái hiện được chỗ đó: đo được, cả hai đường đều ra
+    1.302 byte / 2 widget. Cấu trúc làm `insert_pdf` để lại sổ sách bẩn chỉ xuất hiện
+    trên form nhiều nhánh như `opt_demo.pdf`, mà `test_*.py` thì không được phụ thuộc
+    corpus đặt ngoài repo (nó là cổng của /deploy).
+
+    Lưới quét corpus cũng KHÔNG đỡ được: nó chấm qpdf + số trang, không đếm widget.
+    Nên luật này chỉ còn ghim nguồn giữ. Đổi khối thử lại ⇒ đọc lại BI-124 trước.
+    """
+    import pathlib
+    import re
+
+    src = pathlib.Path(api.__file__).read_text(encoding="utf8")
+    i = src.index("def _repair_orphan_field_kids")
+    j = src.index("@app.post(\"/split\"", i)
+    khoi = src[j : src.index("return ZipResponse(success=False", j)]
+    assert "_repair_orphan_field_kids" in khoi, "route /split khong con goi phep va"
+    # Giữa `except ValueError` và lời gọi phép vá phải có một lần mở lại tài liệu.
+    m = re.search(r"except ValueError.*?_repair_orphan_field_kids", khoi, re.S)
+    assert m, "khong thay nhanh thu lai"
+    assert "_open_pdf_stream(pdf_bytes)" in m.group(0), (
+        "nhanh thu lai khong mo lai tai lieu tu byte goc - xem BI-124"
+    )
+
+
+def test_library_errors_become_vietnamese_but_keep_the_original():
+    from src.pdf.util import nice_pdf_error
+
+    cau = nice_pdf_error(ValueError("cannot save with zero pages"))
+    assert cau.startswith("PDF này không có trang nào."), cau
+    assert "cannot save with zero pages" in cau, "mat nguyen van => het tra cuu duoc"
+    # Không khớp thì trả lại nguyên văn, không bịa thêm.
+    assert nice_pdf_error(ValueError("chuyen la chua tung gap")) == "chuyen la chua tung gap"
+
+
+def test_a_pdf_with_no_pages_is_a_400_not_a_library_message():
+    """3 file corpus (issue21436, poppler-91414-0-53, -54) đi hết đường rồi mới chết
+    ở `tobytes` với "cannot save with zero pages". Chốt sớm như /split vẫn chốt."""
+    # Dung bang TAY: PyMuPDF tu choi LUU mot tai lieu 0 trang (dung cai loi dang
+    # ban o day), nen khong tao duoc file mau bang chinh no.
+    src = (
+        b"%PDF-1.4\n"
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\n"
+        b"trailer<</Root 1 0 R/Size 3>>\n%%EOF\n"
+    )
+    kiem = fitz.open(stream=src, filetype="pdf")
+    try:
+        assert kiem.page_count == 0, "control: file mau phai la 0 trang"
+    finally:
+        kiem.close()
+    for goi in (
+        lambda: api.add_page_numbers(api.PageNumberRequest(pdf_b64=base64.b64encode(src).decode())),
+        lambda: api.split_pdf(api.SplitRequest(pdf_b64=base64.b64encode(src).decode())),
+    ):
+        try:
+            _run(goi())
+            assert False, "expected HTTPException"
+        except HTTPException as e:
+            assert e.status_code == 400
+            assert e.detail == "PDF không có trang nào.", repr(e.detail)
+
+
+def test_open_checks_the_page_tree_not_just_the_header():
+    """`fitz.open` thành công không có nghĩa là tài liệu dùng được.
+
+    MuPDF mở lười: cây trang chỉ đọc khi có người hỏi. `poppler-67295-0.pdf` mở
+    bình thường rồi `page_count` mới ném — và vì mỗi route đọc số trang một chỗ
+    khác nhau, lỗi ấy thoát ra thành 500 thay vì một câu 400 đọc được.
+    """
+    import pymupdf
+
+    from src.pdf.util import _open_pdf_stream
+
+    real = pymupdf.Document.page_count
+
+    class Hong:
+        def __get__(self, obj, owner=None):
+            raise RuntimeError("code=7: Invalid number of pages")
+
+    doc = fitz.open()
+    doc.new_page()
+    src = doc.tobytes()
+    doc.close()
+
+    pymupdf.Document.page_count = Hong()
+    try:
+        _open_pdf_stream(src)
+        assert False, "expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400, e.status_code
+        assert "không đọc được số trang" in e.detail, repr(e.detail)
+        assert "Invalid number of pages" in e.detail, "mat nguyen van"
+    finally:
+        pymupdf.Document.page_count = real
+
+
 def test_compress_page_cap_is_generous():
     """The old cap was 500 pages, which refused most 200 MB documents outright —
     exactly the files "nén" exists for. Guard the intent, not just the number."""
@@ -881,6 +1152,15 @@ if __name__ == "__main__":
         test_compress_core_stays_cheap_to_import,
         test_worker_exit_four_is_success_not_death,
         test_compress_page_cap_is_generous,
+        test_compress_has_a_ceiling_and_it_is_generous,
+        test_compress_kills_a_worker_that_runs_too_long,
+        test_compress_does_not_retry_after_a_timeout,
+        test_repair_only_touches_fields_that_are_actually_missing_kids,
+        test_split_recovers_from_a_form_missing_kids,
+        test_split_retry_reopens_the_document_from_the_original_bytes,
+        test_library_errors_become_vietnamese_but_keep_the_original,
+        test_a_pdf_with_no_pages_is_a_400_not_a_library_message,
+        test_open_checks_the_page_tree_not_just_the_header,
         test_text_find_reports_every_occurrence,
         test_text_find_hits_are_in_reading_order,
         test_text_find_case_and_whole_word,

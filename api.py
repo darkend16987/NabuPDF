@@ -51,6 +51,7 @@ from src.pdf.util import (
     _fmt_page_label,
     _hex_rgb01,
     _open_pdf_stream,
+    nice_pdf_error,
     _parse_ranges,
     _require_fitz,
 )
@@ -954,12 +955,22 @@ def _compress_via_worker_blocking(pdf_bytes: bytes, preset: str) -> _compress_co
             # Without this the frozen exe flashes a console window on every compress.
             kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
-        proc = subprocess.run(  # noqa: S603 (argv is built here, never from the request)
-            _compress_worker_cmd(src, dst, preset),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            **kwargs,
-        )
+        try:
+            proc = subprocess.run(  # noqa: S603 (argv is built here, never from the request)
+                _compress_worker_cmd(src, dst, preset),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_compress_core.COMPRESS_TIMEOUT_S,
+                **kwargs,
+            )
+        except subprocess.TimeoutExpired:
+            # subprocess.run đã giết tiến trình con trước khi ném. Không có bước dọn
+            # nào thêm — thư mục tạm do khối `finally` bên dưới xoá.
+            phut = _compress_core.COMPRESS_TIMEOUT_S // 60
+            raise _compress_core.CompressTimeout(
+                f"Nén quá {phut} phút nên đã dừng. PDF này nhiều khả năng là "
+                "file nén bung (decompression bomb) hoặc đã hỏng."
+            )
         err = (proc.stderr or b"").decode("utf-8", "replace").strip()
 
         if proc.returncode == _WORKER_BAD_REQUEST:
@@ -1008,6 +1019,10 @@ async def _compress_anywhere(pdf_bytes: bytes, preset: str) -> _compress_core.Co
     """
     try:
         return await run_in_threadpool(_compress_via_worker_blocking, pdf_bytes, preset)
+    except _compress_core.CompressTimeout:
+        # Hết giờ thì KHÔNG thử lại: `bomb_giant.pdf` vượt hạn ở cả `ebook` lẫn
+        # `lossless`, nên lần thử lại chỉ là bắt người dùng chờ thêm 30 phút nữa.
+        raise
     except OSError as e:
         logger.warning("compress worker unavailable (%s) — compressing in-process", e)
         return _compress_pdf_bytes_ex(pdf_bytes, preset)
@@ -1048,7 +1063,7 @@ async def compress(req: CompressRequest):
         raise
     except Exception as e:
         logger.exception("Compress error")
-        return CompressResponse(success=False, error=str(e))
+        return CompressResponse(success=False, error=nice_pdf_error(e))
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return CompressResponse(
@@ -1097,7 +1112,7 @@ async def compress_bin(request: Request, preset: str = "ebook"):
         raise
     except Exception as e:
         logger.exception("Compress error")
-        return JSONResponse(status_code=200, content={"success": False, "error": str(e)})
+        return JSONResponse(status_code=200, content={"success": False, "error": nice_pdf_error(e)})
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Response(
@@ -1473,6 +1488,13 @@ async def add_page_numbers(req: PageNumberRequest):
     pdf_bytes = _decode_pdf_b64(req.pdf_b64)
     doc = _open_pdf_stream(pdf_bytes)
 
+    # Chốt như /split đã chốt (BI-125). Thiếu nó thì tài liệu 0 trang đi hết đường rồi
+    # mới chết ở `tobytes` với câu "cannot save with zero pages" của PyMuPDF — đo được
+    # trên 3 file corpus: issue21436.pdf, poppler-91414-0-53.pdf, -54.pdf.
+    if doc.page_count == 0:
+        doc.close()
+        raise HTTPException(status_code=400, detail="PDF không có trang nào.")
+
     try:
         fs = max(6.0, min(72.0, float(req.font_size)))
         margin = max(2.0, min(300.0, float(req.margin)))
@@ -1515,7 +1537,7 @@ async def add_page_numbers(req: PageNumberRequest):
         raise
     except Exception as e:
         logger.exception("Add-page-numbers error")
-        return PdfBytesResponse(success=False, error=str(e))
+        return PdfBytesResponse(success=False, error=nice_pdf_error(e))
     finally:
         doc.close()
 
@@ -1596,6 +1618,56 @@ class SplitRequest(BaseModel):
     ranges: str = ""              # range spec when mode="ranges"
 
 
+def _repair_orphan_field_kids(doc) -> list[int]:
+    """Dựng lại `/Kids` cho những trường form bị thiếu nó. Trả về xref đã vá.
+
+    VÌ SAO CẦN (BI-124). Theo chuẩn PDF, một trường form có widget con phải liệt kê
+    chúng trong `/Kids`. `opt_demo.pdf` của corpus pdf.js vi phạm: widget 22 và 23 ghi
+    `/Parent 21 0 R`, nhưng trường 21 (`veg`, nhóm radio) **không có `/Kids` nào cả** —
+    trong khi hai trường anh em của nó, 5 (`fruit`) và 9 (`shared`), thì có.
+
+    `insert_pdf` của PyMuPDF đi từ `/Fields`, theo `/Parent` lên cha, rồi tìm widget
+    trong `/Kids` của cha: `idx = parent["old_kids"].index(xref)` → `ValueError: 22 is
+    not in list`, và CẢ thao tác tách hỏng. qpdf vẫn chấm file gốc là **sạch** — đây là
+    chỗ PyMuPDF khắt khe hơn trọng tài.
+
+    Phép vá chỉ dựng lại đúng cái chuẩn đòi, từ dữ liệu đã có trong chính tài liệu:
+    widget nào trỏ `/Parent` về trường nào thì là con của trường ấy. Đo trên
+    `opt_demo.pdf`: chỉ trường 21 bị chạm (5 và 9 đã đúng nên để nguyên), sau đó
+    `insert_pdf` chạy và **giữ đủ cả 9 widget**, kể cả nhóm `veg`; qpdf chấm đầu ra là
+    sạch. So với cách rẻ hơn là `insert_pdf(..., widgets=False)`: cách đó cũng chạy,
+    nhưng ra file **không còn form** — mất trắng 9 trường.
+
+    CHỈ GỌI SAU KHI `insert_pdf` ĐÃ HỎNG. Tài liệu lành không bao giờ đi qua đây, nên
+    đường tách file bình thường không chịu thêm một phép đọc xref nào.
+    """
+    con = {}
+    for x in range(1, doc.xref_length()):
+        try:
+            if doc.xref_get_key(x, "Subtype")[1] != "/Widget":
+                continue
+            kind, parent = doc.xref_get_key(x, "Parent")
+            if kind != "xref":
+                continue
+            con.setdefault(int(parent.split()[0]), []).append(x)
+        except Exception:  # xref lạ/hỏng: bỏ qua, đây là đường chữa cháy
+            continue
+
+    da_va = []
+    for cha, kids in con.items():
+        try:
+            kind, val = doc.xref_get_key(cha, "Kids")
+            # Đã đủ con thì KHÔNG đụng vào: ta chỉ thêm thứ còn thiếu, không viết lại
+            # cấu trúc form của người ta.
+            if kind == "array" and all(f"{k} 0 R" in val for k in kids):
+                continue
+            doc.xref_set_key(cha, "Kids", "[" + " ".join(f"{k} 0 R" for k in kids) + "]")
+            da_va.append(cha)
+        except Exception:
+            continue
+    return da_va
+
+
 @app.post("/split", response_model=ZipResponse)
 async def split_pdf(req: SplitRequest):
     """Split a PDF into multiple PDFs, returned as one .zip.
@@ -1625,23 +1697,50 @@ async def split_pdf(req: SplitRequest):
         doc.close()
         raise HTTPException(status_code=400, detail="Quá nhiều file (tối đa 1000). Tăng số trang mỗi file.")
 
+    def _tach_vao(src, zf) -> int:
+        n_file = 0
+        for start, end in pairs:
+            part = fitz.open()
+            try:
+                part.insert_pdf(src, from_page=start, to_page=end)
+                data = part.tobytes()
+            finally:
+                part.close()
+            n_file += 1
+            label = f"{start + 1}" if start == end else f"{start + 1}-{end + 1}"
+            zf.writestr(f"{src_name}_{n_file:03d}_p{label}.pdf", data)
+        return n_file
+
     buf = io.BytesIO()
     count = 0
     src_name = "part"
     try:
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for start, end in pairs:
-                part = fitz.open()
-                part.insert_pdf(doc, from_page=start, to_page=end)
-                data = part.tobytes()
-                part.close()
-                count += 1
-                label = f"{start + 1}" if start == end else f"{start + 1}-{end + 1}"
-                zf.writestr(f"{src_name}_{count:03d}_p{label}.pdf", data)
+        try:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                count = _tach_vao(doc, zf)
+        except ValueError as e:
+            # `insert_pdf` vấp một trường form thiếu `/Kids` (BI-124). Vá rồi thử LẠI
+            # MỘT lần — và chỉ khi phép vá thật sự chạm vào cái gì, nếu không thì lỗi
+            # này là chuyện khác và cứ để nó nổi lên như cũ.
+            #
+            # MỞ LẠI TỪ BYTE GỐC, đừng dùng lại `doc`. `insert_pdf` hỏng giữa chừng để
+            # lại sổ sách nội bộ đã bị sửa dở: đo được, thử lại trên chính `doc` ra file
+            # 1.619 byte **không còn widget nào** — đúng bằng đường `widgets=False`, tức
+            # mất trắng cả form mà vẫn báo thành công. Mở lại thì ra 5.663 byte, đủ 9
+            # widget. Cùng một bài học với BI-122.
+            doc.close()
+            doc = _open_pdf_stream(pdf_bytes)
+            da_va = _repair_orphan_field_kids(doc)
+            if not da_va:
+                raise
+            logger.warning("split: va /Kids cho truong form %s roi thu lai (%s)", da_va, e)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                count = _tach_vao(doc, zf)
     except Exception as e:
         logger.exception("Split error")
         doc.close()
-        return ZipResponse(success=False, error=str(e))
+        return ZipResponse(success=False, error=nice_pdf_error(e))
     doc.close()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

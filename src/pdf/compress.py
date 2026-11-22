@@ -39,6 +39,30 @@ PRESETS = {
 MAX_PAGES = 3000
 
 
+# Trần thời gian cho MỘT lần nén, tính ở tiến trình CHA (BI-123).
+#
+# Việc nó làm là chặn "mãi mãi", KHÔNG phải bắt lỗi chậm. Đo được trên corpus:
+# `bomb_giant.pdf` (bom giải nén, 123 KB, 1 trang) vượt 100 s ở CẢ `ebook` lẫn
+# `lossless` và không có dấu hiệu dừng — hôm nay người dùng bấm Nén rồi chỉ còn cách
+# tắt app, vì lớp phủ không bao giờ tắt và không có nút Hủy.
+#
+# Vì sao 30 phút chứ không phải một con số nhỏ gọn hơn: trần công việc hợp lệ là
+# MAX_PAGES = 3000 trang × ~0,377 s/trang ≈ 19 phút (số đo ở khối worker trong
+# api.py). Một hạn giờ chặt hơn sẽ GIẾT một lần nén thật. Và không scale được theo
+# dung lượng: `bug1978317.pdf` chỉ 1,5 MB / 1 trang mà mất 76–92 s hợp lệ, trong khi
+# `bomb_giant.pdf` 123 KB thì không bao giờ xong — dung lượng không nói lên gì.
+COMPRESS_TIMEOUT_S = 30 * 60
+
+
+class CompressTimeout(RuntimeError):
+    """Tiến trình nén vượt `COMPRESS_TIMEOUT_S` và đã bị giết.
+
+    Lớp riêng chứ không phải `RuntimeError` trần: `_compress_anywhere` thử lại ở
+    `lossless` khi worker CHẾT, nhưng hết giờ thì thử lại là chờ thêm 30 phút nữa —
+    đo được `bomb_giant.pdf` vượt hạn ở cả hai preset.
+    """
+
+
 # Cờ dòng lệnh mà sidecar.py nhận ra để chạy ở chế độ "nén một file rồi thoát".
 # Nằm ở ĐÂY chứ không ở api.py vì sidecar.py phải đọc được nó TRƯỚC khi import api —
 # đó là cả mục đích của việc tách module này ra (BI-121).

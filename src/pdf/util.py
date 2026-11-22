@@ -50,13 +50,70 @@ def _open_pdf_stream(pdf_bytes: bytes):
 
     Centralises the identical open+try/except that every PDF endpoint repeated;
     the caller keeps its own `fitz` binding for the constants/classes it uses next.
+
+    `fitz.open` THÀNH CÔNG KHÔNG CÓ NGHĨA LÀ TÀI LIỆU DÙNG ĐƯỢC (BI-125). MuPDF mở
+    lười: cây trang chỉ được đọc khi có người hỏi tới. Đo trên `poppler-67295-0.pdf`
+    (794 byte, corpus pdf.js): `fitz.open` trả về bình thường, rồi `doc.page_count`
+    ném `RuntimeError: code=7: Invalid number of pages`. Vì mỗi route đọc số trang ở
+    một chỗ khác nhau, lỗi ấy thoát ra thành **500 Internal Server Error** thay vì
+    một câu 400 đọc được — và không route nào tự lo được, vì chúng đều giả định rằng
+    mở được là dùng được.
+
+    Nên phép đếm trang nằm ở ĐÂY, ngay sau khi mở: một lần, cho mọi route. Tài liệu
+    nào không đọc nổi số trang thì cũng không route nào làm gì được với nó.
     """
     import fitz  # PyMuPDF (cached; the caller already ensured it imports)
 
     try:
-        return fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Không mở được PDF: {e}")
+
+    try:
+        doc.page_count
+    except Exception as e:
+        doc.close()
+        # Không thêm tiền tố "Không mở được PDF:" — `nice_pdf_error` đã mở đầu bằng
+        # "PDF này hỏng:", ghép vào thành một câu lắp bắp hai lần chữ PDF.
+        raise HTTPException(status_code=400, detail=nice_pdf_error(e))
+    return doc
+
+
+# Câu của MuPDF/PyMuPDF -> câu người dùng đọc được (BI-125).
+#
+# Đo trên lưới quét corpus: mọi thao tác thất bại còn lại đều trả thẳng văn bản của
+# thư viện ra cho người dùng. Họ đọc được đúng những câu này trong toast:
+#
+#     "22 is not in list"            "code=4: index out of bounds"
+#     "cannot save with zero pages"  "code=4: not a dict (null)"
+#     "code=7: Invalid number of pages"
+#
+# Không câu nào nói cho người ta biết nên làm gì. Bảng dưới khớp theo CHUỖI CON và
+# luôn giữ nguyên văn gốc trong ngoặc — để người dùng biết phải làm gì mà người sửa
+# lỗi vẫn tra cứu được. Khớp theo chuỗi con là CỐ Ý: số hiệu lỗi của MuPDF đổi theo
+# phiên bản, lời văn thì bền hơn; và không khớp thì trả lại nguyên văn, không bịa.
+_MUPDF_MESSAGES = (
+    ("cannot save with zero pages", "PDF này không có trang nào."),
+    ("is not in list", "Biểu mẫu (form) trong PDF này sai cấu trúc nên không xử lý được."),
+    ("invalid number of pages", "PDF này hỏng: không đọc được số trang."),
+    ("not a dict", "PDF này hỏng: có đối tượng sai kiểu bên trong."),
+    ("index out of bounds", "PDF này hỏng: có tham chiếu trỏ ra ngoài tài liệu."),
+    ("no objects found", "PDF này rỗng hoặc hỏng hoàn toàn."),
+    ("cannot recognize version marker", "Đây không phải file PDF."),
+)
+
+
+def nice_pdf_error(e) -> str:
+    """Câu tiếng Việt cho `e`, kèm nguyên văn của thư viện trong ngoặc.
+
+    Không khớp gì thì trả lại đúng `str(e)` — thà thô còn hơn đoán sai ý.
+    """
+    goc = str(e).strip()
+    thap = goc.lower()
+    for dau, cau in _MUPDF_MESSAGES:
+        if dau in thap:
+            return f"{cau} ({goc})"
+    return goc
 
 
 def _fmt_page_label(fmt: str, n: int, total: int) -> str:
