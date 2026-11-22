@@ -2179,11 +2179,14 @@ async function scrubRecoverySnapshot() {
   try {
     if (!state.docId || !window.desktop.recovery) return;
     lastAutosaveLen = -1; // force the next tick to write rather than skip on an equal length
+    // BI-137: `scrub:true` ⇒ main XOÁ bản cũ (bản rõ trước khi ẩn) rồi mới ghi, vì ghi nguyên tử giữ bản cũ tới phút chót.
+    // Và `srcPath` (không phải `path` — main đọc `srcPath`, nên trước đây manifest mất đường dẫn gốc sau khi ẩn trang).
     await window.desktop.recovery.save({
       docId: state.docId,
       name: state.name,
-      path: state.path,
+      srcPath: state.path,
       bytes: state.bytes,
+      scrub: true,
     });
   } catch (_) {
     /* best effort */

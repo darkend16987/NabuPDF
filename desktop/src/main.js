@@ -2124,6 +2124,30 @@ function hasRecoveryOrphans() {
   }
 }
 
+// BI-74 + BI-137 — dọn khe phục hồi TRƯỚC khi ghi bản mới, dùng cho `recovery:save` với `scrub:true` (ẩn trang bằng
+// mật khẩu). Ghi nguyên tử giữ bản CŨ tới phút chót — đúng thứ BI-74 cần xoá (bản rõ trước khi ẩn) — nên ở chế độ này
+// phải XOÁ `autosave.pdf` cũ và mọi `*.nabu-tmp` còn sót (có thể chứa bản rõ dở dang) rồi mới ghi. Ghi lỗi sau đó ⇒
+// khe TRỐNG, không phải khe còn bản rõ: thà mất bản phục hồi còn hơn để lộ trang đã ẩn. Trả false nếu có file không xoá
+// được (bị khoá) — người gọi vẫn ghi tiếp, đúng như hành vi trước BI-137 (mở "w" cũng hỏng khi file bị khoá).
+async function scrubRecoverySlot(dir) {
+  let ok = true;
+  let names = [];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch (_) {
+    return true; // chưa có thư mục = chưa có gì để dọn
+  }
+  for (const f of names) {
+    if (f !== "autosave.pdf" && !f.endsWith(AtomicWrite.TMP_SUFFIX)) continue;
+    try {
+      await fs.promises.unlink(path.join(dir, f));
+    } catch (e) {
+      if (!e || e.code !== "ENOENT") ok = false;
+    }
+  }
+  return ok;
+}
+
 // ---- IPC: session restore setting ----------------------------------------
 
 ipcMain.handle("session:get-restore", () => Session.isEnabled());
@@ -2199,15 +2223,25 @@ ipcMain.handle("sig:remove", (_e, id) => sigSafe(() => sigChanged(sigs().remove(
 ipcMain.handle("sig:set-width", (_e, p) => sigSafe(() => sigChanged(sigs().setWidth(p && p.id, p && p.wPt))));
 ipcMain.handle("sig:reset", () => sigSafe(() => sigChanged(sigs().reset())));
 
-ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath } = {}) => {
+// BI-137: cả hai file ghi NGUYÊN TỬ (tạm + fsync + đổi tên). Trước đây `writeFile` cắt cụt `autosave.pdf` rồi mới ghi, nên một
+// cú sập giữa lúc autosave phá chính bản phục hồi cũ — đúng lúc cần nó. THỨ TỰ: PDF trước (thứ đáng giá), manifest sau (chỉ là
+// nhãn: tên/đường dẫn/giờ). Sập giữa hai lần ghi ⇒ PDF mới + manifest cũ (nhãn cũ vài chục giây) — vô hại; lần đầu thì có PDF
+// mà chưa có manifest — `recovery:scan`/`read` chịu được (xem bên dưới). Manifest ghi lỗi KHÔNG làm hỏng việc lưu PDF.
+// `scrub:true` (ẩn trang — BI-74): xoá bản cũ trước, xem scrubRecoverySlot.
+ipcMain.handle("recovery:save", async (_e, { docId, bytes, name, srcPath, scrub } = {}) => {
   try {
     const id = sanitizeId(docId);
     if (!id || !bytes) return { saved: false };
     const dir = path.join(recoveryDir(), id);
     await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(path.join(dir, "autosave.pdf"), asWritable(bytes));
+    if (scrub) await scrubRecoverySlot(dir);
+    await AtomicWrite.writeFileAtomic(path.join(dir, "autosave.pdf"), asWritable(bytes));
     const manifest = { docId: id, name: name || "document.pdf", srcPath: srcPath || null, savedAt: Date.now(), version: app.getVersion() };
-    await fs.promises.writeFile(path.join(dir, "manifest.json"), JSON.stringify(manifest));
+    try {
+      await AtomicWrite.writeFileAtomic(path.join(dir, "manifest.json"), Buffer.from(JSON.stringify(manifest)));
+    } catch (_) {
+      /* nhãn không quan trọng bằng bản PDF đã nằm an toàn trên đĩa */
+    }
     return { saved: true };
   } catch (err) {
     return { saved: false, error: String((err && err.message) || err) };
@@ -2235,14 +2269,33 @@ ipcMain.handle("recovery:scan", async () => {
     for (const id of await fs.promises.readdir(base)) {
       const dir = path.join(base, id);
       try {
-        if (!fs.existsSync(path.join(dir, "autosave.pdf"))) continue;
-        const mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+        let st = null;
+        try {
+          st = await fs.promises.stat(path.join(dir, "autosave.pdf"));
+        } catch (_) {}
+        if (!st) {
+          // BI-137: thư mục KHÔNG có bản PDF hoàn chỉnh (autosave đầu tiên bị giết giữa chừng chỉ để lại *.nabu-tmp, hoặc chỉ có
+          // manifest) thì không có gì để đề nghị — nhưng cũng đừng để nó nằm đó mãi: quá hạn thì xoá.
+          try {
+            const ds = await fs.promises.stat(dir);
+            if (Date.now() - ds.mtimeMs > RECOVERY_MAX_AGE_MS) await fs.promises.rm(dir, { recursive: true, force: true });
+          } catch (_) {}
+          continue;
+        }
+        // BI-137: có PDF mà thiếu/hỏng manifest (sập đúng giữa hai lần ghi của lần lưu đầu) VẪN phải được đề nghị — dữ liệu quý
+        // là PDF; nhãn lấy mặc định, giờ lấy từ mtime của chính file.
+        let mf = null;
+        try {
+          mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+        } catch (_) {}
+        if (!mf || typeof mf !== "object") mf = {};
+        const savedAt = mf.savedAt || Math.floor(st.mtimeMs);
         // Prune stale remnants so the folder can't grow without bound.
-        if (mf.savedAt && Date.now() - mf.savedAt > RECOVERY_MAX_AGE_MS) {
+        if (savedAt && Date.now() - savedAt > RECOVERY_MAX_AGE_MS) {
           await fs.promises.rm(dir, { recursive: true, force: true });
           continue;
         }
-        out.push({ docId: id, name: mf.name || "document.pdf", srcPath: mf.srcPath || null, savedAt: mf.savedAt || 0 });
+        out.push({ docId: id, name: mf.name || "document.pdf", srcPath: mf.srcPath || null, savedAt });
       } catch (_) {
         /* skip a broken/half-written entry */
       }
@@ -2259,7 +2312,12 @@ ipcMain.handle("recovery:read", async (_e, docId) => {
     const id = sanitizeId(docId);
     const dir = path.join(recoveryDir(), id);
     const bytes = await fs.promises.readFile(path.join(dir, "autosave.pdf"));
-    const mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+    // BI-137: manifest thiếu/hỏng không được làm mất bản PDF (xem recovery:scan).
+    let mf = null;
+    try {
+      mf = JSON.parse(await fs.promises.readFile(path.join(dir, "manifest.json"), "utf8"));
+    } catch (_) {}
+    if (!mf || typeof mf !== "object") mf = {};
     return { ok: true, bytes, name: mf.name || "document.pdf", srcPath: mf.srcPath || null };
   } catch (_) {
     return { ok: false };

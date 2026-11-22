@@ -375,6 +375,39 @@ function verify(file) {
     d = await dlg();
     expect(w && w.saved === true && d.length === 0, `file chưa có + overwrite:true ⇒ ghi thẳng, không hỏi: ${JSON.stringify(w)}`);
 
+    // ---- S10 (BI-137/BI-74): ẨN TRANG ⇒ scrubRecoverySnapshot của renderer ⇒ recovery:save{scrub:true} ở main ⇒ đĩa ------
+    console.log("\nS10 scrubRecoverySnapshot (đường ẩn trang): bản rõ cũ + file tạm sót biến mất, manifest giữ srcPath");
+    const slotDir = path.join(userData, "recovery", "probe-scrub");
+    await evalIn(
+      cdp,
+      `(async () => {
+         state.docId = "probe-scrub";
+         const enc = (s) => new TextEncoder().encode(s);
+         await window.desktop.recovery.save({ docId: "probe-scrub", bytes: enc("%PDF-1.7 PLAINTEXT-SECRET-PAGE"), name: "hd.pdf", srcPath: "C:/x/hd.pdf" });
+         return true;
+       })()`,
+    );
+    fs.writeFileSync(path.join(slotDir, "autosave.pdf.cafe00000000.nabu-tmp"), "PLAINTEXT-SECRET-PARTIAL");
+    expect(fs.readFileSync(path.join(slotDir, "autosave.pdf"), "latin1").includes("PLAINTEXT-SECRET"), "tiền điều kiện: autosave.pdf đang chứa bản rõ");
+    await evalIn(
+      cdp,
+      `(async () => {
+         state.bytes = new TextEncoder().encode("%PDF-1.7 SEALED-NEW");
+         state.name = "hd.pdf"; state.path = "C:/x/hd.pdf";
+         await scrubRecoverySnapshot();
+         return true;
+       })()`,
+    );
+    const slotFiles = fs.readdirSync(slotDir);
+    const slotText = slotFiles.map((f) => fs.readFileSync(path.join(slotDir, f), "latin1")).join("|");
+    expect(!slotText.includes("PLAINTEXT-SECRET"), `không còn byte bản rõ nào trong khe phục hồi: ${JSON.stringify(slotFiles)}`);
+    expect(fs.readFileSync(path.join(slotDir, "autosave.pdf"), "latin1") === "%PDF-1.7 SEALED-NEW", "autosave.pdf là bản đã niêm");
+    const mfx = JSON.parse(fs.readFileSync(path.join(slotDir, "manifest.json"), "utf8"));
+    expect(mfx.srcPath === "C:/x/hd.pdf" && mfx.name === "hd.pdf", `manifest giữ đường dẫn gốc (lỗi cũ: gửi path thay srcPath): ${JSON.stringify(mfx)}`);
+    expect(!slotFiles.some((f) => f.endsWith(".nabu-tmp")), "không còn .nabu-tmp trong khe");
+    await evalIn(cdp, `window.desktop.recovery.clear("probe-scrub")`);
+    expect(!fs.existsSync(slotDir), "clear xoá cả khe");
+
     // BI-136: mọi đường ghi PDF ở trên (Ctrl+S nối, Lưu thành, Tạo bản theo mẫu) ghi qua file tạm + đổi tên;
     // sau cả chuỗi kịch bản không được còn file .nabu-tmp nào trong thư mục (thành công hay bị từ chối đều phải dọn).
     const leftovers = fs.readdirSync(work).filter((f) => f.endsWith(".nabu-tmp"));

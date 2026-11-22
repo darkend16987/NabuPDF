@@ -77,7 +77,8 @@ contextBridge.exposeInMainWorld("desktop", {
   // --- crash recovery (AutoRecover-style snapshots) ---
   recovery: {
     // Write/refresh this document's recovery snapshot. payload:
-    // { docId, bytes: Uint8Array, name, srcPath }. Returns { saved }.
+    // { docId, bytes: Uint8Array, name, srcPath, scrub? }. Returns { saved }. `scrub:true` (BI-74/137) deletes the
+    // previous snapshot before writing, for callers that must not leave the old bytes behind (hide pages).
     save: (payload) => ipcRenderer.invoke("recovery:save", payload),
     // Drop a document's snapshot (clean close / successful save).
     clear: (docId) => ipcRenderer.invoke("recovery:clear", docId),
