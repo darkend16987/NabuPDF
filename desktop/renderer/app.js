@@ -6293,8 +6293,19 @@ if (window.desktop.onCombinePrefill) {
 
 // Window close with unsaved changes: main intercepts the close, we decide here.
 // A clean doc closes immediately; a dirty one prompts Save / Don't save / Cancel.
-function finishClose() {
-  if (state.docId && window.desktop.recovery) window.desktop.recovery.clear(state.docId);
+//
+// `await` việc xoá khe phục hồi TRƯỚC khi báo main cho đóng (BI-142). Trước đây lệnh xoá được gửi rồi `forceCloseWindow()` gọi
+// ngay: cửa sổ cuối đóng ⇒ app thoát trước khi `fs.promises.rm` ở main kịp chạy, nên khe phục hồi CÒN trên đĩa (đo 18/18 lần,
+// cả "Không lưu" lẫn "Lưu") và lần mở sau app đề nghị "khôi phục" một tài liệu đã bỏ/đã lưu. Xoá lỗi vẫn không được chặn việc
+// đóng (best-effort như mọi chỗ khác của khôi phục): thà để lại một khe còn hơn kẹt người dùng không đóng được cửa sổ.
+async function finishClose() {
+  if (state.docId && window.desktop.recovery) {
+    try {
+      await window.desktop.recovery.clear(state.docId);
+    } catch (_) {
+      /* best-effort — xem chú thích ở trên */
+    }
+  }
   if (window.desktop.forceCloseWindow) window.desktop.forceCloseWindow();
 }
 if (window.desktop.onCloseRequest) {
@@ -6307,7 +6318,7 @@ if (window.desktop.onCloseRequest) {
   window.desktop.onCloseRequest(async () => {
     if (deciding) return;
     if (!docHasUnsavedChanges()) {
-      finishClose();
+      await finishClose();
       return;
     }
     deciding = true;
@@ -6330,7 +6341,7 @@ if (window.desktop.onCloseRequest) {
         return;
       }
     }
-    finishClose(); // saved (0) or discarded (1)
+    await finishClose(); // saved (0) or discarded (1)
   });
 }
 
