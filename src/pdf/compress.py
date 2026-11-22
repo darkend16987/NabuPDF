@@ -54,7 +54,7 @@ WORKER_FLAG = "--compress-worker"
 #
 # `collections.namedtuple` chứ không phải `typing.NamedTuple`: đo được, `import typing`
 # tốn 0,0156 s và `logging` KHÔNG kéo nó theo, trong khi `collections` thì logging đã
-# nạp sẵn (thêm 0,0000 s) và dựng lớp tốn 0,00007 s. 15 ms trên ~250 ms chi phí của mỗi
+# nạp sẵn (thêm 0,0000 s) và dựng lớp tốn 0,00007 s. 15 ms trên ~300 ms chi phí của mỗi
 # tiến trình con là 6% — đúng loại mỡ mà commit trước đã cất công cắt (BI-121).
 CompressResult = collections.namedtuple("CompressResult", "data images_failed", defaults=(False,))
 

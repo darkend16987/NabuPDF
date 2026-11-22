@@ -894,12 +894,14 @@ _COMPRESS_WORKER_FLAG = _compress_core.WORKER_FLAG
 #
 # Giá phải trả, đo trên tracemonkey.pdf (1 MB), ảnh sidecar.exe ĐÃ ẤM trong cache:
 #
-#     nén tại chỗ (dev)                0,29 s
+#     nén tại chỗ (dev)                0,23 s
 #     worker dev                       0,38 s
-#     worker bản đóng gói              0,55 s   <- đường chạy thật
+#     worker bản đóng gói              0,54 s   <- đường chạy thật
 #     worker bản đóng gói, lần đầu     3,04 s   <- ảnh 75 MB còn lạnh
 #
-# Tức ra tiến trình con tốn thêm ~0,25 s, không phải ~3,4 s. Con số 3,72 s từng ghi
+# (Trung vị 5 lần, đã chạy một lần làm nóng trước. Đo lại trên bản build 0ebf06fc.)
+#
+# Tức ra tiến trình con tốn thêm ~0,3 s, không phải ~3,4 s. Con số 3,72 s từng ghi
 # ở đây là ĐO SAI: nó là lần chạy đầu khi ảnh chưa vào cache hệ điều hành. Trong app
 # thật sidecar.exe vốn đang chạy nên ảnh luôn ấm. Giữ lại cả hai con số ở đây vì
 # chính cái bẫy "đo lần chạy đầu" mới là thứ dễ vấp lại — xem BI-121.

@@ -265,7 +265,7 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   > trình đó, route trả về lỗi sạch. Quét lại sau khi sửa: **`crash` 4 → 0**; bốn file kia
   > chuyển thành `op_fail:compress` (lỗi bắt được). Kèm theo, `main.js` **tự dựng lại** sidecar
   > sau mỗi cái chết (trần 3 lần / 5 phút) nên mọi cái chết khác cũng không còn bắt người dùng
-  > khởi động lại app. Chi phí đo được: ~0,25 s mỗi lần nén ở bản đóng gói khi ảnh exe đã ấm.
+  > khởi động lại app. Chi phí đo được: ~0,3 s mỗi lần nén ở bản đóng gói khi ảnh exe đã ấm.
 - **2 × `timeout`** (> 120 s): `bomb_giant.pdf` (bom giải nén — đúng loại file mà sidecar **không**
   có hạn giờ, nên app sẽ treo chứ không báo lỗi), `bug1978317.pdf`.
 - **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và
