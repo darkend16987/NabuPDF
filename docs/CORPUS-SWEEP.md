@@ -235,7 +235,8 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
 > |---|---|---|---|---|
 > | trước BI-121 | 1.043 | 4 | 6 | 20 |
 > | sau BI-121 | 1.044 | **0** | 8 | 20 |
-> | sau BI-122 | **1.052** | 0 | **0** | **12** |
+> | sau BI-122 | 1.052 | 0 | **0** | 12 |
+> | sau BI-123/124/125 | **1.053** | 0 | 0 | **11** |
 >
 > (BI-121 làm `op_fail:compress` **tăng** từ 6 lên 8: hai file từng giết cả tiến trình giờ chỉ
 > làm hỏng một thao tác. Đó là tiến bộ, không phải hồi quy — và BI-122 dọn nốt cả 8.)
@@ -266,8 +267,21 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   > chuyển thành `op_fail:compress` (lỗi bắt được). Kèm theo, `main.js` **tự dựng lại** sidecar
   > sau mỗi cái chết (trần 3 lần / 5 phút) nên mọi cái chết khác cũng không còn bắt người dùng
   > khởi động lại app. Chi phí đo được: ~0,3 s mỗi lần nén ở bản đóng gói khi ảnh exe đã ấm.
-- **2 × `timeout`** (> 120 s): `bomb_giant.pdf` (bom giải nén — đúng loại file mà sidecar **không**
-  có hạn giờ, nên app sẽ treo chứ không báo lỗi), `bug1978317.pdf`.
+- **2 × `timeout`** (> 120 s): `bomb_giant.pdf` và `bug1978317.pdf` — nhưng **hai file này khác
+  hẳn nhau**, và lưới gộp chúng vào một ô là chỗ dễ đọc nhầm:
+
+  | file | `pagenum` | `split` | `compress` | `encrypt` | thực chất |
+  |---|---|---|---|---|---|
+  | `bomb_giant.pdf` | **treo** | 0,1 s | **treo** | 0,1 s | bom giải nén — không bao giờ xong |
+  | `bug1978317.pdf` | 1,8 s | **treo** | **76–92 s** | 1,7 s | chỉ **chậm thật**, vẫn xong |
+
+  Tức `bug1978317.pdf` **không treo**: nó vượt ngân sách 120 s mà lưới cấp cho **cả bốn** thao
+  tác. Chỉ `bomb_giant.pdf` mới là treo vô hạn.
+
+  > **ĐÃ SỬA MỘT NỬA (BI-123).** `/compress` nay có trần **30 phút** (`COMPRESS_TIMEOUT_S`) —
+  > hết giờ thì giết tiến trình con và báo lỗi, thay vì để lớp phủ quay mãi không có nút Hủy.
+  > `pagenum`/`split` chạy **trong tiến trình** sidecar nên không cắt ngang được như vậy; chúng
+  > vẫn chưa có hạn giờ.
 - **6 × `op_fail:compress`** — `Bad PatternType` (`clippath`, `issue18894`), và
   `pixmap may not have alpha to save as JPEG` (`issue19326`, `issue19517`, `jpx_numcomps`,
   `jpx_smaskindata`). Người dùng bấm Nén và nhận thông báo lỗi trên file mở được bình thường.
@@ -283,10 +297,38 @@ PyMuPDF là thư viện **C**: file méo không làm nó ném exception mà **gi
   > được."* thay vì im lặng trả về một file gần như không nhỏ đi.
 - **5 × `op_fail:pagenum`** — `cannot save with zero pages` (`issue21436`, `poppler-91414-0-53`,
   `poppler-91414-0-54`), `not a dict (null)` (`issue22011`), `index out of bounds` (`xobject-image`).
-- **1 × `op_fail:split`** — `opt_demo.pdf`: `22 is not in list`. Lỗi **Python thuần** trong mã tách
-  file của ta, không phải lỗi PyMuPDF — đáng soi.
+
+  > **VẪN `op_fail`, nhưng không còn là câu của thư viện (BI-125).** Soi từng cái: ba file đầu có
+  > **0 trang** thật (`doc.page_count == 0`), hai file sau hỏng thật và PyMuPDF ném khi **ghi**.
+  > Không cái nào là lỗi mã của ta, nên verdict giữ nguyên — nhưng người dùng từng đọc nguyên văn
+  > `cannot save with zero pages` trong toast. Nay: *"PDF này không có trang nào."* (chốt 400 sớm,
+  > như `/split` vẫn chốt) và *"PDF này hỏng: có tham chiếu trỏ ra ngoài tài liệu. (code=4: index
+  > out of bounds)"* — nguyên văn luôn được giữ trong ngoặc để còn tra cứu được.
+- **1 × `op_fail:split`** — `opt_demo.pdf`: `22 is not in list`.
+
+  > **ĐÍNH CHÍNH.** Dòng này trước đây viết là "lỗi **Python thuần** trong mã tách file của ta".
+  > **Sai.** Dựng lại traceback: nó gãy ở `pymupdf/__init__.py:3586`, trong `_do_widgets`. Nguyên
+  > nhân là `opt_demo.pdf` có một trường form (`veg`) **thiếu hẳn `/Kids`** trong khi hai widget
+  > trỏ `/Parent` về nó — qpdf vẫn chấm file gốc là **sạch**, PyMuPDF thì không chịu.
+  >
+  > **ĐÃ SỬA (BI-124).** `/split` vá lại `/Kids` từ chính dữ liệu trong tài liệu rồi tách lại một
+  > lần: ra **5.663 byte, đủ 9 widget**, qpdf sạch. Chỉ chạy **sau khi** `insert_pdf` đã hỏng, nên
+  > tài liệu lành không chịu thêm phép đọc nào.
 - **3 × `output_warn`** — `issue3188`, `issue5896` (sau đánh số trang), `prefilled_f1040` (sau tách).
+
+  > **KHÔNG PHẢI DO ROUTE NÀO CỦA TA.** Phép đối chứng quyết định: **chỉ mở ra rồi lưu lại, không
+  > làm gì cả** — và nó cho **đúng** những cảnh báo ấy (`unknown token while reading object`,
+  > `expected dictionary key but found non-name object`). Tức đó là **bộ ghi của PyMuPDF** trên
+  > hai file này, không phải `/add-page-numbers`. `prefilled_f1040` thì là `insert_pdf` sao chép
+  > widget sinh ra *"field with two parents"* — cùng vùng mã với BI-124. **Không sửa được trong
+  > mã của ta**; ghi lại để lần sau không ai đi tìm lỗi ở chỗ không có.
 - **1 × `open_fail`** — `poppler-67295-0.pdf`: qpdf đọc được, PyMuPDF không.
+
+  > **Verdict đúng, nhưng đường đi thì sai (BI-125).** `fitz.open` **trả về bình thường**; chỉ
+  > `doc.page_count` mới ném `code=7: Invalid number of pages` — MuPDF mở lười, cây trang chỉ đọc
+  > khi có người hỏi. Vì mỗi route đọc số trang ở một chỗ khác nhau, lỗi ấy từng thoát ra thành
+  > **500 Internal Server Error**. Nay `_open_pdf_stream` đếm trang ngay sau khi mở, một lần cho
+  > mọi route, và trả về 400 với câu đọc được.
 
 ## `crash` là lớp KHÔNG tất định — đọc con số cho đúng
 

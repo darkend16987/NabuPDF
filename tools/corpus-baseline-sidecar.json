@@ -5,15 +5,14 @@
   "files": 1104,
   "commit": "57dead10694ead8fb21b97f7812fc95311a38ea1"
  },
- "generated": "2026-11-22T06:31:31",
+ "generated": "2026-11-22T09:25:55",
  "summary": {
-  "ok": 1052,
+  "ok": 1053,
   "broken_input:pagenum": 26,
   "timeout": 2,
   "encrypted": 12,
   "op_fail:pagenum": 5,
   "output_warn:pagenum": 2,
-  "op_fail:split": 1,
   "open_fail": 1,
   "broken_input": 2,
   "output_warn:split": 1
@@ -25,7 +24,6 @@
   "issue22011.pdf": "op_fail:pagenum",
   "issue3188.pdf": "output_warn:pagenum",
   "issue5896.pdf": "output_warn:pagenum",
-  "opt_demo.pdf": "op_fail:split",
   "poppler-67295-0.pdf": "open_fail",
   "poppler-91414-0-53.pdf": "op_fail:pagenum",
   "poppler-91414-0-54.pdf": "op_fail:pagenum",
