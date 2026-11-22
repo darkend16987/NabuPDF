@@ -374,6 +374,11 @@ function verify(file) {
     w = await writeNew(true);
     d = await dlg();
     expect(w && w.saved === true && d.length === 0, `file chưa có + overwrite:true ⇒ ghi thẳng, không hỏi: ${JSON.stringify(w)}`);
+
+    // BI-136: mọi đường ghi PDF ở trên (Ctrl+S nối, Lưu thành, Tạo bản theo mẫu) ghi qua file tạm + đổi tên;
+    // sau cả chuỗi kịch bản không được còn file .nabu-tmp nào trong thư mục (thành công hay bị từ chối đều phải dọn).
+    const leftovers = fs.readdirSync(work).filter((f) => f.endsWith(".nabu-tmp"));
+    expect(leftovers.length === 0, `không còn file .nabu-tmp sau S1–S9: ${JSON.stringify(leftovers)}`);
   } catch (e) {
     failures.push("probe loi: " + e.message);
   } finally {

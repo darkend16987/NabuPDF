@@ -107,7 +107,8 @@ function check(name, actual, expected) {
     .filter(([, l]) => /writeFile\(/.test(l) && /Buffer\.from\(/.test(l) && !/^\s*\/\//.test(l))
     .map(([n]) => n);
   check("main.js: no writeFile(…, Buffer.from(…)) (use asWritable)", offenders, []);
-  check("main.js: the four byte-writing handlers use asWritable", (main.match(/writeFile\([^;]*asWritable\(/g) || []).length >= 4, true);
+  // BI-136: ba chỗ ghi PDF của tài liệu nay là writeFileAtomic(…) — cùng hợp đồng asWritable, nên đếm cả hai dạng (≥ 6 chỗ).
+  check("main.js: the byte-writing handlers use asWritable", (main.match(/writeFile(?:Atomic)?\([^;]*asWritable\(/g) || []).length >= 6, true);
   check("main.js requires ./ipc-bytes", /require\("\.\/ipc-bytes"\)/.test(main), true);
 
   console.log(`\nipc-bytes: ${pass} pass, ${fail} fail`);

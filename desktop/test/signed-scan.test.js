@@ -224,7 +224,8 @@ function buildSigned(o) {
     // thật của nó được test ở signed-save.test.js. dialog:save-pdf vẫn gọi thẳng guardWrite.
     const gateCall = tag === "file:write-pdf" ? "SignedSave.planSignedWrite(" : "SignedScan.guardWrite(";
     const gateAt = src.indexOf(gateCall);
-    const writeAt = src.indexOf("fs.promises.writeFile(");
+    // BI-136: lệnh ghi nay là AtomicWrite.writeFileAtomic (ghi tạm + fsync + đổi tên); cổng vẫn phải đứng TRƯỚC nó.
+    const writeAt = src.indexOf("AtomicWrite.writeFileAtomic(");
     check(`${tag}: có gọi cổng (${gateCall})`, gateAt >= 0, true);
     check(`${tag}: cổng đứng TRƯỚC lệnh ghi`, gateAt >= 0 && writeAt > gateAt, true);
     check(`${tag}: có nhánh "cancel" không ghi`, /action === "cancel"/.test(src), true);

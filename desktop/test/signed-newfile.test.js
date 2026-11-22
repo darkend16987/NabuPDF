@@ -20,6 +20,7 @@ const os = require("os");
 const path = require("path");
 const SignedScan = require("../src/signed-scan");
 const SignedSave = require("../src/signed-save");
+const AtomicWrite = require("../src/atomic-write");
 const { asWritable } = require("../src/ipc-bytes");
 
 let pass = 0;
@@ -92,9 +93,9 @@ const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeo
     },
   };
   new Function(
-    "ipcMain", "fs", "path", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang",
+    "ipcMain", "fs", "path", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang", "AtomicWrite",
     badRe[0] + "\n" + askSrc + "\n" + handlerSrc
-  )(ipcMain, fs, path, SignedScan, SignedSave, asWritable, () => null, { findDoc: () => null }, dialog, "vi");
+  )(ipcMain, fs, path, SignedScan, SignedSave, asWritable, () => null, { findDoc: () => null }, dialog, "vi", AtomicWrite);
   const write = handlers["file:write-new-pdf"];
   ok("1 đã nạp được handler file:write-new-pdf", typeof write === "function");
 
@@ -179,9 +180,9 @@ const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeo
     fs.writeFileSync(fileAt("s.pdf"), SIGNED);
     const hEn = {};
     new Function(
-      "ipcMain", "fs", "path", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang",
+      "ipcMain", "fs", "path", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang", "AtomicWrite",
       badRe[0] + "\n" + askSrc + "\n" + handlerSrc
-    )({ handle: (n, f) => (hEn[n] = f) }, fs, path, SignedScan, SignedSave, asWritable, () => null, { findDoc: () => null }, dialog, "en");
+    )({ handle: (n, f) => (hEn[n] = f) }, fs, path, SignedScan, SignedSave, asWritable, () => null, { findDoc: () => null }, dialog, "en", AtomicWrite);
     asked.length = 0;
     answers = [2];
     await hEn["file:write-new-pdf"]({ sender: null }, { dir: tmp, name: "s.pdf", data: NEWDATA, overwrite: true });
@@ -230,8 +231,11 @@ const within = (ms, p, fallback) => Promise.race([p, new Promise((r) => setTimeo
   // ---- 3. ghim cấu trúc ----
   {
     const gateAt = handlerSrc.indexOf("SignedScan.guardWrite(");
-    const writeAt = handlerSrc.indexOf("fs.promises.writeFile(");
+    // BI-136: lệnh ghi (đè) là AtomicWrite.writeFileAtomic; chỉ nhánh file MỚI còn writeFile thô với cờ "wx".
+    const writeAt = handlerSrc.indexOf("AtomicWrite.writeFileAtomic(");
     ok("3a handler gọi SignedScan.guardWrite", gateAt >= 0);
+    const rawWrites = handlerSrc.split("fs.promises.writeFile(").length - 1;
+    ok("3a' writeFile thô chỉ còn MỘT chỗ và là cờ wx (nhánh file mới)", rawWrites === 1 && /writeFile\(fp, asWritable\(data\), \{ flag: "wx" \}\)/.test(handlerSrc));
     ok("3b cổng đứng TRƯỚC lệnh ghi", gateAt >= 0 && writeAt > gateAt);
     const branchAt = handlerSrc.indexOf('gate.action === "cancel"');
     ok("3c nhánh bỏ qua nằm giữa cổng và lệnh ghi, trả skipped:true", branchAt > gateAt && branchAt < writeAt && /skipped: true/.test(handlerSrc));

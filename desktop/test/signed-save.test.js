@@ -415,9 +415,9 @@ const KEPT = { signed: true, loss: false, count: 2 };
     },
   };
   new Function(
-    "ipcMain", "fs", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang", "getSidecar",
+    "ipcMain", "fs", "SignedScan", "SignedSave", "asWritable", "senderWindow", "Tabs", "dialog", "menuLang", "getSidecar", "AtomicWrite",
     askSrc + "\n" + handlerSrc.replace(/sidecarState/g, "getSidecar()")
-  )(ipcMain, fs, SignedScan, SS, asWritable, () => null, { findDoc: () => null }, dialog, "vi", () => sidecarState);
+  )(ipcMain, fs, SignedScan, SS, asWritable, () => null, { findDoc: () => null }, dialog, "vi", () => sidecarState, require("../src/atomic-write"));
   const write = handlers["file:write-pdf"];
   ok("3b đã nạp được handler file:write-pdf", typeof write === "function");
   const reset = () => {
@@ -560,7 +560,7 @@ const KEPT = { signed: true, loss: false, count: 2 };
   ok("4a preload: cờ chỉ MỞ khi opts.contentRemoved === false (mặc định đóng)", /contentRemoved:\s*!\(opts && opts\.contentRemoved === false\)/.test(preload));
   ok("4a preload: writePdf nhận tham số thứ ba", /writePdf:\s*\(path, data, opts\)/.test(preload));
   ok("4b main: chỉ nối khi contentRemoved === false VÀ sidecar ready VÀ có cổng", /contentRemoved === false &&\s*sidecarState\.state === "ready" && !!sidecarState\.port/.test(MAIN));
-  ok("4b main: ghi plan.data (không phải data thô)", /writeFile\(fp, asWritable\(plan\.data\)\)/.test(MAIN));
+  ok("4b main: ghi plan.data (không phải data thô)", /writeFileAtomic\(fp, asWritable\(plan\.data\)\)/.test(MAIN));
   ok("4b main: dialog:save-pdf KHÔNG đề nghị nối (không có dữ liệu gốc để so)", !/dialog:save-pdf[\s\S]{0,900}canAppend/.test(MAIN.slice(MAIN.indexOf('ipcMain.handle("dialog:save-pdf"'), MAIN.indexOf('ipcMain.handle("file:write-pdf"'))));
   ok("4c app: saveDoc báo cờ + trang ẩn", /writePdf\(state\.path, state\.bytes, \{\s*contentRemoved: !!\(state\.contentRemoved \|\| state\.vaultPages\.size\),?\s*\}\)/.test(app));
   ok("4c app: cờ khai trong state, mặc định false", /contentRemoved: false,\s*\n\};/.test(app));

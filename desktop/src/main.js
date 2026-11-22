@@ -20,6 +20,7 @@ const { asWritable } = require("./ipc-bytes");
 const SafeFs = require("./safe-fs");
 const SignedScan = require("./signed-scan");
 const SignedSave = require("./signed-save"); // BI-130: lưu nối thêm cho file đã ký
+const AtomicWrite = require("./atomic-write"); // BI-136: ghi tạm + fsync + đổi tên, không bao giờ cắt cụt file đích
 const ShellCombine = require("./shell-combine");
 
 // Each document opens as a TAB inside a TabbedWindow (BaseWindow + one
@@ -1203,7 +1204,8 @@ ipcMain.handle("dialog:save-pdf", async (e, { data, defaultName }) => {
     if (gate.action === "cancel") return { saved: false };
     if (gate.action === "copy") continue; // hiện lại hộp Lưu thành
     rememberDir("save-pdf", res.filePath);
-    await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
+    // BI-136: ghi nguyên tử — mất điện giữa chừng thì file cũ (kể cả chữ ký số) còn nguyên, không phải 0 byte.
+    await AtomicWrite.writeFileAtomic(res.filePath, asWritable(data)); // async: never block main
     return { saved: true, path: res.filePath };
   }
 });
@@ -1242,7 +1244,7 @@ ipcMain.handle("file:write-pdf", async (_e, { path: fp, data, contentRemoved }) 
     });
     if (plan.action === "cancel") return { saved: false, canceled: true };
     if (plan.action === "copy") return { saved: false, signedFile: true };
-    await fs.promises.writeFile(fp, asWritable(plan.data)); // async: never block main
+    await AtomicWrite.writeFileAtomic(fp, asWritable(plan.data)); // BI-136: nguyên tử; async: never block main
     // A read-only pane showing this same file is now looking at the PREVIOUS save.
     // Refreshing here — at the one place bytes actually reach the disk — is what
     // makes "the pane shows the last save" a rule instead of a hope.
@@ -1309,7 +1311,9 @@ ipcMain.handle("file:write-new-pdf", async (e, { dir, name, data, overwrite = fa
     if (gate.action === "cancel" || gate.action === "copy") return { saved: false, skipped: true, path: fp };
   }
   try {
-    await fs.promises.writeFile(fp, asWritable(data), { flag: overwrite ? "w" : "wx" });
+    // BI-136: đè lên file có sẵn thì ghi nguyên tử; file MỚI giữ cờ "wx" (không có gì để mất, và chính cờ này chặn đè nhầm).
+    if (overwrite) await AtomicWrite.writeFileAtomic(fp, asWritable(data));
+    else await fs.promises.writeFile(fp, asWritable(data), { flag: "wx" });
   } catch (err) {
     if (err && err.code === "EEXIST") return { saved: false, exists: true, path: fp };
     return { saved: false, error: String((err && err.message) || err) };
