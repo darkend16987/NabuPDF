@@ -1154,6 +1154,9 @@ async def _compress_anywhere(
 async def compress_cancel(job: str = ""):
     """Dừng một lần nén đang chạy (BI-126) — giết đúng tiến trình con của nó.
 
+    Cũng là route hủy của `/split` (BI-139): hai thao tác dùng chung sổ việc `_compress_jobs` nên
+    một mã `job` hủy được cả hai; tên "compress" là di sản, đổi nó là đổi hợp đồng với renderer.
+
     Luôn trả 200. "Không tìm thấy việc nào" KHÔNG phải lỗi: Hủy có thể tới sau khi
     việc vừa xong, hoặc trước khi route nén kịp ghi sổ. Trường hợp sau để lại một
     **bia mộ** trong sổ, nên lần nén ấy vừa ghi sổ là thấy và bỏ cuộc ngay — nghĩa
@@ -1599,6 +1602,10 @@ class ZipResponse(BaseModel):
     filename: str = ""
     data_b64: str = ""  # the .zip, base64
     count: int = 0
+    # True = người dùng bấm Hủy (BI-139, chỉ /split dùng). Tách khỏi `error` có chủ ý: đây không
+    # phải sự cố, nên UI không bật toast đỏ cho việc chính họ vừa yêu cầu. Mặc định False: các
+    # route khác dùng chung model này không đổi một chữ.
+    cancelled: bool = False
     error: str | None = None
 
 
@@ -1930,6 +1937,10 @@ class SplitRequest(BaseModel):
     mode: str = "every"           # "every" | "ranges"
     size: int = 1                 # pages per chunk when mode="every"
     ranges: str = ""              # range spec when mode="ranges"
+    # Mã việc tách, do phía gọi đặt, để còn gọi /compress-cancel mà dừng (BI-139). Dùng CHUNG sổ việc
+    # và route hủy với nén (BI-126) — tên "compress" là di sản, cơ chế không phụ thuộc thao tác.
+    # Để trống = không hủy được, hợp đồng cũ y nguyên.
+    job: str = ""
 
 
 # Bí danh: lõi tách đã chuyển NGUYÊN VĂN sang `src/pdf/split.py` (BI-138) để tiến trình
@@ -1959,13 +1970,20 @@ def _split_worker_cmd(src: str, dst: str, pairs_path: str) -> list[str]:
     return [sys.executable, os.path.join(here, "sidecar.py"), flag, src, dst, pairs_path]
 
 
-def _split_via_worker_blocking(pdf_bytes: bytes, pairs: list[tuple[int, int]]) -> tuple[bytes, int]:
+def _split_via_worker_blocking(
+    pdf_bytes: bytes, pairs: list[tuple[int, int]], job: "_CompressJob | None" = None
+) -> tuple[bytes, int]:
     """Tách trong tiến trình con. Chạy trên worker THREAD (xem route) — an toàn vì thread này
     không làm việc PyMuPDF nào: nó ghi file, chờ một tiến trình và đọc file, cả ba nhả GIL.
 
-    Trả `(zip_bytes, số_file)`. Ném `SplitTimeout` khi hết giờ, `RuntimeError` (kèm nguyên văn
-    stderr của worker) khi worker thất bại hay chết — sidecar VẪN SỐNG, đó là cả lý do có tiến
-    trình con — và `OSError` khi không khởi động nổi worker (route lùi về tách tại chỗ).
+    Trả `(zip_bytes, số_file)`. Ném `SplitTimeout` khi hết giờ, `CompressCancelled` khi người
+    dùng bấm Hủy (BI-139), `RuntimeError` (kèm nguyên văn stderr của worker) khi worker thất bại
+    hay chết — sidecar VẪN SỐNG, đó là cả lý do có tiến trình con — và `OSError` khi không khởi
+    động nổi worker (route lùi về tách tại chỗ).
+
+    `job` (BI-139) là ô trong sổ việc dùng chung với nén (BI-126): ta gắn tiến trình con vào đó
+    để `/compress-cancel` giết được, và đọc cờ `cancelled` của nó. Cùng BA CUỘC ĐUA với nén —
+    xem khối chú thích ở `_CompressJob`.
     """
     tmp = tempfile.mkdtemp(prefix="nabu-split-")
     src = os.path.join(tmp, "in.pdf")
@@ -1987,6 +2005,14 @@ def _split_via_worker_blocking(pdf_bytes: bytes, pairs: list[tuple[int, int]]) -
             stderr=subprocess.PIPE,
             **kwargs,
         )
+        if job is not None:
+            with _compress_jobs_lock:
+                job.proc = proc
+                da_huy = job.cancelled
+            # Cuộc đua số 1: Hủy tới lúc ta còn đang ghi file tạm nên chưa có gì để giết.
+            # Giờ đã có tiến trình — giết ngay, đừng để nó chạy mồ côi.
+            if da_huy:
+                proc.kill()
         try:
             _, err_bytes = proc.communicate(timeout=_split_core.SPLIT_TIMEOUT_S)
         except subprocess.TimeoutExpired:
@@ -1998,6 +2024,16 @@ def _split_via_worker_blocking(pdf_bytes: bytes, pairs: list[tuple[int, int]]) -
                 f"Tách quá {thoi_gian} nên đã dừng. PDF này nhiều khả năng đã hỏng "
                 "hoặc là file nén bung (decompression bomb)."
             )
+        finally:
+            if job is not None:
+                with _compress_jobs_lock:
+                    job.proc = None
+
+        # Đọc cờ SAU khi tiến trình đã dừng và TRƯỚC mọi phép diễn giải mã thoát: tiến trình bị
+        # giết thoát với mã lạ, mà mã lạ vốn nghĩa là "worker chết ⇒ báo lỗi". Bấm Hủy xong mà
+        # nhận toast đỏ "Tách lỗi: …" thì là lỗi — và cờ thắng cả khi worker kịp tách xong.
+        if job is not None and job.cancelled:
+            raise _compress_core.CompressCancelled("Đã hủy tách.")
 
         err = (err_bytes or b"").decode("utf-8", "replace").strip()
         if proc.returncode != _split_core.EXIT_OK:
@@ -2047,18 +2083,27 @@ async def split_pdf(req: SplitRequest):
     doc.close()
 
     try:
-        try:
-            out_zip, count = await run_in_threadpool(_split_via_worker_blocking, pdf_bytes, pairs)
-        except OSError as e:
-            # Chỉ quay về tách tại chỗ khi KHÔNG khởi động nổi tiến trình con (cùng đánh đổi
-            # với `_compress_anywhere`: mất tính năng chắc chắn tệ hơn một rủi ro hiếm). Worker
-            # CHẾT hay HẾT GIỜ thì KHÔNG đi nhánh này — làm thế là tự đứng hình đúng như cũ.
-            logger.warning("split worker unavailable (%s) — splitting in-process", e)
-            out_zip, count = _split_core.split_to_zip(pdf_bytes, pairs)
+        # Ô sổ việc (BI-139) nằm ngoài cả nhánh tại chỗ: Hủy tới TRƯỚC khi ta kịp vào đây thì
+        # `_compress_job_slot` thấy "bia mộ" và ném `CompressCancelled` ngay — không động tới PDF.
+        with _compress_job_slot(req.job) as job:
+            try:
+                out_zip, count = await run_in_threadpool(_split_via_worker_blocking, pdf_bytes, pairs, job)
+            except OSError as e:
+                # Chỉ quay về tách tại chỗ khi KHÔNG khởi động nổi tiến trình con (cùng đánh đổi
+                # với `_compress_anywhere`: mất tính năng chắc chắn tệ hơn một rủi ro hiếm). Worker
+                # CHẾT hay HẾT GIỜ thì KHÔNG đi nhánh này — làm thế là tự đứng hình đúng như cũ.
+                # KHÔNG hủy được nhánh này (giữ GIL suốt, kể cả /compress-cancel cũng không được
+                # phục vụ trong lúc đó) — hiếm, và vẫn không tệ hơn trước BI-138.
+                logger.warning("split worker unavailable (%s) — splitting in-process", e)
+                out_zip, count = _split_core.split_to_zip(pdf_bytes, pairs)
     except _split_core.SplitTimeout as e:
         # Hết giờ thì KHÔNG thử lại: thử lại chỉ là bắt người dùng chờ thêm một trần nữa.
         logger.warning("Split timeout: %s", e)
         return ZipResponse(success=False, error=str(e))
+    except _compress_core.CompressCancelled:
+        # Hủy KHÔNG phải lỗi (BI-139): `cancelled` để renderer phân biệt, không bật toast đỏ.
+        # Câu cố định ở đây chứ không `str(e)`: bia mộ của sổ việc mang chữ "nén".
+        return ZipResponse(success=False, cancelled=True, error="Đã hủy tách.")
     except Exception as e:
         logger.exception("Split error")
         return ZipResponse(success=False, error=nice_pdf_error(e))

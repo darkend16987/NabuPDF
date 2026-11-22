@@ -4429,7 +4429,34 @@ async function runSplit() {
   }
   $("split-modal").hidden = true;
   if (window.Editor) await window.Editor.bakePending();
-  showOverlay("Đang tách PDF…");
+  // Mã việc tách (BI-139) — cùng khuôn runCompress (BI-126). Sinh ở ĐÂY, trước showOverlay, vì
+  // nút Hủy phải cầm sẵn mã trước khi `fetch` được gọi. Và đi chung sổ việc/route hủy của nén:
+  // cùng một `/compress-cancel`, mã nào cũng giết được tiến trình con của chính nó.
+  fields.job = newJobId();
+  const job = fields.job;
+  let dangHuy = false;
+  showOverlay("Đang tách PDF…", async () => {
+    if (dangHuy) return;
+    dangHuy = true;
+    setOverlayMsg(t("Đang hủy…"));
+    try {
+      // Không abort fetch ở phía này: sidecar mới là bên biết lần tách đã dừng hẳn chưa, và nó
+      // trả lời ngay sau khi giết tiến trình con. Abort chỉ làm renderer thôi nhìn, còn máy thì
+      // vẫn tách tiếp — đúng lời nói dối mà nút Hủy này sinh ra để không mắc.
+      const r = await sidecarFetch("/compress-cancel?job=" + encodeURIComponent(job), {
+        method: "POST",
+      });
+      if (!r.ok) throw new Error(r.statusText || "không rõ");
+    } catch (e) {
+      // Hủy không tới được sidecar ⇒ lần tách VẪN đang chạy. Nói thật và mở lại nút, đừng đóng
+      // lớp phủ giả vờ là xong.
+      dangHuy = false;
+      const btn = $("overlay-cancel");
+      if (btn) btn.disabled = false;
+      setOverlayMsg("Đang tách PDF…");
+      toast(t("Không gửi được lệnh hủy: ") + e.message, "bad");
+    }
+  });
   try {
     const res = await sidecarFetch("/split", {
       method: "POST",
@@ -4438,7 +4465,9 @@ async function runSplit() {
     });
     const data = await res.json();
     if (!data.success) {
-      toast("Tách PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
+      // Hủy KHÔNG phải lỗi (BI-139): toast thường, không đỏ, không "Tách PDF lỗi:".
+      if (data.cancelled === true) toast(t("Đã hủy tách."));
+      else toast("Tách PDF lỗi: " + (data.error || data.detail || "không rõ"), "bad");
       return;
     }
     const bytes = b64ToU8(data.data_b64);

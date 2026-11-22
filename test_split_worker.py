@@ -311,6 +311,157 @@ def test_temp_dirs_are_always_cleaned_up():
 
 
 # --------------------------------------------------------------------------- #
+# BI-139: nút HỦY — dùng chung sổ việc và /compress-cancel với nén (BI-126)
+# --------------------------------------------------------------------------- #
+def _jobs_snapshot() -> set[str]:
+    return set(api._compress_jobs)
+
+
+def test_cancel_mid_run_kills_the_worker_and_reports_cancelled_not_error():
+    """Bấm Hủy giữa lúc worker đang chạy: giết ĐÚNG tiến trình con, route trả `cancelled` (không phải lỗi), KHÔNG
+    chạy lõi tại chỗ, sidecar tiếp tục phục vụ (/compress-cancel được phục vụ NGAY trong lúc route còn chờ)."""
+    before = _jobs_snapshot()
+    with tempfile.TemporaryDirectory() as d:
+        pidfile = Path(d) / "pid.txt"
+        code = f"import os,time;open({str(pidfile)!r},'w').write(str(os.getpid()));time.sleep(25)"
+
+        async def both():
+            with _FakeWorker(code), _NoInProcess() as guard:
+                task = asyncio.create_task(api.split_pdf(_req(_pdf(3), job="job-cancel-1")))
+                for _ in range(100):  # chờ worker thật sự chạy rồi mới hủy
+                    if pidfile.exists() and pidfile.read_text():
+                        break
+                    await asyncio.sleep(0.1)
+                t0 = time.time()
+                huy = await api.compress_cancel(job="job-cancel-1")
+                return await task, huy, time.time() - t0, guard.calls
+
+        r, huy, dt, calls = _run(both())
+        assert huy == {"success": True, "running": True}, huy
+        assert not r.success and r.cancelled is True, (r.success, r.cancelled, r.error)
+        assert r.error == "Đã hủy tách.", r.error
+        assert dt < 10, f"huy mat {dt:.1f}s - tien trinh con khong bi giet"
+        assert calls == 0, "huy xong lai chay tai cho"
+        pid = int(pidfile.read_text())
+        time.sleep(0.3)
+        assert not _pid_alive(pid), f"worker pid {pid} van song sau khi huy (mo coi)"
+    assert _jobs_snapshot() == before, "so viec bi ro o sau khi huy"
+
+
+def test_cancel_arriving_before_the_route_registers_still_wins():
+    """Cuộc đua số 2 của BI-126: Hủy tới TRƯỚC khi route kịp ghi sổ (thân request còn đang truyền) để lại 'bia mộ';
+    route thấy nó và bỏ cuộc NGAY — không sinh worker nào, không động tới PDF."""
+    before = _jobs_snapshot()
+    with tempfile.TemporaryDirectory() as d:
+        pidfile = Path(d) / "pid.txt"
+        code = f"import os;open({str(pidfile)!r},'w').write(str(os.getpid()))"
+        huy = _run(api.compress_cancel(job="job-tombstone"))
+        assert huy["running"] is False, huy
+        with _FakeWorker(code), _NoInProcess() as guard:
+            r = _split(_pdf(3), job="job-tombstone")
+        assert r.cancelled is True and not r.success and r.error == "Đã hủy tách.", r
+        assert not pidfile.exists(), "bia mo van de worker chay"
+        assert guard.calls == 0
+    assert _jobs_snapshot() == before, "bia mo khong duoc don sau khi dung"
+
+
+def test_cancel_set_before_popen_kills_the_worker_that_was_about_to_start():
+    """Cuộc đua số 1: cờ đã bật lúc ta còn đang ghi file tạm. Worker THẬT, và kết quả KHÔNG được trả dù worker kịp
+    chạy — cờ thắng cả mã thoát."""
+    job = api._CompressJob()
+    job.cancelled = True
+    before = _split_dirs()
+    with tempfile.TemporaryDirectory() as d:
+        pidfile = Path(d) / "pid.txt"
+        # Worker giả NGỦ LÂU: nếu cờ không giết nó ngay sau Popen thì phải chờ cả 25 s (rồi mới thấy cờ).
+        code = f"import os,time;open({str(pidfile)!r},'w').write(str(os.getpid()));time.sleep(25)"
+        with _FakeWorker(code):
+            t0 = time.time()
+            try:
+                api._split_via_worker_blocking(_pdf(30), [(0, 14), (15, 29)], job)
+                assert False, "expected CompressCancelled"
+            except api._compress_core.CompressCancelled:
+                pass
+            dt = time.time() - t0
+        assert dt < 10, f"co huy bat tu truoc nhung worker song them {dt:.1f}s - khong bi giet ngay sau Popen"
+        if pidfile.exists() and pidfile.read_text():
+            time.sleep(0.3)
+            assert not _pid_alive(int(pidfile.read_text())), "worker mo coi sau khi huy"
+    assert job.proc is None, "con tro tien trinh khong duoc de lai trong o so viec"
+    assert not (_split_dirs() - before), "thu muc tam ro sau khi huy"
+
+
+def test_cancel_wins_even_if_the_worker_finished_cleanly():
+    """Worker thoát 0 và có file kết quả, nhưng cờ hủy đã bật ⇒ vẫn là HỦY (người dùng bảo dừng; không trả file)."""
+    job = api._CompressJob()
+    with _FakeWorker("import sys;sys.exit(0)"):
+        # Giả lập: hủy tới SAU khi Popen nhưng cờ được đọc khi tiến trình đã dừng.
+        real_popen = api.subprocess.Popen
+
+        def popen(*a, **k):
+            p = real_popen(*a, **k)
+            job.cancelled = True  # bật ngay sau khi sinh tiến trình
+            return p
+
+        api.subprocess.Popen = popen
+        try:
+            api._split_via_worker_blocking(_pdf(2), [(0, 1)], job)
+            assert False, "expected CompressCancelled"
+        except api._compress_core.CompressCancelled:
+            pass
+        finally:
+            api.subprocess.Popen = real_popen
+
+
+def test_cancelling_another_job_does_not_touch_this_one():
+    """Mã khác ⇒ hủy hư không. (Mã lệch một chữ giữa renderer và route cũng chỉ cho kết quả này — im lặng — nên
+    ghim mã đi nguyên vẹn ở test JS.)"""
+    before = _jobs_snapshot()
+
+    async def both():
+        with _FakeWorker("import time;time.sleep(1.5)"):
+            task = asyncio.create_task(api.split_pdf(_req(_pdf(3), job="job-mine")))
+            await asyncio.sleep(0.5)
+            await api.compress_cancel(job="job-someone-else")
+            return await task
+
+    r = _run(both())
+    assert r.cancelled is False, "huy nham viec cua nguoi khac"
+    assert not r.success and "không tạo ra file kết quả" in r.error, r.error  # worker gia khong tao file: loi that
+    # Dọn "bia mộ" của mã kia: nó nằm trong sổ cho tới khi có người dùng hoặc sổ đầy — không phải rò rỉ của route này.
+    api._compress_jobs.pop("job-someone-else", None)
+    assert _jobs_snapshot() == before
+
+
+def test_split_without_a_job_id_is_unchanged_and_not_cancellable_by_empty_id():
+    """Hợp đồng cũ: không có `job` thì không vào sổ, và một lệnh hủy với mã rỗng bị từ chối (400) chứ không hủy nhầm."""
+    r = _split(_pdf(4), mode="every", size=2)
+    assert r.success and r.cancelled is False and r.count == 2, (r.success, r.cancelled, r.count)
+    try:
+        _run(api.compress_cancel(job=""))
+        assert False, "expected HTTPException"
+    except api.HTTPException as e:
+        assert e.status_code == 400, e.status_code
+
+
+def test_cancel_contract_pins():
+    """Ghim nguồn: hai nửa của hợp đồng (trường `job` ở request, `cancelled` ở response) và thứ tự bắt ngoại lệ."""
+    import re
+
+    assert api.SplitRequest(pdf_b64="").job == "", "SplitRequest.job phai mac dinh rong (hop dong cu)"
+    assert api.ZipResponse(success=True).cancelled is False, "cac route dung chung ZipResponse khong duoc doi"
+    src = Path(api.__file__).read_text(encoding="utf8")
+    i = src.index('@app.post("/split"')
+    khoi = src[i : src.index("# ---- P6: native text editing", i)]
+    assert "_compress_job_slot(req.job)" in khoi, "route /split khong ghi so viec"
+    assert "_split_via_worker_blocking, pdf_bytes, pairs, job" in khoi, "job khong toi duoc worker"
+    # Hủy phải được bắt TRƯỚC `except Exception` (nếu không nó thành toast đỏ "Tách lỗi").
+    m = re.search(r"except\s+Exception\b", khoi)
+    assert khoi.index("except _compress_core.CompressCancelled") < m.start()
+    assert "cancelled=True" in khoi
+
+
+# --------------------------------------------------------------------------- #
 # các câu 400 vẫn do CHA quyết (worker không bao giờ thấy yêu cầu sai)
 # --------------------------------------------------------------------------- #
 def test_bad_requests_are_still_400_and_never_reach_a_worker():

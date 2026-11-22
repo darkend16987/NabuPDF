@@ -560,6 +560,7 @@
     // Nút Hủy của lớp phủ + hai câu quanh nó (BI-126).
     "Đang hủy…": "Cancelling…",
     "Đã hủy nén.": "Compression cancelled.",
+    "Đã hủy tách.": "Split cancelled.",
     "Không gửi được lệnh hủy: ": "Could not send the cancel command: ",
 
     // --- translate dialog ---

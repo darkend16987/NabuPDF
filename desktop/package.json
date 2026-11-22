@@ -61,6 +61,7 @@
     "test:streamlen": "node test/pdflib-stream-length.test.js",
     "test:imgfail": "node test/compress-images-failed.test.js",
     "test:cancel": "node test/compress-cancel.test.js",
+    "test:splitcancel": "node test/split-cancel.test.js",
     "test:signedscan": "node test/signed-scan.test.js",
     "test:signedsave": "node test/signed-save.test.js",
     "test:signednew": "node test/signed-newfile.test.js",
