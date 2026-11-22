@@ -43,6 +43,10 @@ const fieldNames = (f) => {
   const code = "import fitz,sys,json\nd=fitz.open(sys.argv[1])\nprint(json.dumps(sorted(w.field_name for p in d for w in (p.widgets() or []) if w.field_type_string=='Signature')))";
   return JSON.parse(spawnSync(PY, ["-c", code, f], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } }).stdout.trim());
 };
+const lastSigText = (f) => {
+  const code = "import fitz,sys,json\nd=fitz.open(sys.argv[1])\nout=None\nfor x in range(1,d.xref_length()):\n  try:\n    o=d.xref_object(x,compressed=False)\n  except Exception:\n    continue\n  if '/Type/Sig' in o.replace(' ','') and '/ByteRange' in o:\n    out={k:d.xref_get_key(x,k)[1] for k in ['Reason','Name','Location']}\nprint(json.dumps(out,ensure_ascii=False))";
+  return JSON.parse(spawnSync(PY, ["-c", code, f], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } }).stdout.trim() || "null");
+};
 const get = (port, p) => new Promise((res) => http.get({ host: "127.0.0.1", port, path: p, timeout: 2000 }, (r) => { r.resume(); res(r.statusCode); }).on("error", () => res(0)).on("timeout", function () { this.destroy(); res(0); }));
 
 (async () => {
@@ -69,7 +73,8 @@ const get = (port, p) => new Promise((res) => http.get({ host: "127.0.0.1", port
         {
           bytes: new Uint8Array(cur),
           thumbprint: "T",
-          meta: { name: "Signer " + k, reason: "ky lan " + k, location: "VN" },
+          // Tiếng Việt CÓ DẤU có chủ đích (BI-134): trước đây PDFString.of cắt Unicode về 1 byte.
+          meta: { name: "Người ký " + k, reason: "Đồng ý — lần " + k, location: "Hà Nội" },
           sidecar: { port, token: undefined },
           ...(visible ? { appearance: { pageIndex: 1, rect: [60, 500, 260, 560], imagePng: PNG } } : {}),
         },
@@ -88,13 +93,15 @@ const get = (port, p) => new Promise((res) => http.get({ host: "127.0.0.1", port
       if (!out.subarray(0, cur.length).equals(cur)) checks.push("không bắt đầu bằng byte lần trước");
       if (q.status !== 0) checks.push("qpdf mã " + q.status);
       if (new Set(names).size !== names.length || names.length !== k) checks.push("trường: " + names.join(","));
+      const st = lastSigText(f);
+      if (!st || st.Reason !== "Đồng ý — lần " + k || st.Name !== "Người ký " + k || st.Location !== "Hà Nội") checks.push("chữ tiếng Việt trong chữ ký sai: " + JSON.stringify(st));
       row(`người ký ${k}${visible ? " (nhìn thấy)" : ""}`, checks.length === 0, checks.length ? checks.join("; ") : `${k} chữ ký hợp lệ · +${out.length - cur.length} B · ${dt} s · trường ${names.join(",")}`);
       cur = out;
     }
     // Chỉ lưu file KẾT QUẢ (không ghi đè file nền: người dùng có thể đang mở nó trong Foxit/Acrobat ⇒ EBUSY).
     if (KEEP) {
       fs.mkdirSync(KEEP, { recursive: true });
-      fs.copyFileSync(path.join(W, `s${N + 1}.pdf`), path.join(KEEP, `9-KY-NOI-THEM-${N + 1}-nguoi-ky.pdf`));
+      fs.copyFileSync(path.join(W, `s${N + 1}.pdf`), path.join(KEEP, `10-KY-NOI-THEM-tieng-Viet-${N + 1}-nguoi-ky.pdf`));
     }
   } finally {
     try { execSync(`taskkill /PID ${sc.pid} /T /F`, { stdio: "ignore" }); } catch (_) {}

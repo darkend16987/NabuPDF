@@ -359,7 +359,7 @@ function buildSigned(o) {
     const o = boxes[boxes.length - 1];
     check("3b ba nút: Ký nối thêm, Vẫn ký, Huỷ — theo thứ tự", o.buttons, ["Ký nối thêm (giữ chữ ký trước)", "Vẫn ký (mất chữ ký trước)", "Huỷ"]);
     check("3b ba nút: mặc định = nút đầu (không phá chữ ký), Esc = Huỷ (cuối)", [o.defaultId, o.cancelId], [0, 2]);
-    ok("3b ba nút: lời giải thích nói thật (trình đọc vẫn có thể ghi chú 'có thay đổi sau khi ký')", /có thay đổi sau khi ký/.test(o.detail));
+    ok("3b ba nút: lời giải thích nói thật (đã kiểm với Foxit: chữ ký trước 'chưa bị thay đổi kể từ khi ký')", /chưa bị thay đổi kể từ khi ký/.test(o.detail) && /Foxit/.test(o.detail));
   }
   for (const [resp, expect] of [[0, "append"], [1, "sign"], [2, "cancel"], [3, "cancel"], [-1, "cancel"], [undefined, "cancel"], [null, "cancel"]]) {
     check("3c (3 nút) bấm " + resp + " ⇒ " + expect, await makeAsk("vi", () => resp)(null, 1, { canAppend: true }), expect);

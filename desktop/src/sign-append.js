@@ -26,6 +26,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const SignedScan = require("./signed-scan");
+const SigText = require("./sig-text"); // BI-134
 
 const PH = "/**********"; // 11 byte: thư viện @signpdf giữ chỗ ba số của /ByteRange bằng ba TÊN này
 const PH_LEN = PH.length;
@@ -137,6 +138,7 @@ function spliceSignature(buf, loc, der) {
  */
 function makePrepare(libs, hooks = {}) {
   const { PDFDocument, PDFName, PDFArray, PDFDict, PDFString, PDFInvalidObject, pdflibAddPlaceholder, subFilter } = libs;
+  // libs cũng phải có PDFHexString (BI-134: chữ có dấu trong từ điển chữ ký)
   return async function prepare(bytes, meta = {}) {
     const doc = await PDFDocument.load(bytes);
     // Tên trường đã dùng (chữ ký trước + form) để chọn tên duy nhất.
@@ -160,10 +162,11 @@ function makePrepare(libs, hooks = {}) {
     pdflibAddPlaceholder({
       pdfDoc: doc,
       pdfPage: pages[pageIndex],
-      reason: meta.reason || "",
-      contactInfo: meta.contactInfo || "",
-      name: meta.name || "",
-      location: meta.location || "",
+      // BI-134: gọi thư viện với chuỗi RỖNG, điền giá trị đúng sau đó (PDFString.of của thư viện cắt Unicode về 1 byte).
+      reason: "",
+      contactInfo: "",
+      name: "",
+      location: "",
       signatureLength: meta.signatureLength || 16384,
       subFilter,
       widgetRect: meta.widgetRect || [0, 0, 0, 0],
@@ -178,7 +181,8 @@ function makePrepare(libs, hooks = {}) {
     widget.set(PDFName.of("T"), PDFString.of("Signature" + n));
     // ô /Contents: NUL → '0' (thư viện registers PDFInvalidObject với các byte NUL; lõi PyMuPDF sẽ đọc thành chuỗi rỗng)
     const sigRef = widget.get(PDFName.of("V"));
-    const inv = doc.context.lookup(sigRef);
+    SigText.fixSignatureStrings(doc.context, sigRef, { reason: meta.reason, contactInfo: meta.contactInfo, name: meta.name, location: meta.location }, libs);
+    const inv = doc.context.lookup(sigRef); // đọc SAU khi điền chữ: object đã được thay
     const fixed = Uint8Array.from(inv.data, (b) => (b === 0 ? 0x30 : b));
     doc.context.assign(sigRef, PDFInvalidObject.of(fixed));
     if (hooks.afterWidget) await hooks.afterWidget(doc, widget, widgetRef);

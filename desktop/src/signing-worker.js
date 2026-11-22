@@ -23,7 +23,8 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream, PDFString, PDFInvalidObject } = require("pdf-lib");
+const { PDFDocument, PDFName, PDFDict, PDFArray, PDFRawStream, PDFString, PDFHexString, PDFInvalidObject } = require("pdf-lib");
+const SigText = require("./sig-text"); // BI-134
 const SignAppend = require("./sign-append"); // BI-133
 const { appendViaSidecar } = require("./signed-save"); // BI-133: gọi route /save-incremental-bin
 // Cùng bản vá mà renderer nạp qua <script>: pdf-lib cắt cụt stream có `/Length` gián tiếp, và ở
@@ -131,7 +132,7 @@ class HelperSigner extends Signer {
   }
 }
 
-async function applySignature(payload) {
+async function applySignature(payload, deps = {}) {
   const { bytes, thumbprint, tsaUrl, meta = {}, appearance } = payload;
   if (!bytes || !thumbprint) return { ok: false, reason: "other", error: "Thiếu dữ liệu ký." };
 
@@ -169,15 +170,28 @@ async function applySignature(payload) {
   pdflibAddPlaceholder({
     pdfDoc,
     pdfPage: targetPage,
-    reason: meta.reason || "",
-    contactInfo: meta.contactInfo || "",
-    name: meta.name || "",
-    location: meta.location || "",
+    // BI-134: chuỗi RỖNG ở đây, giá trị đúng được điền ngay bên dưới (PDFString.of của thư viện cắt ký tự Unicode về 1 byte nên
+    // "Đồng ý" thành byte rác). Ảnh hưởng cả đường ký nối thêm — xem sig-text.js.
+    reason: "",
+    contactInfo: "",
+    name: "",
+    location: "",
     signatureLength: SIGNATURE_LENGTH,
     subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED,
     widgetRect,
     appName: "Nabu PDF",
   });
+  {
+    const sigWidget = lastSigWidget(pdfDoc);
+    if (sigWidget) {
+      SigText.fixSignatureStrings(
+        pdfDoc.context,
+        sigWidget.get(PDFName.of("V")),
+        { reason: meta.reason, contactInfo: meta.contactInfo, name: meta.name, location: meta.location },
+        { PDFHexString, PDFInvalidObject }
+      );
+    }
+  }
 
   // Swap @signpdf's empty appearance for our rendered one.
   if (apRef) {
@@ -189,7 +203,7 @@ async function applySignature(payload) {
   const withPlaceholder = await pdfDoc.save({ useObjectStreams: false });
 
   try {
-    const signer = new HelperSigner(thumbprint, tsaUrl);
+    const signer = deps.signer || new HelperSigner(thumbprint, tsaUrl); // deps chỉ để test thay token bằng OpenSSL
     const signed = await signpdf.sign(Buffer.from(withPlaceholder), signer);
     return { ok: true, bytes: signed };
   } catch (e) {
@@ -224,7 +238,7 @@ async function applyAppendSignature(payload, deps = {}) {
     };
   }
   const prepare = SignAppend.makePrepare(
-    { PDFDocument, PDFName, PDFArray, PDFDict, PDFString, PDFInvalidObject, pdflibAddPlaceholder, subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED },
+    { PDFDocument, PDFName, PDFArray, PDFDict, PDFString, PDFHexString, PDFInvalidObject, pdflibAddPlaceholder, subFilter: SUBFILTER_ADOBE_PKCS7_DETACHED },
     hooks
   );
   const append =

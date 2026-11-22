@@ -369,9 +369,9 @@ const KEPT = { signed: true, loss: false, count: 2 };
     const ask = makeAsk({ respond: () => 0 });
     check("3a có nút nối: nút 0 = append", await ask(null, "D:/a.pdf", 1, "Bản sao", "Copy", { canAppend: true }), "append");
     const o = boxes[boxes.length - 1];
-    check("3a có nút nối: 4 nút, đúng thứ tự", o.buttons, ["Lưu nối thêm (giữ chữ ký)", "Bản sao", "Vẫn ghi đè", "Huỷ"]);
+    check("3a có nút nối: 4 nút, đúng thứ tự", o.buttons, ["Lưu nối thêm (giữ nguyên bản đã ký)", "Bản sao", "Vẫn ghi đè", "Huỷ"]);
     check("3a … nút mặc định là 0 (nút không phá chữ ký), nút Esc là Huỷ", [o.defaultId, o.cancelId], [0, 3]);
-    ok("3a … lời giải thích nói thật: trình đọc vẫn có thể báo đã sửa; nội dung đã xoá còn trong lịch sử", /báo file đã sửa/.test(o.detail) && /vẫn còn trong lịch sử/.test(o.detail));
+    ok("3a … lời giải thích nói thật: bản đã ký xem lại được; sửa trang có thể bị báo KHÔNG HỢP LỆ (quan sát ở Foxit); nội dung đã xoá còn trong lịch sử", /xem lại được/.test(o.detail) && /KHÔNG HỢP LỆ/.test(o.detail) && /vẫn còn trong lịch sử/.test(o.detail));
   }
   for (const [resp, expect] of [[0, "append"], [1, "copy"], [2, "overwrite"], [3, "cancel"], [4, "cancel"], [-1, "cancel"], [undefined, "cancel"]]) {
     const ask = makeAsk({ respond: () => resp });
@@ -393,7 +393,7 @@ const KEPT = { signed: true, loss: false, count: 2 };
     const askEn = makeAsk({ lang: "en", respond: () => 0 });
     await askEn(null, "D:/a.pdf", 2, "Bản sao", "Copy", { canAppend: true });
     const o3 = boxes[boxes.length - 1];
-    check("3a bản tiếng Anh", [o3.buttons[0], o3.buttons[1], o3.buttons[3]], ["Save as appended revision (keep signature)", "Copy", "Cancel"]);
+    check("3a bản tiếng Anh", [o3.buttons[0], o3.buttons[1], o3.buttons[3]], ["Save as appended revision (keep the signed version)", "Copy", "Cancel"]);
   }
   {
     const ask = makeAsk({ respond: () => new Error("dialog hỏng") });

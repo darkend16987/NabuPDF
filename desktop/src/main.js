@@ -1104,7 +1104,7 @@ async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn, extr
   const canAppend = !!extra.canAppend;
   const keys = canAppend ? ["append", "copy", "overwrite", "cancel"] : ["copy", "overwrite", "cancel"];
   const label = {
-    append: en ? "Save as appended revision (keep signature)" : "Lưu nối thêm (giữ chữ ký)",
+    append: en ? "Save as appended revision (keep the signed version)" : "Lưu nối thêm (giữ nguyên bản đã ký)",
     copy: en ? copyLabelEn : copyLabelVi,
     overwrite: en ? "Overwrite anyway" : "Vẫn ghi đè",
     cancel: en ? "Cancel" : "Huỷ",
@@ -1116,8 +1116,8 @@ async function askSignedOverwrite(win, fp, count, copyLabelVi, copyLabelEn, extr
     : "";
   const appendNote = canAppend
     ? en
-      ? "Appended revision: every old byte is kept and only your changes are added at the end, so the signed area is untouched. A PDF reader may still say the file was modified after signing, and anything you deleted (pages, redactions) stays in the file's history.\n\n"
-      : "Lưu nối thêm: giữ nguyên mọi byte cũ, chỉ thêm thay đổi của bạn vào cuối file nên vùng ký không bị đụng tới. Trình đọc PDF vẫn có thể báo file đã sửa sau khi ký, và nội dung bạn đã xoá (trang, vùng bôi đen) vẫn còn trong lịch sử file.\n\n"
+      ? "Appended revision: every old byte is kept and only your changes are added at the end, so the signed version stays intact and can still be viewed (Foxit: \"Click to view this version\"). But if you changed the pages (rotate, add text, delete pages…), a PDF reader may mark the signature as INVALID because the document changed after signing (observed in Foxit). Anything you deleted (pages, redactions) stays in the file's history.\n\n"
+      : "Lưu nối thêm: giữ nguyên mọi byte cũ, chỉ thêm thay đổi của bạn vào cuối file — bản đã ký vẫn còn nguyên và xem lại được (Foxit: \"Click to view this version\"). Nhưng nếu bạn đã sửa trang (xoay, thêm chữ, xoá trang…), trình đọc PDF có thể báo chữ ký là KHÔNG HỢP LỆ vì tài liệu đã thay đổi sau khi ký (đã quan sát ở Foxit). Nội dung bạn đã xoá (trang, vùng bôi đen) vẫn còn trong lịch sử file.\n\n"
     : "";
   try {
     const res = await dialog.showMessageBox(win, {
@@ -1162,8 +1162,8 @@ async function askSignOverSigned(win, count, extra = {}) {
     : "";
   const appendNote = canAppend
     ? en
-      ? "Add signature: your signature is appended at the end of the file and the earlier signatures stay valid. A PDF reader will show them as \"changed after signing — signatures added\", which is normal for a document signed by several people.\n\n"
-      : "Ký nối thêm: chữ ký của bạn được nối vào cuối file và các chữ ký trước vẫn còn hiệu lực. Trình đọc PDF sẽ ghi chú chúng là \"có thay đổi sau khi ký (thêm chữ ký)\" — bình thường với tài liệu nhiều người ký.\n\n"
+      ? "Add signature: your signature is appended at the end of the file and the earlier signatures stay intact (checked in Foxit Reader, which reports them as not modified since they were applied).\n\n"
+      : "Ký nối thêm: chữ ký của bạn được nối vào cuối file và các chữ ký trước vẫn nguyên vẹn (đã kiểm với Foxit Reader: báo chúng \"chưa bị thay đổi kể từ khi ký\").\n\n"
     : "";
   try {
     const res = await dialog.showMessageBox(win, {

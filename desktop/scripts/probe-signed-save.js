@@ -205,7 +205,7 @@ function verify(file) {
     expect(d.length === 1, `hộp hiện đúng 1 lần (${d.length})`);
     expect(d[0] && d[0].buttons.length === 4, `hộp có 4 nút: ${JSON.stringify(d[0] && d[0].buttons)}`);
     expect(d[0] && /Lưu nối thêm/.test(d[0].buttons[0]) && d[0].defaultId === 0 && d[0].cancelId === 3, "nút đầu là 'Lưu nối thêm', mặc định = 0, Esc = Huỷ (3)");
-    expect(d[0] && /báo file đã sửa/.test(d[0].detail || ""), "lời giải thích nói thật về cái giá");
+    expect(d[0] && /KHÔNG HỢP LỆ/.test(d[0].detail || "") && /xem lại được/.test(d[0].detail || ""), "lời giải thích nói thật về cái giá (sửa trang ⇒ Foxit báo không hợp lệ)");
     expect(disk1.length > ORIGINAL.length && disk1.length - ORIGINAL.length < 4096, `đĩa chỉ PHÌNH THÊM ${disk1.length - ORIGINAL.length} B`);
     expect(disk1.subarray(0, ORIGINAL.length).equals(ORIGINAL), "đĩa bắt đầu bằng ĐÚNG từng byte của file ký gốc");
     expect(v1.code === 0, `OpenSSL: chữ ký còn HỢP LỆ trên file vừa lưu (${v1.out})`);
@@ -299,7 +299,7 @@ function verify(file) {
     expect(d.length === 1 && d[0].buttons.length === 3, `hộp 3 nút (sidecar sẵn sàng ⇒ có nút nối): ${JSON.stringify(d[0] && d[0].buttons)}`);
     expect(d[0] && /^Ký nối thêm/.test(d[0].buttons[0]) && /^Vẫn ký/.test(d[0].buttons[1]) && /^Huỷ$/.test(d[0].buttons[2]), "thứ tự: Ký nối thêm, Vẫn ký, Huỷ");
     expect(d[0] && d[0].defaultId === 0 && d[0].cancelId === 2, "mặc định = Ký nối thêm (không phá chữ ký), Esc = Huỷ (cuối)");
-    expect(d[0] && /1 chữ ký/.test(d[0].message) && /có thay đổi sau khi ký/.test(d[0].detail), "nêu số chữ ký + nói thật về cách trình đọc hiển thị");
+    expect(d[0] && /1 chữ ký/.test(d[0].message) && /chưa bị thay đổi kể từ khi ký/.test(d[0].detail), "nêu số chữ ký + nói thật về cách trình đọc hiển thị");
     expect(sres.ok === false && sres.reason === "declined", `Huỷ ⇒ {ok:false, reason:'declined'}: ${JSON.stringify(sres)}`);
 
     console.log("\nS7b  cùng tài liệu, chọn 'Vẫn ký' ⇒ lọt qua cổng (worker tự từ chối vì thumbprint giả)");

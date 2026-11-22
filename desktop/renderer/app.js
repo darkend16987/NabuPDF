@@ -2885,7 +2885,7 @@ async function saveDoc() {
     });
     if (res.saved) {
       markClean();
-      toast(res.incremental ? "Đã lưu nối thêm (giữ vùng ký): " + res.path : "Đã lưu: " + res.path, "good");
+      toast(res.incremental ? "Đã lưu nối thêm (giữ nguyên bản đã ký): " + res.path : "Đã lưu: " + res.path, "good");
       return;
     }
     // BI-127: người dùng bấm Huỷ ở hộp "file này đã ký số" — dừng hẳn, đừng mở tiếp hộp Lưu
