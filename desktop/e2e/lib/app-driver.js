@@ -379,24 +379,62 @@ class AppDriver {
     } catch (_) {}
   }
 
-  async close() {
+  // Đóng hẳn (giết cây tiến trình) và dọn thư mục tạm. `keepUserData: true` GIỮ thư mục dữ liệu người dùng — để khởi chạy
+  // lại app trên cùng dữ liệu (khôi phục sau sập, khôi phục phiên) bằng `launch({ userDataDir })`; khi đó người gọi tự xoá nó.
+  async close({ keepUserData = false } = {}) {
     for (const p of this._pages.values()) p.close();
     this._pages.clear();
     this._killSync();
     live.delete(this);
     await sleep(1200); // cho Windows nhả tay nắm file trước khi xoá thư mục
-    for (const d of [this.userDataDir, this.hooksDir]) {
+    const dirs = keepUserData || this._userDataGiven ? [this.hooksDir] : [this.userDataDir, this.hooksDir];
+    for (const d of dirs) {
       try {
         fs.rmSync(d, { recursive: true, force: true });
       } catch (_) {}
     }
   }
+
+  // Mô phỏng SẬP: giết cứng cả cây tiến trình, KHÔNG để app kịp dọn gì (autosave, khe phục hồi, phiên). Giữ thư mục dữ liệu.
+  async crash() {
+    for (const p of this._pages.values()) p.close();
+    this._pages.clear();
+    this._killSync();
+    await this.waitExit(15000);
+  }
+
+  // Đường NÚT X của cửa sổ: `taskkill /PID` KHÔNG kèm /F gửi WM_CLOSE tới cửa sổ của tiến trình — đúng thứ Windows gửi khi bấm ✕
+  // hay Alt+F4 — nên chạy `TabbedWindow._onClose` → guard đóng. KHÔNG đi qua menu Thoát/Ctrl+Q (đó là `role:"quit"` của menu
+  // native, CDP không bấm được; xem BI-141). Trả về ngay; dùng `waitExit` để biết app có thoát không.
+  requestClose() {
+    try {
+      execFileSync("taskkill", ["/PID", String(this.child.pid)], { stdio: "ignore" });
+      return true;
+    } catch (_) {
+      return false; // tiến trình đã thoát
+    }
+  }
+
+  // Đợi tiến trình Electron chính thoát. Trả `true` nếu đã thoát, `false` nếu hết giờ mà còn sống.
+  async waitExit(timeout = 15000) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeout) {
+      if (this._hasExited) return true;
+      await sleep(100);
+    }
+    return !!this._hasExited;
+  }
+
+  alive() {
+    return !this._hasExited;
+  }
 }
 
 // Dựng app. `env`: biến môi trường thêm; `args`: đối số thêm cho Electron; `hooks: false` để KHÔNG bật móc hộp thoại.
-async function launch({ env = {}, args = [], hooks = true } = {}) {
+// `userDataDir`: dùng lại một thư mục dữ liệu có sẵn (khởi chạy lại sau sập); khi đó `close()` KHÔNG xoá nó.
+async function launch({ env = {}, args = [], hooks = true, userDataDir: given = null } = {}) {
   const port = await freePort();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "nabu-e2e-ud-"));
+  const userDataDir = given || fs.mkdtempSync(path.join(os.tmpdir(), "nabu-e2e-ud-"));
   const hooksDir = fs.mkdtempSync(path.join(os.tmpdir(), "nabu-e2e-hk-"));
   const dialogs = new Dialogs(hooksDir);
 
@@ -419,11 +457,12 @@ async function launch({ env = {}, args = [], hooks = true } = {}) {
     ],
     { cwd: DESKTOP, env: childEnv, stdio: ["ignore", "pipe", "pipe"] },
   );
-  const app = new AppDriver({ port, userDataDir, hooksDir, child, dialogs, _log: "", _dead: false });
+  const app = new AppDriver({ port, userDataDir, hooksDir, child, dialogs, _log: "", _dead: false, _userDataGiven: !!given, _hasExited: false });
   child.stdout.on("data", (d) => (app._log += d));
   child.stderr.on("data", (d) => (app._log += d));
   child.on("exit", (code) => {
     app._exited = code;
+    app._hasExited = true;
   });
   live.add(app);
   return app;
