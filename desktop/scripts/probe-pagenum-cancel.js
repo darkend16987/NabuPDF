@@ -139,10 +139,10 @@ async function waitTarget(port, pick, giay) {
   }
 
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "nabu-pncancel-"));
-  // BẪY ĐÃ VẤP (BI-140): cửa sổ của probe bị hệ điều hành coi là BỊ CHE (`visibilityState === "hidden"`), và khi đó
-  // pdf.js ngừng vẽ (rAF dừng) ⇒ `loadBytes` không bao giờ xong, lớp phủ kẹt ở "Đang tải tài liệu…", probe treo vô hạn
-  // mà không báo lỗi gì (xem memory cad-render-perf-facts). Ba cờ dưới + `Page.bringToFront` ở bên dưới chặn điều đó;
-  // `visibilityState` còn được in ra để lần sau nhìn thấy ngay thay vì đoán.
+  // LƯU Ý (BI-140, đã đính chính): `loadBytes(bomb_giant.pdf)` mất ~147 s trong viewer (đo được, ngay cả khi cửa sổ `visible`)
+  // và probe này `await` nó không hạn giờ, nên mỗi lần chạy lặng lẽ mất ~2,5 phút ở bước mở — con số "Hủy 0,5 s" tính TỪ
+  // LÚC BẤM. Lần chạy đầu từng kẹt hơn 5 phút với cửa sổ `hidden`; ba cờ dưới + `Page.bringToFront` chống rủi ro ẩn, nhưng
+  // đừng coi chúng là nguyên nhân đã được chứng minh. Bản nhanh hơn: `npm run e2e -- cancel` (bỏ qua bước vẽ file bom).
   const child = spawn(electronBin(), [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`,
     "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding", "--disable-background-timer-throttling"], {
     cwd: DESKTOP,
