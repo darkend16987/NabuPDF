@@ -7,6 +7,7 @@
 // trong mọi luồng Flate đã giải nén, độc lập với app. Mã hoá AES thì chuỗi không còn ở cả hai nơi.
 //
 //   W0  tiền điều kiện CÓ NGHĨA: trước khi ẩn, bản rõ ĐANG nằm trong bytes, trong lịch sử hoàn tác và trong khe phục hồi
+//   (BI-143: bản rõ của trang gốc từng còn trong file như đối tượng mồ côi — đã sửa; các phép kiểm "không còn chuỗi dò" dưới đây là khẳng định cứng)
 //   W1  hộp thoại đặt mật khẩu: để trống / không khớp bị chặn; ẩn xong: bytes KHÔNG còn chuỗi dò, lịch sử hoàn tác BỊ XOÁ,
 //       khe phục hồi BỊ GHI ĐÈ (không file nào trong khe còn chuỗi dò), Ctrl+Z không lộ lại trang
 //   W2  Lưu ⇒ file trên đĩa không có chuỗi dò (BI-130); mở lại file đó ⇒ vẫn nhận ra 1 trang ẩn
@@ -34,15 +35,6 @@ const failures = [];
 const expect = (cond, msg) => {
   console.log(`  ${cond ? "ok  " : "SAI "} ${msg}`);
   if (!cond) failures.push(msg);
-};
-// LỖI ĐÃ BIẾT (BI-143), CHƯA SỬA, đo được: sau khi ẩn trang, luồng nội dung GỐC của trang vẫn nằm trong file như một đối tượng mồ côi
-// (pdf-lib `removePage` chỉ gỡ khỏi cây trang, `save()` vẫn ghi mọi đối tượng trong context) — bytes, khe phục hồi, file lưu và bản
-// sao xuất đều còn bản rõ. Các phép kiểm "không còn chuỗi dò" vì thế dùng `known`: KHÔNG làm kịch bản đỏ, nhưng in rõ "BIẾT LỖI" khi
-// còn lỗi và "ĐÃ HẾT LỖI" khi đã sửa (lúc đó đổi `known` thành `expect` để lỗi không quay lại).
-const stillBroken = [];
-const known = (cond, msg) => {
-  console.log(`  ${cond ? "HẾT " : "BIẾT"} LỖI BI-143: ${msg}${cond ? "  ← ĐÃ HẾT LỖI: đổi known() thành expect()" : ""}`);
-  if (!cond) stillBroken.push(msg);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const J = (x) => JSON.stringify(x);
@@ -123,13 +115,13 @@ async function until(fn, ms = 15000, step = 150) {
     expect((await page.eval(`window.__hide`)) === true, "hidePagesWithPassword trả true");
     let s = await st();
     expect(s.n === 3 && J(s.vault) === "[1]", `vẫn 3 trang, trang 2 ẩn: ${J([s.n, s.vault])}`);
-    known(!containsText(await page.stateBytes(), MARK), "bytes KHÔNG còn chuỗi dò (đã mã hoá)");
+    expect(!containsText(await page.stateBytes(), MARK), "bytes KHÔNG còn chuỗi dò (đã mã hoá)");
     expect(s.nUndo === 0 && s.nRedo === 0 && s.undoOff, `lịch sử hoàn tác bị XOÁ: undo=${s.nUndo} redo=${s.nRedo} nút tắt=${s.undoOff}`);
     expect(s.dirty === true, "tài liệu bẩn (chấm ●)");
     expect(/Không hoàn tác được/.test(await toastText()), `toast báo không hoàn tác được: ${J(await toastText())}`);
     const slotAfter = slotFiles(app, docId);
     expect(slotAfter.length > 0, "khe phục hồi vẫn còn (bản đã niêm phong)");
-    known(slotAfter.every((f) => !containsText(fs.readFileSync(f), MARK)), `KHÔNG file nào trong khe phục hồi còn chuỗi dò (${slotAfter.length} file)`);
+    expect(slotAfter.every((f) => !containsText(fs.readFileSync(f), MARK)), `KHÔNG file nào trong khe phục hồi còn chuỗi dò (${slotAfter.length} file)`);
     const hashHidden = await page.eval(HASH);
     // Khe phục hồi phải là BẢN ĐÃ NIÊM PHONG hiện tại (ghi đè bằng `scrub:true`, BI-137), không phải bản rõ trước khi ẩn — so băm với bytes.
     const slotPdf = slotAfter.find((x) => x.endsWith("autosave.pdf"));
@@ -144,7 +136,7 @@ async function until(fn, ms = 15000, step = 150) {
     await page.eval(`saveDoc()`);
     expect(await until(async () => !(await st()).dirty), "đã lưu (hết chấm ●)");
     const onDisk = fs.readFileSync(diskFile);
-    known(!containsText(onDisk, MARK), "file trên đĩa KHÔNG còn chuỗi dò (BI-130)");
+    expect(!containsText(onDisk, MARK), "file trên đĩa KHÔNG còn chuỗi dò (BI-130)");
     const rd = await PDFDocument.load(onDisk);
     expect(rd.getPageCount() === 3 && rd.getPages()[0].getRotation().angle === 90, "file hợp lệ, 3 trang, giữ xoay trang 1");
     await app.openPdf(onDisk, "bi-mat.pdf", { srcPath: diskFile });
@@ -207,7 +199,7 @@ async function until(fn, ms = 15000, step = 150) {
     await page.eval(`reorderPage(0, 2)`); // [p1, V, p3] → [V, p3, p1]
     s = await st();
     expect(J(s.vault) === "[0]", `trang ẩn đi theo khi sắp xếp: ${J(s.vault)}`);
-    known(!containsText(await page.stateBytes(), MARK), "sau khi sắp xếp, vẫn không có bản rõ");
+    expect(!containsText(await page.stateBytes(), MARK), "sau khi sắp xếp, vẫn không có bản rõ");
     await page.eval(`window.__u2 = unhidePagesWithPassword([...state.vaultPages]); true`);
     await visibleModal("pw-modal");
     await setVal("pw-input", PW);
@@ -256,6 +248,5 @@ async function until(fn, ms = 15000, step = 150) {
     failures.forEach((f) => console.log("  - " + f));
     process.exit(1);
   }
-  if (stillBroken.length) console.log(`CÒN ${stillBroken.length} LỖI ĐÃ BIẾT (BI-143), không tính vào kết quả — xem REGRESSION-GUARD.`);
   console.log("Trang ẩn có khoá đúng ở cả 7 ca (W0–W6). Menu chuột phải, Acrobat/Chrome, in, kéo-thả vẫn phải test tay.");
 })();

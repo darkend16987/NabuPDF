@@ -360,6 +360,8 @@ class AppDriver {
       }
     }
     if (!page) throw new Error("không thấy renderer sau " + timeout + " ms\n" + this.log().slice(-800));
+    // Có lần (1/5 lượt chạy vault) renderer vừa nối CDP chưa chạy xong `app.js` ⇒ `state is not defined` ở lệnh đầu tiên. Đợi nó.
+    await page.waitFor(`typeof state !== "undefined" && !!state`, { timeout: Math.max(5000, timeout - (Date.now() - t0)), what: "app.js nạp xong (state)" });
     const vis = await page.visible();
     if (vis !== "visible") {
       throw new Error(
