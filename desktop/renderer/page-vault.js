@@ -67,7 +67,7 @@
     (typeof window !== "undefined" && window.PDFLib) ||
     (typeof require === "function" ? require("pdf-lib") : null);
   if (!_PDFLib) throw new Error("page-vault: pdf-lib unavailable (load vendor/pdf-lib.min.js first)");
-  const { PDFDocument, PDFName, PDFNumber, PDFHexString, PDFRawStream, PDFDict } = _PDFLib;
+  const { PDFDocument, PDFName, PDFNumber, PDFHexString, PDFRawStream, PDFDict, PDFRef, PDFArray, PDFStream } = _PDFLib;
 
   // The one key this whole feature hangs on. Deliberately NOT in the /Nabu*Kind family —
   // see trap 2 in the header.
@@ -291,6 +291,99 @@
     return ph;
   }
 
+  // ---- purge the hidden page's ORIGINAL objects (BI-143) -------------------------
+  //
+  // `doc.removePage()` only unhooks the page from the page TREE. The page dict, its
+  // content stream and everything only it used (a scanned page IS an image XObject) stay
+  // in the PDFContext, and `save()` writes every object in the context — so the plaintext
+  // of a page the user just "hid" went into the file verbatim, as unreferenced objects.
+  // Measured with PyMuPDF: the content stream was in the saved file and belonged to no
+  // page's /Contents. A viewer shows only the placeholder, but qpdf / mutool / PyMuPDF read
+  // the object straight out — the same thing BI-74 refuses for the undo history.
+  //
+  // So: after the swaps, delete exactly the objects that (1) are reachable from a page we
+  // just replaced and (2) are NO LONGER reachable from the document root. Intersecting the
+  // two sets is the whole safety argument: anything still reachable from the catalog —
+  // fonts and images SHARED with other pages, the page tree, bookmarks, the AcroForm — is
+  // left alone, and unrelated orphans that were already there are not our business.
+  //
+  // Walks every container pdf-lib has: dict, array, stream (its dict), ref. Ref identity
+  // is the ref's own tag string ("12 0 R"); returns Map<tag, ref>.
+  function reachableFrom(ctx, starts) {
+    const seen = new Map(); // tag → ref
+    const stack = [...starts];
+    while (stack.length) {
+      const o = stack.pop();
+      if (!o) continue;
+      if (o instanceof PDFRef) {
+        if (seen.has(o.tag)) continue;
+        seen.set(o.tag, o);
+        stack.push(ctx.lookup(o));
+      } else if (o instanceof PDFStream) {
+        stack.push(o.dict);
+      } else if (o instanceof PDFDict) {
+        for (const [, v] of o.entries()) stack.push(v);
+      } else if (o instanceof PDFArray) {
+        for (let i = 0; i < o.size(); i++) stack.push(o.get(i));
+      }
+    }
+    return seen;
+  }
+
+  // A link, a bookmark or a form widget on ANOTHER page can point at the page we just
+  // replaced (/Dest [ref /Fit], /D of a GoTo action, a widget's /P). Left alone, that one
+  // reference keeps the original page — and so its content — reachable from the catalog,
+  // and nothing above would ever delete it. They are RE-POINTED at the placeholder, which
+  // is also what the user means: "go to page 2" still goes to page 2.
+  function retargetRefs(ctx, live, swaps) {
+    const fix = (container, key, v) => {
+      const to = swaps.get(v.tag);
+      if (!to) return false;
+      container.set(key, to); // PDFDict.set(name, ref) and PDFArray.set(index, ref) share the shape
+      return true;
+    };
+    const visit = (o) => {
+      if (o instanceof PDFStream) return visit(o.dict);
+      if (o instanceof PDFDict) {
+        for (const [k, v] of o.entries()) {
+          if (v instanceof PDFRef) fix(o, k, v);
+          else visit(v);
+        }
+      } else if (o instanceof PDFArray) {
+        for (let i = 0; i < o.size(); i++) {
+          const v = o.get(i);
+          if (v instanceof PDFRef) fix(o, i, v);
+          else visit(v);
+        }
+      }
+    };
+    for (const [tag, ref] of live) if (!swaps.has(tag)) visit(ctx.lookup(ref));
+  }
+
+  // `swaps`: Map<tag of the ORIGINAL page, ref of its placeholder>. Returns how many objects
+  // were deleted. Never throws on an odd document: a purge that cannot run leaves the file
+  // exactly as it was (the leak this closes is not worse than before), whereas an exception
+  // here would abort a hide that has already succeeded.
+  function purgeOrphans(doc, swaps) {
+    try {
+      const ctx = doc.context;
+      const roots = Object.values(ctx.trailerInfo || {}).filter((v) => v instanceof PDFRef);
+      if (!roots.length) return 0; // cannot tell what is reachable ⇒ delete nothing
+      retargetRefs(ctx, reachableFrom(ctx, roots), swaps);
+      const live = reachableFrom(ctx, roots);
+      const origRefs = [...swaps.keys()].map((t) => PDFRef.of(...t.split(" ").slice(0, 2).map(Number)));
+      const fromOrig = reachableFrom(ctx, origRefs);
+      let n = 0;
+      for (const [tag, ref] of fromOrig) {
+        if (live.has(tag)) continue;
+        if (ctx.delete(ref)) n++;
+      }
+      return n;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   // Paint the "this page is hidden" sheet. `labelPng` is supplied by the caller because
   // the label is Vietnamese and rendering Vietnamese means either embedding a font or
   // rasterising with a canvas — and a canvas would cost this file its node grid. No
@@ -333,10 +426,13 @@
     if (!uniq.length) return 0;
     if (uniq.length >= n) throw new VaultError("ALL_PAGES", "Không thể ẩn toàn bộ trang.");
 
+    const swaps = new Map(); // tag trang GỐC → ref trang giữ chỗ (BI-143)
     for (const i of uniq) {
+      const origRef = doc.getPage(i).ref;
       const plain = await extractPage(doc, i);
       const sealed = await sealBytes(plain, password, o);
       const ph = swapInPlaceholder(doc, i);
+      swaps.set(origRef.tag, ph.ref);
       await paintPlaceholder(doc, ph, o);
       const ctx = doc.context;
       // A raw stream, not a hex string: /NabuData-style hex costs ~1.46x and pdf-lib's
@@ -365,6 +461,7 @@
       dict.set(K_BLOB, blobRef);
       ph.node.set(VAULT_KEY, dict);
     }
+    purgeOrphans(doc, swaps);
     return uniq.length;
   }
 

@@ -486,6 +486,105 @@ const reload = async (doc) => PDFDocument.load(await doc.save());
       [doc.getPageCount(), V.vaultPageIndices(doc)], [4, [1, 2]]);
   }
 
+  group("BI-143 · the ORIGINAL page's objects must not stay in the file after hiding");
+  {
+    // removePage() only unhooks a page from the page tree; save() still writes every object in the
+    // context, so the plaintext of a hidden page used to ride along as unreferenced objects (a
+    // viewer shows only the placeholder, qpdf/PyMuPDF read the object out). The oracle looks for a
+    // probe string in the raw bytes AND in every Flate stream, in ASCII and in pdf-lib's hex form.
+    const PROBE = "BI-MAT-XYZ-7421";
+    const has = (buf, needle) => {
+      const b = Buffer.from(buf);
+      const n = Buffer.from(needle, "latin1");
+      const hex = n.toString("hex").toUpperCase();
+      const hit = (x) => x.includes(n) || x.toString("latin1").toUpperCase().includes(hex);
+      if (hit(b)) return true;
+      for (let from = 0; ; ) {
+        const i = b.indexOf("stream", from, "latin1");
+        if (i < 0) return false;
+        let st = i + 6;
+        if (b[st] === 0x0d) st++;
+        if (b[st] === 0x0a) st++;
+        const e = b.indexOf("endstream", st, "latin1");
+        if (e < 0) return false;
+        try {
+          if (hit(zlib.inflateSync(b.subarray(st, e)))) return true;
+        } catch (_) {
+          /* not a Flate stream */
+        }
+        from = e + 9;
+      }
+    };
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+    const imageCount = (doc) => {
+      let n = 0;
+      for (const [, o] of doc.context.enumerateIndirectObjects()) {
+        const d = o && o.dict;
+        if (d && d.get(PDFName.of("Subtype")) === PDFName.of("Image")) n++;
+      }
+      return n;
+    };
+    const { StandardFonts } = require("pdf-lib");
+    async function secretDoc({ shareImage = false, link = false } = {}) {
+      const doc = await PDFDocument.create();
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const img = await doc.embedPng(PNG);
+      const p0 = doc.addPage([300, 400]);
+      p0.drawText("Trang 1", { x: 20, y: 200, size: 12, font });
+      const p1 = doc.addPage([300, 400]);
+      p1.drawText(PROBE, { x: 20, y: 200, size: 12, font });
+      p1.drawImage(img, { x: 10, y: 10, width: 20, height: 20 });
+      const p2 = doc.addPage([300, 400]);
+      p2.drawText("Trang 3", { x: 20, y: 200, size: 12, font });
+      if (shareImage) p2.drawImage(img, { x: 50, y: 10, width: 20, height: 20 });
+      if (link) {
+        const ctx = doc.context;
+        const a = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Link", Rect: [0, 0, 50, 50], Border: [0, 0, 0], Dest: [p1.ref, "Fit"] }));
+        p0.node.set(PDFName.of("Annots"), ctx.obj([a]));
+      }
+      return doc;
+    }
+
+    {
+      const doc = await secretDoc();
+      const before = Buffer.from(await doc.save());
+      check("B0 · the oracle is meaningful: the probe is in the file BEFORE hiding", has(before, PROBE), true);
+      // (an RGBA PNG embeds as an image + its soft mask, so "has images" is the claim, not "has one")
+      check("… and so is its image", imageCount(await PDFDocument.load(before)) >= 1, true);
+      await V.hidePages(doc, [1], PW, FAST);
+      const after = Buffer.from(await doc.save());
+      check("B1 · after hiding, the probe is NOT in the saved file", has(after, PROBE), false);
+      check("B2 · … and neither is the page's image (a scanned page IS its image)", imageCount(await PDFDocument.load(after)), 0);
+      const back = await PDFDocument.load(after);
+      check("B3 · the hidden page still opens", await V.unhidePages(back, [1], PW), 1);
+      check("… and the probe is back", has(Buffer.from(await back.save()), PROBE), true);
+    }
+    {
+      const doc = await secretDoc({ shareImage: true });
+      const nBefore = imageCount(await PDFDocument.load(Buffer.from(await doc.save())));
+      await V.hidePages(doc, [1], PW, FAST);
+      const out = await PDFDocument.load(Buffer.from(await doc.save()));
+      check("B4 · an image SHARED with a visible page is kept (same image objects as before)", [nBefore >= 1, imageCount(out)], [true, nBefore]);
+      const xo = out.getPage(2).node.Resources().lookup(PDFName.of("XObject"));
+      check("… and the visible page still resolves it", xo && xo.entries().length >= 1, true);
+    }
+    {
+      const doc = await secretDoc({ link: true });
+      await V.hidePages(doc, [1], PW, FAST);
+      const out = await PDFDocument.load(Buffer.from(await doc.save()));
+      check("B5 · a link that pointed at the hidden page does not keep the original alive", has(Buffer.from(await doc.save()), PROBE), false);
+      const annot = out.getPage(0).node.Annots().lookup(0);
+      const dest = annot.lookup(PDFName.of("Dest"));
+      check("… it is re-pointed at the placeholder page", dest.get(0) === out.getPage(1).ref, true);
+    }
+    {
+      const doc = await secretDoc();
+      const orphan = doc.context.register(doc.context.obj({ Probe: "unrelated orphan" }));
+      await V.hidePages(doc, [1], PW, FAST);
+      check("B6 · an unrelated pre-existing orphan is left alone", !!doc.context.lookup(orphan), true);
+    }
+  }
+
   console.log(`\npage-vault: ${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })().catch((e) => {
