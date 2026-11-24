@@ -562,6 +562,10 @@
     "Đã hủy nén.": "Compression cancelled.",
     "Đã hủy tách.": "Split cancelled.",
     "Đã hủy đánh số.": "Page numbering cancelled.",
+    // Chip "đang sửa file đã ký" ở thanh trạng thái (BI-146).
+    "⚠ Đang sửa file đã ký ({n} chữ ký)": "⚠ Editing a signed file ({n} signatures)",
+    "File trên đĩa đang có {n} chữ ký số. Khi lưu, ứng dụng sẽ hỏi cách xử lý: «Lưu nối thêm» giữ nguyên bản đã ký (trình đọc PDF vẫn có thể báo chữ ký không hợp lệ); ghi đè sẽ làm mất chữ ký. Chưa lưu thì vẫn hoàn tác được (Ctrl+Z).":
+      "The file on disk has {n} digital signature(s). When you save you will be asked how to handle them: “Append save” keeps the signed original intact (PDF readers may still report the signature as invalid); overwriting loses the signatures. Until you save, you can still undo (Ctrl+Z).",
     "Không gửi được lệnh hủy: ": "Could not send the cancel command: ",
 
     // --- translate dialog ---
@@ -1041,6 +1045,8 @@
     "confirm-third",
     // Live "🔒 N trang đang ẩn", rewritten by updateStatusBar on every render (BI-10).
     "sb-vault",
+    // BI-146: "⚠ Đang sửa file đã ký (N chữ ký)", written by updateStatusBar through t().
+    "sb-signed",
     // Tạo bản theo mẫu (batch-variants.js): the scan summary, the per-document context
     // checklist, the planned file names and the chosen folder are all written at runtime
     // (BI-10). The status line also carries the result ("Đã tạo 3/3 file.").

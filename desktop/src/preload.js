@@ -274,6 +274,8 @@ contextBridge.exposeInMainWorld("desktop", {
   // (file đã ký). Thiếu opts ⇒ gửi `true` ⇒ đường nối đóng: mặc định là an toàn, không phải tiện.
   writePdf: (path, data, opts) =>
     ipcRenderer.invoke("file:write-pdf", { path, data, contentRemoved: !(opts && opts.contentRemoved === false) }),
+  // BI-146: số chữ ký số của file Ở ĐƯỜNG DẪN này trên đĩa → { count }. Không bao giờ ném (lỗi ⇒ count 0).
+  signedScan: (path) => ipcRenderer.invoke("signed:scan-path", path),
   // Tạo bản theo mẫu: pick a folder once (null if cancelled), then write NEW files
   // into it by bare name. writeNewPdf never overwrites unless `overwrite` is true —
   // an existing file returns { saved: false, exists: true, path }.

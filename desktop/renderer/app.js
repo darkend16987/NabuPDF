@@ -33,6 +33,10 @@ const state = {
   // Refreshed by scanVaultPages() on every renderAll, which is cheap because it only
   // parses when PageVault.looksLikeVaultFile says the file has one at all.
   vaultPages: new Set(),
+  // BI-146: kết quả quét "file trên ĐĨA ở đường dẫn này có mấy chữ ký" lần sửa gần nhất —
+  // { docId, path, count } hoặc null. Chỉ để vẽ chip ở thanh trạng thái; không quyết định gì về việc ghi.
+  // (Đặt TRƯỚC `contentRemoved`: test BI-130 ghim `contentRemoved: false,` là mục cuối của state.)
+  signedInfo: null,
   // BI-130: đã có thao tác XOÁ NỘI DUNG THẬT trong phiên này (redaction, ẩn trang, hoặc bản khôi phục
   // mà ta không biết đã làm gì). Chỉ tăng trong một tài liệu; loadBytes đặt lại. Khi true, "Lưu" lên một
   // file đã ký KHÔNG được đề nghị ghi nối (giữ mãi byte cũ) — xem saveDoc / file:write-pdf.
@@ -375,16 +379,62 @@ function updateDirtyIndicator() {
   }
 }
 
+// ---- BI-146: cảnh báo lúc BẮT ĐẦU sửa một file đã ký ----
+//
+// Trước đây app chỉ hỏi lúc LƯU/KÝ (BI-127/130/132): người dùng sửa cả buổi rồi mới biết file có chữ ký. Giờ, lần đầu tài liệu
+// chuyển sạch → bẩn, ta hỏi main "file Ở ĐƯỜNG DẪN NÀY trên đĩa có mấy chữ ký?" (cùng nguồn sự thật với cổng lúc Lưu) và, nếu có,
+// bật chip ở thanh trạng thái (tiền lệ `#sb-vault`). KHÔNG chặn, KHÔNG đụng đường sửa nào: `pushUndo` phải đồng bộ (BI-3) nên không
+// thể `await` một hộp thoại ở đó; chip là việc không chặn, bắn-và-quên, không bao giờ ném.
+//   · Vì sao chip mà không phải toast: toast chỉ sống 3,6 s và bị đè bởi toast kết quả của chính thao tác sửa (vd. "Đã chèn N trang",
+//     hiện SAU khi vẽ lại); chip ở lại suốt lúc tài liệu còn bẩn.
+//   · Chỉ hỏi ở lần chuyển sạch→bẩn (không phải mỗi lần sửa); sau khi lưu (sạch) chip tắt, sửa lại thì hỏi LẠI vì đĩa có thể đã đổi
+//     (vd. đã ghi đè làm mất chữ ký ⇒ lần quét sau cho 0 và chip không còn nói sai).
+//   · Tài liệu chưa có đường dẫn (mới/chưa lưu) không có gì trên đĩa để bảo vệ ⇒ không hỏi.
+let signedScanSeq = 0;
+// Hàm thuần của trạng thái: chip phải hiện không, và chữ gì.
+function signedChipFor(s) {
+  const info = s && s.signedInfo;
+  if (!s || !s.dirty || !info || !(info.count > 0) || info.docId !== s.docId || info.path !== s.path) {
+    return { hidden: true, text: "", title: "" };
+  }
+  return {
+    hidden: false,
+    text: t("⚠ Đang sửa file đã ký ({n} chữ ký)", { n: info.count }),
+    title: t("File trên đĩa đang có {n} chữ ký số. Khi lưu, ứng dụng sẽ hỏi cách xử lý: «Lưu nối thêm» giữ nguyên bản đã ký (trình đọc PDF vẫn có thể báo chữ ký không hợp lệ); ghi đè sẽ làm mất chữ ký. Chưa lưu thì vẫn hoàn tác được (Ctrl+Z).", { n: info.count }),
+  };
+}
+async function checkSignedOnEdit() {
+  const docId = state.docId;
+  const p = state.path;
+  if (!docId || !p || !window.desktop || typeof window.desktop.signedScan !== "function") return;
+  const seq = ++signedScanSeq;
+  let r;
+  try {
+    r = await window.desktop.signedScan(p);
+  } catch (_) {
+    return; // lời nhắc, không phải cổng: lỗi ⇒ im lặng, lần chuyển sau thử lại
+  }
+  // Trả lời đến muộn: đã có lần quét mới hơn, đã mở tài liệu khác / đổi đường dẫn, hoặc đã lưu xong ⇒ bỏ.
+  if (seq !== signedScanSeq || state.docId !== docId || state.path !== p || !state.dirty) return;
+  const n = r && Number.isSafeInteger(r.count) && r.count > 0 ? r.count : 0;
+  state.signedInfo = n > 0 ? { docId, path: p, count: n } : null;
+  updateStatusBar();
+}
+
 function markDirty() {
+  const wasDirty = state.dirty;
   state.dirty = true;
   updateDirtyIndicator();
   scheduleAutosave();
+  if (!wasDirty) checkSignedOnEdit(); // BI-146: bắn-và-quên (async, không bao giờ ném); KHÔNG await — pushUndo phải đồng bộ (BI-3)
 }
 
 // Called after a successful real save (Ctrl+S / Save As): the on-disk file now
 // matches, so drop the recovery snapshot and the dirty flag.
 function markClean() {
   state.dirty = false;
+  state.signedInfo = null; // BI-146: tắt chip; lần sửa kế sẽ quét lại (đĩa có thể đã đổi)
+  updateStatusBar();
   lastAutosaveLen = -1; // a later edit re-triggers a fresh snapshot
   updateDirtyIndicator();
   clearTimeout(autosaveDebounceTimer);
@@ -601,6 +651,7 @@ async function loadBytes(bytes, name, fullPath) {
   state.lastClicked = null;
   // A freshly loaded document is clean and gets its own recovery slot.
   state.dirty = false;
+  state.signedInfo = null; // BI-146: chip của tài liệu cũ không được sang tài liệu mới
   state.docId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
   lastAutosaveLen = -1;
   clearTimeout(autosaveDebounceTimer);
@@ -2153,8 +2204,10 @@ async function hidePagesWithPassword(indices) {
     // NOT pushUndo(): see the note above. markDirty still has to run so the ● indicator,
     // the close guard and the (rewritten) recovery snapshot all know the file changed.
     resetHistory();
+    const wasDirty = state.dirty;
     state.dirty = true;
     updateDirtyIndicator();
+    if (!wasDirty) checkSignedOnEdit(); // BI-146: đường này đặt cờ bẩn thẳng, KHÔNG qua markDirty ⇒ phải tự gọi quét
     await scrubRecoverySnapshot();
     state.selected.clear();
     await renderAll();
@@ -3229,6 +3282,14 @@ function updateStatusBar() {
     vb.hidden = !n;
     vb.textContent = n ? `🔒 ${n} trang đang ẩn` : "";
     vb.title = n ? "Chuột phải lên trang có 🔒 để mở lại bằng mật khẩu" : "";
+  }
+  // BI-146: "⚠ Đang sửa file đã ký (N chữ ký)" — chỉ khi tài liệu bẩn VÀ file trên đĩa (cùng đường dẫn) có chữ ký.
+  const sg = $("sb-signed");
+  if (sg) {
+    const chip = signedChipFor(state);
+    sg.hidden = chip.hidden;
+    sg.textContent = chip.text;
+    sg.title = chip.title;
   }
 }
 

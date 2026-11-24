@@ -1095,6 +1095,20 @@ ipcMain.handle("dialog:open-files", async (e, { multi = true, filters } = {}) =>
   return readPicked(res.filePaths);
 });
 
+// BI-146: "file ở đường dẫn này trên ĐĨA có mấy chữ ký số?" — để renderer cảnh báo ngay lúc BẮT ĐẦU sửa (trước đó chỉ hỏi lúc Lưu/Ký).
+// Cùng nguồn sự thật với cổng BI-127 (file đang nằm trên đĩa, quét theo khúc, không nạp cả file). Chỉ ĐỌC, chỉ trả `{ count }`
+// (không lộ kích thước/vị trí). Fail-open: mọi lỗi/đầu vào lạ ⇒ `{ count: 0 }` — đây là lời nhắc, không phải cổng chặn.
+// (Cố ý đặt NGOÀI các khối mà test cắt-và-eval của BI-127/130/135/145 cắt ra từ main.js.)
+ipcMain.handle("signed:scan-path", async (_e, fp) => {
+  try {
+    if (typeof fp !== "string" || !fp) return { count: 0 };
+    const r = await SignedScan.findIntactSignatures(fp);
+    return { count: r && Number.isSafeInteger(r.count) && r.count > 0 ? r.count : 0 };
+  } catch (_) {
+    return { count: 0 };
+  }
+});
+
 // BI-127 — hỏi trước khi ghi đè lên một file ĐÃ KÝ SỐ mà bản mới không giữ nguyên vùng ký.
 // Một chỗ duy nhất, ở main, ngay trước khi byte chạm đĩa: cả `dialog:save-pdf` (≥12 nơi gọi,
 // kể cả Lưu thành trúng đường dẫn của chính file đã ký) lẫn `file:write-pdf` (Ctrl+S) đều đi

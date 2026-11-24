@@ -374,6 +374,7 @@ body.presenting .sidebar-resizer { display: none; }
 }
 .thumb.vaulted canvas { opacity: 0.75; }
 .statusbar .sb-vault { color: var(--warn); font-weight: 600; }
+.statusbar .sb-signed { color: var(--warn); font-weight: 600; cursor: help; }
 /* The irreversible-consequences paragraph in the Ẩn trang dialog. Loud on purpose:
    losing the password loses the page, and there is no recovery path to fall back on. */
 .vault-warn {

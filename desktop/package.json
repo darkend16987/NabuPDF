@@ -70,6 +70,7 @@
     "test:atomic": "node test/atomic-write.test.js",
     "test:recoveryatomic": "node test/recovery-atomic.test.js",
     "test:savefile": "node test/save-file-atomic.test.js",
+    "test:signededit": "node test/signed-edit-warn.test.js",
     "test:signingwarn": "node test/signing-warn.test.js",
     "test:signappend": "node test/sign-append.test.js && node test/sign-append-worker.test.js",
     "test:sigtext": "node test/sig-text.test.js",
