@@ -3,6 +3,8 @@
 Tài liệu này để một phiên mới nhận việc mà **không cần đọc lại cuộc hội thoại**. Tri thức dài vẫn ở `docs/REGRESSION-GUARD.md`
 (tìm theo `Grep "BI-13"`; đừng đọc cả file) — đây chỉ là bản đồ + trạng thái + việc còn lại + các bẫy đã vấp.
 
+> **CẬP NHẬT 2026-11-24:** từ lúc bàn giao đã làm thêm BI-138…BI-144 (hạn giờ + nút Hủy cho `/split`, `/add-page-numbers`; bộ khung e2e; sửa BI-142 và BI-143). **Việc còn mở và câu mở đầu mới nằm ở §4a** — đọc §4a trước, §4 bên dưới giữ nguyên làm lịch sử.
+
 ## 0. Câu mở đầu để dán vào phiên mới
 
 > Đọc `docs/HANDOFF-2026-11-22-signed-save-atomic.md` rồi `git fetch` và kiểm `git status -sb`. Nhánh `claude/vietnamese-ocr-ai-iSvwV`,
@@ -62,6 +64,32 @@ phải làm test đỏ** (21/21, 15/15, 11/11, 41/41… — ghi trong từng BI)
 8. **Phát hành:** `/deploy` (chạy `run_tests.py` + `npm test`, build, release). Sidecar đã mới nên không cần build lại trừ khi sửa `.py`.
 
 Nguồn việc 1–2 và mục 5: `docs/RESEARCH-2026-11-21-pdfcraft-learnings.md` (xếp theo thứ tự nên làm; mục "quét corpus + qpdf" đã xong từ trước).
+
+## 4a. Cập nhật 2026-11-24 — đã làm gì từ bản bàn giao, và việc để lại cho một phiên khác
+
+**HEAD `ddae44e`, đã push, đồng bộ origin** (nhánh `claude/vietnamese-ocr-ai-iSvwV`). `npm test` 72/72; `npm run e2e` 14/14 (cần phiên có giao diện, ~2 phút).
+
+### Đã làm (so với §4 ở trên)
+- **§4 mục 1 — XONG:** hạn giờ + nút Hủy cho `/split` (BI-139) và `/add-page-numbers` (BI-140), cùng khuôn BI-121/126; `/split` bị đổ oan về `bomb_giant.pdf` (đo lại: 0,0 s; ca treo thật là `bug1978317`).
+- **§4 mục 2 — LÀM HƯỚNG KHÁC, không phải `--control`:** móc hộp thoại `src/test-hooks.js` (nạp khi có `NABU_TEST_HOOKS`, một dòng ở `main.js`) + bộ e2e CDP `desktop/e2e/` (BI-141). Đã tự động hoá phần lớn ma trận §5 qua hai đợt (14 kịch bản). Chi tiết, đột biến, giới hạn: REGRESSION-GUARD **BI-141**.
+- **Lỗi thật do e2e bắt được và đã sửa:** BI-142 (đóng cửa sổ để lại khe phục hồi 18/18 lần) và BI-143 (ẩn trang có khoá để bản rõ của trang gốc nằm trong file như đối tượng mồ côi).
+- **Quan sát đã ghi, CHƯA xử lý:** BI-144 (5 mục: chuyển trang sang tab đang ẩn không có phản hồi; ✕ cửa sổ rồi Huỷ vẫn đóng tab sạch đứng trước; ghép/chèn file hỏng ném lỗi không bắt; luật "chừa một trang" không đếm trang đã ẩn; hoàn tác không tắt chấm ●).
+
+### Để lại cho MỘT PHIÊN KHÁC (người dùng chốt 2026-11-24: ghi lại, làm sau)
+1. **Kênh điều khiển `--control` (loopback + token) trong app — CHƯA làm.** Hướng A (móc + CDP) đã phủ phần lớn, nên đây chỉ còn đáng làm nếu cần điều khiển thứ CDP **không** chạm được: menu native (Thoát, Ctrl+Q), kéo-thả (tab/trang/file), hộp thoại in. Việc lớn, chạm `main.js`, nên làm riêng và **đo trước** xem có thật sự mở khoá được các ca đó không (khảo sát cũ: Chromium bỏ qua input tổng hợp trong đường kéo-thả — TABS-2B-DESIGN §2.2 — một kênh trong app cũng không đổi điều đó nếu kéo-thả vẫn đi qua trình duyệt).
+2. **Cảnh báo lúc BẮT ĐẦU sửa file đã ký — CHƯA làm.** Hiện chỉ hỏi lúc Lưu/Ký (`askSignedOverwrite` ở `main.js`), nên mỗi Ctrl+S lại hiện hộp thoại. Chạm renderer ⇒ phải test tay; lưới tự động liên quan: `e2e/signed-save.e2e.js` (hộp thoại lúc lưu), `npm run test:signedsave`.
+3. **`dialog:save-file` (xuất xlsx/csv/json) vẫn `writeFile` thô — CHƯA làm.** `src/main.js` ~dòng 1343: `fs.promises.writeFile(res.filePath, asWritable(data))`; `AtomicWrite` (`src/atomic-write.js`, BI-136) đã được `require` sẵn ở đầu file. Việc nhỏ, mức thấp. Cách làm đề xuất: thay bằng `AtomicWrite`, thêm test hợp đồng cắt-và-eval như `recovery-atomic` (chú ý: handler đổi phụ thuộc ⇒ thêm tham số cho `new Function(...)` ở các test cắt-và-eval), và một ca e2e xuất file bằng móc `showSaveDialog`.
+
+### Việc mở khác (không nằm trong 3 mục trên)
+- **`check-sidecar-fresh` đang ĐỎ** (`src/pdf/split.py`, `pagenum.py`… mới): phải `cd desktop && npm run build:sidecar` (chạy nền, vượt 10 phút) trước `/deploy`, rồi thử bản đóng gói (worker `--split-worker`/`--pagenum-worker` chưa được thử trong bản đóng gói).
+- **Chủ dự án quyết:** có đưa `src/test-hooks.js` vào gói phát hành không (`!src/test-hooks.js`; hiện nó chỉ chạy khi có `NABU_TEST_HOOKS`, có banner stderr); xoá các probe cũ `scripts/probe-*.js` (đã được e2e thay); xử lý từng mục BI-144.
+- **Giới hạn còn lại của BI-143:** giá trị ô biểu mẫu trên trang ẩn vẫn nằm trong `/AcroForm`; PDF tagged chưa đo; file đã ẩn bằng bản app cũ vẫn mang bản rõ.
+- **Không tự động hoá được (đã đo/đã lý giải):** kéo tab/trang, menu native, **in** (cần chặn máy in thật trong `test-hooks.js`), cảm giác lăn/zoom, bản vẽ CAD thật. Chưa đo: PDF rất lớn so với trần 10 phút của các worker.
+- Bẫy mới của phiên này: heredoc **và cả `sed`** làm hỏng `\n`/`\r` trong script ⇒ ghi script vá bằng Write/Edit (có `assert` khớp, giữ CRLF/LF của file); `Page.eval` của driver chờ hộp thoại của app thì treo ⇒ gọi hàm không `await` rồi đợi modal hiện; tab ẩn thì pdf.js không vẽ ⇒ `activateTab` trước khi thao tác.
+
+### Câu mở đầu để dán vào phiên mới (thay §0)
+
+> Đọc `docs/HANDOFF-2026-11-22-signed-save-atomic.md` mục **4a**, rồi `git fetch` và kiểm `git status -sb` (HEAD khi ghi là `ddae44e`). Việc tôi muốn làm: <một trong ba mục "Để lại cho một phiên khác">. Làm theo cách đã dùng: đo trước, test trước và sau, thử cho test đỏ bằng đột biến trên mã thật, ghi sổ BI mới, mỗi việc một commit, hỏi tôi trước khi push.
 
 ## 5. Bẫy công cụ đã vấp (đỡ mất thời gian)
 
