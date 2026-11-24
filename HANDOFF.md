@@ -4,7 +4,16 @@
 > [DESIGN.md](DESIGN.md) (kiến trúc), [ROADMAP.md](ROADMAP.md) (tiến độ chi tiết),
 > [SETUP.md](SETUP.md) (dựng môi trường).
 
-_Cập nhật: 2026-11-20 · v0.2.83 (sửa chữ giữ đúng font gốc, ngay dưới) · v0.2.82 · v0.2.81 là bản trước đó_
+_Cập nhật: 2026-11-24 · v0.2.84 (bảo vệ file đã ký + ghi nguyên tử + nút Hủy, ngay dưới) · v0.2.83 · v0.2.82 là bản trước đó_
+
+> **v0.2.84 — Bảo vệ file đã ký số, ghi file nguyên tử, nút Hủy cho Nén/Tách/Đánh số, sidecar bền hơn** (2026-11-24; nhánh `claude/vietnamese-ocr-ai-iSvwV`; 53 commit từ v0.2.83).
+> Sổ bất biến **BI-120…BI-146** (`docs/REGRESSION-GUARD.md`); bàn giao chi tiết ở `docs/HANDOFF-2026-11-22-signed-save-atomic.md`. **Đổi `*.py` ⇒ sidecar ĐÃ build lại** (marker = `75f61089`).
+> **Ký số:** hỏi trước khi ghi đè/ký lên file đã ký (BI-127/132/135); **Lưu nối thêm** + **Ký nối thêm** giữ chữ ký cũ (BI-128…133, OpenSSL chấm; Foxit đã đối chiếu); chữ ký có dấu tiếng Việt (BI-134); chip cảnh báo lúc bắt đầu sửa (BI-146).
+> **Dữ liệu:** mọi đường ghi PDF/xuất/autosave nguyên tử (BI-136/137/145); khe phục hồi xoá xong mới đóng cửa sổ (BI-142); ẩn trang dọn đối tượng gốc khỏi file (BI-143); pdf-lib không còn cắt cụt stream có `/Length` gián tiếp (BI-120).
+> **Sidecar:** nén/tách/đánh số/ghi nối chạy trong tiến trình con (hết segfault giết engine, trần 10–30 phút), tự dựng lại engine sau khi chết (trần 3 lần/5 phút), nút Hủy (BI-121…126, 138…140), câu lỗi tiếng Việt cho PDF hỏng (BI-125).
+> **Kiểm trước phát hành (HEAD `1fc01f0`):** JS 74/74 · Python 30/30 · quét corpus pdf-lib + sidecar + ghi nối: không file nào xấu đi so với mốc · ký / ký nối thêm: OpenSSL 12/12 + 4/4 · e2e Electron 16/16 (sau khi dọn worker mồ côi).
+> ⚠️ **Còn mở:** chưa chạy thử bản cài đặt đóng gói; ký bằng token USB thật chưa thử (test dùng OpenSSL thay token); chip chưa nhìn bằng mắt ở VI/EN; `src/test-hooks.js` vẫn nằm trong gói (chỉ chạy khi có `NABU_TEST_HOOKS`); worker có thể mồ côi nếu sidecar chết đột ngột giữa lúc worker kẹt.
+
 
 > **v0.2.83 — Sửa chữ / Tìm & Thay giữ đúng font gốc khi tên font trong PDF là `CIDFont+Fn`** (2026-11-20; nhánh `claude/vietnamese-ocr-ai-iSvwV`).
 > Sổ bất biến **BI-21** (thêm bậc 2b) — đọc trước khi sửa `/edit-text` · commit `ced1d69` · memo `docs/RESEARCH-2026-11-20-edit-text-font-subset-gap.md` ·
