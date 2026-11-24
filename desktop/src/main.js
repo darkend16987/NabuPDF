@@ -1340,7 +1340,9 @@ ipcMain.handle("dialog:save-file", async (e, { data, defaultName, filters }) => 
   });
   if (res.canceled || !res.filePath) return { saved: false };
   rememberDir("save-file", res.filePath);
-  await fs.promises.writeFile(res.filePath, asWritable(data)); // async: never block main
+  // BI-145: nguyên tử (tạm + fsync + đổi tên). `writeFile` thô cắt file đích về 0 byte trước khi ghi ⇒ chọn ĐÈ lên bản xuất cũ
+  // rồi sập giữa chừng là mất cả hai. Lỗi ⇒ ném như trước (các nơi gọi đã bắt và hiện toast); file đích còn nguyên.
+  await AtomicWrite.writeFileAtomic(res.filePath, asWritable(data)); // async: never block main
   return { saved: true, path: res.filePath };
 });
 
